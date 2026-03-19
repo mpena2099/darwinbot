@@ -16,7 +16,7 @@ from typing import List
 
 # ── Genome layout constants ──────────────────────────────────────────────────
 
-N_LIMBS = 4          # fixed for now; can be made evolvable later
+N_LIMBS = 6          # fixed for now; can be made evolvable later
 GENES_PER_LIMB = 9   # see LimbGenes below
 
 GENOME_LENGTH = N_LIMBS * GENES_PER_LIMB

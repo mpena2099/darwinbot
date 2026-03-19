@@ -60,10 +60,11 @@ def load_checkpoints(checkpoint_dir: str) -> list[dict]:
 
         # Count average number of wheels across population
         # Gene index 3 (has_wheel) repeats every GENES_PER_LIMB=9 genes
+        from darwinbot.genome import N_LIMBS, GENES_PER_LIMB
         wheel_counts = []
         for ind in pop:
             genes = np.array(ind)
-            wheels = sum(round(genes[3 + i * 9]) for i in range(4))
+            wheels = sum(round(genes[3 + i * GENES_PER_LIMB]) for i in range(N_LIMBS))
             wheel_counts.append(wheels)
 
         records.append({
@@ -199,8 +200,9 @@ def update_plot(fig, ax_fitness, ax_wheels, ax_hof,
         for rank, ind in enumerate(hof):
             genes      = np.array(ind)
             fit        = ind.fitness.values[0]
-            n_w        = sum(round(genes[3 + i * 9]) for i in range(4))
-            avg_len    = np.mean([genes[i * 9] for i in range(4)])
+            from darwinbot.genome import N_LIMBS, GENES_PER_LIMB
+            n_w        = sum(round(genes[3 + i * GENES_PER_LIMB]) for i in range(N_LIMBS))
+            avg_len    = np.mean([genes[i * GENES_PER_LIMB] for i in range(N_LIMBS)])
             rows.append([f"#{rank+1}", f"{fit:.3f}",
                          str(n_w), f"{avg_len:.2f}m"])
 

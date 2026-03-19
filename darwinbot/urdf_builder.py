@@ -127,18 +127,16 @@ def _wheel_link(limb_idx: int, limb: LimbGenes):
   </link>"""
 
 
-def _base_to_limb_joint(limb_idx: int, limb: LimbGenes):
+def _base_to_limb_joint(limb_idx: int, limb: LimbGenes, n_limbs: int):
     """
     Revolute joint connecting base_link to limb.
-    Limbs are spaced symmetrically around the body.
+    Limbs are spaced symmetrically around the body using 2π/n_limbs spacing.
     """
-    # Place limbs at body corners, alternating sides
-    angle_offset = limb_idx * (np.pi / 2)     # 0, 90, 180, 270 degrees
+    angle_offset = limb_idx * (2 * np.pi / n_limbs)
     bx = BODY_SIZE_X / 2 * np.cos(angle_offset)
     by = BODY_SIZE_Y / 2 * np.sin(angle_offset)
     bz = -BODY_SIZE_Z / 4
 
-    # Joint axis: rotate around Z (yaw plane)
     insertion = limb.angle
 
     return f"""
@@ -177,7 +175,7 @@ def genome_to_urdf(robot: RobotGenome) -> str:
     # Limbs (and optional wheels)
     for i, limb in enumerate(robot.limbs):
         parts.append(_limb_link(i, limb))
-        parts.append(_base_to_limb_joint(i, limb))
+        parts.append(_base_to_limb_joint(i, limb, robot.n_limbs))
 
         if limb.has_wheel:
             parts.append(_wheel_link(i, limb))

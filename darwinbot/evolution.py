@@ -23,7 +23,7 @@ import numpy as np
 from deap import base, creator, tools, algorithms
 
 from darwinbot.genome import (
-    GENOME_LENGTH, BOUNDS, random_genome, clip_genome
+    GENOME_LENGTH, BOUNDS, N_LIMBS, random_genome, clip_genome
 )
 from darwinbot.fitness import evaluate
 
@@ -46,12 +46,12 @@ toolbox.register("evaluate",   evaluate)
 
 # SBX crossover — well-suited for bounded real-valued genomes
 toolbox.register("mate", tools.cxSimulatedBinaryBounded,
-                 low=[b[0] for b in BOUNDS * 4],
-                 up=[b[1]  for b in BOUNDS * 4],
+                 low=[b[0] for b in BOUNDS * N_LIMBS],
+                 up=[b[1]  for b in BOUNDS * N_LIMBS],
                  eta=20.0)
 
 # Gaussian mutation with per-gene sigma = 5% of range
-_sigma = [(b[1] - b[0]) * 0.05 for b in BOUNDS] * 4
+_sigma = [(b[1] - b[0]) * 0.05 for b in BOUNDS] * N_LIMBS
 toolbox.register("mutate", tools.mutGaussian,
                  mu=0, sigma=_sigma, indpb=0.15)
 

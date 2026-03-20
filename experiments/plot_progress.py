@@ -60,13 +60,15 @@ def load_checkpoints(checkpoint_dir: str) -> list[dict]:
         if not fitnesses:
             continue
 
-        # Count average number of wheels across population
-        # Gene index 3 (has_wheel) repeats every GENES_PER_LIMB=9 genes
-        from darwinbot.genome import N_LIMBS, GENES_PER_LIMB
+        # Count average wheels — G_HAS_WHEEL position changes with N_SEGMENTS
+        from darwinbot.genome import N_LIMBS, GENES_PER_LIMB, G_HAS_WHEEL
         wheel_counts = []
         for ind in pop:
-            genes = np.array(ind)
-            wheels = sum(round(genes[3 + i * GENES_PER_LIMB]) for i in range(N_LIMBS))
+            genes  = np.array(ind)
+            wheels = sum(
+                round(genes[i * GENES_PER_LIMB + G_HAS_WHEEL])
+                for i in range(N_LIMBS)
+            )
             wheel_counts.append(wheels)
 
         records.append({
@@ -200,11 +202,14 @@ def update_plot(fig, ax_fitness, ax_wheels, ax_hof,
     if hof:
         rows = []
         for rank, ind in enumerate(hof):
-            genes      = np.array(ind)
-            fit        = ind.fitness.values[0]
-            from darwinbot.genome import N_LIMBS, GENES_PER_LIMB
-            n_w        = sum(round(genes[3 + i * GENES_PER_LIMB]) for i in range(N_LIMBS))
-            avg_len    = np.mean([genes[i * GENES_PER_LIMB] for i in range(N_LIMBS)])
+            genes = np.array(ind)
+            fit   = ind.fitness.values[0]
+            from darwinbot.genome import N_LIMBS, GENES_PER_LIMB, G_HAS_WHEEL, seg_base, GS_LENGTH, N_SEGMENTS
+            n_w     = sum(round(genes[i * GENES_PER_LIMB + G_HAS_WHEEL]) for i in range(N_LIMBS))
+            avg_len = np.mean([
+                genes[i * GENES_PER_LIMB + seg_base(0) + GS_LENGTH]
+                for i in range(N_LIMBS)
+            ])
             rows.append([f"#{rank+1}", f"{fit:.3f}",
                          str(n_w), f"{avg_len:.2f}m"])
 

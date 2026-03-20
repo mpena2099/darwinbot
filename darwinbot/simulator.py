@@ -2,6 +2,9 @@
 simulator.py
 ------------
 MuJoCo-based simulation pipeline.
+
+_apply_control is updated to drive N_SEGMENTS joints per limb,
+with independent oscillator signals per segment.
 """
 
 import os
@@ -10,33 +13,38 @@ import mujoco
 import mujoco.viewer
 from typing import Callable, Optional, Tuple
 
-from darwinbot.genome import RobotGenome, oscillator_signal, decode
+from darwinbot.genome import RobotGenome, segment_signal, decode
 from darwinbot.mjcf_builder import write_mjcf
 from darwinbot.scenarios import ScenarioInfo
 
 # ── Simulation parameters ─────────────────────────────────────────────────────
-SIM_HZ      = 500          # steps per second (timestep = 0.002 s)
-SIM_SECONDS = 10.0
-SIM_STEPS   = int(SIM_HZ * SIM_SECONDS)
-
-# How many steps to wait before checking for falls
-# Gives the robot time to settle from the spawn drop
-SETTLE_STEPS = 100
+SIM_HZ       = 500
+SIM_SECONDS  = 10.0
+SIM_STEPS    = int(SIM_HZ * SIM_SECONDS)
+SETTLE_STEPS = 150   # steps to settle before recording pos0
 
 
 # ── Control ───────────────────────────────────────────────────────────────────
 
 def _apply_control(model: mujoco.MjModel, data: mujoco.MjData,
                    robot: RobotGenome, t: float):
-    """Write actuator targets into data.ctrl."""
+    """
+    Write actuator targets into data.ctrl.
+
+    Actuator order (must match mjcf_builder.py):
+      For each limb i:
+        For each segment j:
+          data.ctrl[idx] = position target  ← oscillator signal
+        If has_wheel:
+          data.ctrl[idx] = velocity target  ← constant spin
+    """
     ctrl_idx = 0
-    for i, limb in enumerate(robot.limbs):
-        # Position control: oscillator target angle
-        data.ctrl[ctrl_idx] = oscillator_signal(limb, t)
-        ctrl_idx += 1
-        # Velocity control: constant wheel spin
+    for limb in robot.limbs:
+        for seg in limb.segments:
+            data.ctrl[ctrl_idx] = segment_signal(seg, t)
+            ctrl_idx += 1
         if limb.has_wheel:
-            data.ctrl[ctrl_idx] = 10.0
+            data.ctrl[ctrl_idx] = 10.0   # rad/s constant wheel spin
             ctrl_idx += 1
 
 
@@ -45,19 +53,15 @@ def _apply_control(model: mujoco.MjModel, data: mujoco.MjData,
 def _fell(data: mujoco.MjData, spawn_z: float) -> bool:
     """
     Check if the robot has toppled.
-
-    data.xpos[1] = base body world position (x, y, z)
-    data.xmat[1] = base body rotation matrix, stored column-major (9 floats)
-                   Column layout: [Xx Yx Zx | Xy Yy Zy | Xz Yz Zz]
-                   The world-Z component of the body's local Z axis is xmat[1][8]
-                   (last element = Zz). When upright, Zz ≈ 1.0.
+    data.xmat[1] is the base body rotation matrix (row-major, 9 floats).
+    xmat[8] = Zz = cosine of tilt from vertical. 1.0 = upright.
     """
     base_z = data.xpos[1][2]
-    zz     = data.xmat[1][8]          # cos(tilt from vertical)
-    tilt   = 1.0 - zz                 # 0 = upright, 2 = upside-down
+    zz     = data.xmat[1][8]
+    tilt   = 1.0 - zz
 
     too_low    = base_z < spawn_z - 0.20
-    too_tilted = tilt > 0.8           # ~63° from vertical
+    too_tilted = tilt > 0.8
 
     return bool(too_low or too_tilted)
 
@@ -82,13 +86,8 @@ def simulate(
     Returns
     -------
     dict with keys:
-        distance_x   – forward displacement (m)
-        lateral_dev  – absolute lateral drift (m)
-        fell         – True if robot toppled
-        energy       – sum |ctrl × qvel| over all steps
-        final_pos    – (x, y, z) tuple
-        scenario     – scenario name string
-        _pos0, _pos_final, _info
+        distance_x, lateral_dev, fell, energy,
+        final_pos, scenario, _pos0, _pos_final, _info
     """
     from darwinbot.scenarios.flat import build as flat_build, get_xml as flat_xml
     if scenario is None:
@@ -104,19 +103,15 @@ def simulate(
         model = mujoco.MjModel.from_xml_path(mjcf)
         data  = mujoco.MjData(model)
 
-        # Get scenario info (spawn position etc.)
         info: ScenarioInfo = build_fn(model, data)
 
-        # Reset state and set spawn position
         mujoco.mj_resetData(model, data)
-        data.qpos[0] = info.spawn_pos[0]   # x
-        data.qpos[1] = info.spawn_pos[1]   # y
-        data.qpos[2] = info.spawn_pos[2]   # z
-        # qpos[3:7] = quaternion, default [1,0,0,0] = upright — leave as is
+        data.qpos[0] = info.spawn_pos[0]
+        data.qpos[1] = info.spawn_pos[1]
+        data.qpos[2] = info.spawn_pos[2]
         mujoco.mj_forward(model, data)
 
-        # Record spawn position after settling
-        # Let the robot drop and settle for SETTLE_STEPS before recording pos0
+        # Settle — let robot drop and stabilise before measuring
         for _ in range(SETTLE_STEPS):
             mujoco.mj_step(model, data)
 
@@ -146,8 +141,7 @@ def simulate(
                     fell = True
                     break
 
-                # Energy proxy
-                n_ctrl = model.nu
+                n_ctrl  = model.nu
                 energy += float(np.sum(
                     np.abs(data.ctrl[:n_ctrl]) *
                     np.abs(data.qvel[6:6 + n_ctrl])

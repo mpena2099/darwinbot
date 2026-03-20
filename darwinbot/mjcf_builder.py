@@ -1,64 +1,76 @@
 """
 mjcf_builder.py
 ---------------
-Converts a RobotGenome into a MuJoCo MJCF XML string.
+Converts a RobotGenome into MuJoCo MJCF XML.
 
-MJCF is MuJoCo's native format. It handles contact, friction,
-and joint dynamics far better than URDF.
+Each limb is a chain of N_SEGMENTS capsules connected by hinge joints,
+with an optional wheel cylinder at the tip of the last segment.
 
-Robot structure
----------------
-worldbody
-  └── base (box, floating — 6 DoF via freejoint)
-        ├── limb_0 (capsule)
-        │     └── wheel_0 (cylinder, if has_wheel)  ← hinge joint
-        ├── limb_1
-        ...
-        └── limb_5
+MJCF body hierarchy per limb
+-----------------------------
+base
+  └── limb_i_s0  (segment 0, attached to base)
+        └── limb_i_s1  (segment 1, attached to tip of s0)
+              └── limb_i_s2  (segment 2, attached to tip of s1)
+                    └── wheel_i  (if has_wheel, attached to tip of s2)
 
-Each limb attaches to the base via a hinge joint (1 DoF, revolute).
-Each wheel attaches to the limb tip via a hinge joint (spins freely).
+All joints in a limb rotate around the same axis (perpendicular to the
+radial outward direction), so the limb bends in the radial plane.
+Independent oscillator phases create wave-like motion along the chain.
 
-Actuators
----------
-- Limb joints  : position actuator (kp gain, driven by oscillator)
-- Wheel joints : velocity actuator (driven at constant speed)
+Actuator order (important — must match _apply_control in simulator.py)
+-----------------------------------------------------------------------
+For each limb i (0..N_LIMBS-1):
+  For each segment j (0..N_SEGMENTS-1):
+    position actuator → limb_i_sj_joint
+  If has_wheel:
+    velocity actuator → wheel_i_joint
 """
 
 import os
 import tempfile
 import numpy as np
-from darwinbot.genome import RobotGenome, LimbGenes
 
-# ── Body geometry constants ───────────────────────────────────────────────────
-BODY_SIZE_X  = 0.20
-BODY_SIZE_Y  = 0.15
-BODY_SIZE_Z  = 0.08
-BODY_MASS    = 1.5
+from darwinbot.genome import RobotGenome, LimbGenes, SegmentGenes, N_SEGMENTS
 
-LIMB_DENSITY = 400.0   # kg/m³  (similar to light aluminium alloy)
+# ── Body constants ────────────────────────────────────────────────────────────
+BODY_SIZE_X = 0.20
+BODY_SIZE_Y = 0.15
+BODY_SIZE_Z = 0.08
+BODY_MASS   = 1.5
+
+LIMB_DENSITY = 400.0   # kg/m³
 WHEEL_MASS   = 0.08
 
-# Contact / friction defaults
-FRICTION         = "1.2 0.05 0.001"   # slide, spin, roll
-WHEEL_FRICTION   = "1.5 0.05 0.001"
-SOLIMP           = "0.99 0.99 0.01"
-SOLREF           = "0.01 1"
+FRICTION       = "1.2 0.05 0.001"
+WHEEL_FRICTION = "1.5 0.05 0.001"
+SOLIMP         = "0.99 0.99 0.01"
+SOLREF         = "0.02 1"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _rgba_limb(idx: int) -> str:
-    """Give each limb a slightly different grey shade for visibility."""
-    v = 0.55 + 0.07 * (idx % 3)
-    return f"{v:.2f} {v:.2f} {v:.2f} 1"
+def _rgba_segment(limb_idx: int, seg_idx: int) -> str:
+    """Colour varies by limb (hue) and segment (brightness)."""
+    hues = [
+        (0.55, 0.55, 0.62),  # blue-grey
+        (0.60, 0.55, 0.50),  # warm grey
+        (0.50, 0.60, 0.55),  # green-grey
+        (0.58, 0.52, 0.60),  # purple-grey
+        (0.60, 0.58, 0.50),  # amber-grey
+        (0.52, 0.58, 0.62),  # teal-grey
+    ]
+    base = hues[limb_idx % len(hues)]
+    # Proximal segment darker, distal lighter
+    brightness = 0.85 + 0.08 * seg_idx
+    r = min(base[0] * brightness, 1.0)
+    g = min(base[1] * brightness, 1.0)
+    b = min(base[2] * brightness, 1.0)
+    return f"{r:.2f} {g:.2f} {b:.2f} 1"
 
 
-def _limb_attachment(limb_idx: int, n_limbs: int) -> np.ndarray:
-    """
-    XYZ position where limb_idx attaches to the base body.
-    Evenly distributed around the body perimeter.
-    """
+def _attachment_point(limb_idx: int, n_limbs: int) -> np.ndarray:
+    """XYZ where limb attaches to base body perimeter."""
     angle = limb_idx * (2 * np.pi / n_limbs)
     x = BODY_SIZE_X / 2 * np.cos(angle)
     y = BODY_SIZE_Y / 2 * np.sin(angle)
@@ -66,92 +78,141 @@ def _limb_attachment(limb_idx: int, n_limbs: int) -> np.ndarray:
     return np.array([x, y, z])
 
 
-# ── MJCF builder ──────────────────────────────────────────────────────────────
+def _seg_mass(seg: SegmentGenes) -> float:
+    """Mass of one capsule segment, clamped to minimum."""
+    r   = seg.width / 2
+    vol = np.pi * r**2 * seg.length + (4/3) * np.pi * r**3
+    return max(LIMB_DENSITY * vol, 0.02)
+
+
+# ── Recursive segment XML builder ────────────────────────────────────────────
+
+def _segment_chain_xml(limb_idx: int, seg_idx: int,
+                       limb: LimbGenes,
+                       dir_x: float, dir_y: float,
+                       jax: float, jay: float,
+                       actuator_lines: list) -> str:
+    """
+    Recursively build the XML for segment seg_idx and all its children.
+
+    Parameters
+    ----------
+    limb_idx       : limb index (for naming)
+    seg_idx        : segment index within limb
+    limb           : LimbGenes dataclass
+    dir_x, dir_y   : outward unit vector of the limb in XY plane
+    jax, jay       : joint rotation axis (perpendicular to limb direction)
+    actuator_lines : list to append actuator XML strings to
+    """
+    seg   = limb.segments[seg_idx]
+    name  = f"limb_{limb_idx}_s{seg_idx}"
+    mass  = _seg_mass(seg)
+    r     = seg.width / 2
+    l     = seg.length
+
+    # Geom goes from body origin (proximal end) along outward direction
+    tip_x = dir_x * l
+    tip_y = dir_y * l
+
+    # Register position actuator for this joint
+    actuator_lines.append(
+        f'  <position name="{name}_pos" joint="{name}_joint"'
+        f' gear="1" kp="6.0" forcelimited="true" forcerange="-8 8"/>'
+    )
+
+    # Build children (next segment or wheel)
+    children_xml = ""
+
+    if seg_idx < N_SEGMENTS - 1:
+        # Next segment: body positioned at tip of current segment
+        next_xml = _segment_chain_xml(
+            limb_idx, seg_idx + 1, limb,
+            dir_x, dir_y, jax, jay,
+            actuator_lines,
+        )
+        children_xml += f"""
+      <body name="limb_{limb_idx}_s{seg_idx+1}" pos="{tip_x:.4f} {tip_y:.4f} 0">
+        <joint name="limb_{limb_idx}_s{seg_idx+1}_joint" type="hinge"
+               axis="{jax:.4f} {jay:.4f} 0"
+               range="-1.5708 1.5708"
+               damping="0.4" frictionloss="0.08" armature="0.01"/>
+{next_xml}
+      </body>"""
+
+    else:
+        # Last segment — attach wheel if present
+        if limb.has_wheel:
+            wr = limb.wheel_rad
+            # Wheel hangs below tip of last segment
+            children_xml += f"""
+      <body name="wheel_{limb_idx}" pos="{tip_x:.4f} {tip_y:.4f} {-wr:.4f}">
+        <joint name="wheel_{limb_idx}_joint" type="hinge"
+               axis="{-dir_y:.4f} {dir_x:.4f} 0"
+               damping="0.05" frictionloss="0.02"/>
+        <geom name="wheel_{limb_idx}_geom" type="cylinder"
+              size="{wr:.4f} {wr*0.15:.4f}"
+              mass="{WHEEL_MASS:.4f}"
+              friction="{WHEEL_FRICTION}"
+              solimp="{SOLIMP}" solref="{SOLREF}"
+              rgba="0.1 0.1 0.1 1"
+              euler="1.5708 0 0"/>
+      </body>"""
+            actuator_lines.append(
+                f'  <velocity name="wheel_{limb_idx}_vel"'
+                f' joint="wheel_{limb_idx}_joint" gear="1" kv="2.0"/>'
+            )
+
+    return f"""        <geom name="{name}_geom" type="capsule"
+              fromto="0 0 0  {tip_x:.4f} {tip_y:.4f} 0"
+              size="{r:.4f}"
+              mass="{mass:.4f}"
+              friction="{FRICTION}"
+              solimp="{SOLIMP}" solref="{SOLREF}"
+              rgba="{_rgba_segment(limb_idx, seg_idx)}"/>{children_xml}"""
+
+
+# ── Main MJCF builder ─────────────────────────────────────────────────────────
 
 def genome_to_mjcf(robot: RobotGenome) -> str:
     """Return a complete MJCF XML string for the given RobotGenome."""
 
-    n_limbs = robot.n_limbs
-    limb_bodies   = []
+    n_limbs        = robot.n_limbs
+    limb_bodies    = []
     actuator_lines = []
 
     for i, limb in enumerate(robot.limbs):
-        attach = _limb_attachment(i, n_limbs)
+        attach = _attachment_point(i, n_limbs)
         ax, ay, az = attach
 
-        # Limb axis direction (unit vector from base outward)
-        angle  = i * (2 * np.pi / n_limbs)
-        dir_x  = np.cos(angle)
-        dir_y  = np.sin(angle)
+        # Global outward direction for this limb
+        global_angle = i * (2 * np.pi / n_limbs)
+        dir_x =  np.cos(global_angle)
+        dir_y =  np.sin(global_angle)
 
-        # Capsule half-length and radius
-        half_l = limb.length / 2
-        radius = limb.width / 2
-
-        # Limb centre position relative to attachment point
-        cx = dir_x * half_l
-        cy = dir_y * half_l
-
-        # Hinge joint axis is perpendicular to the limb direction in XY plane
-        # → rotate 90° around Z
+        # Joint axis perpendicular to limb direction in XY plane
         jax = -dir_y
         jay =  dir_x
 
-        # Mass from density × volume of capsule — clamp to minimum
-        vol  = np.pi * radius**2 * limb.length + (4/3) * np.pi * radius**3
-        mass = max(LIMB_DENSITY * vol, 0.05)   # minimum 50g per limb
+        # Insertion angle gene rotates the joint range offset
+        insertion = limb.angle
 
-        wheel_xml = ""
-        if limb.has_wheel:
-            wr   = limb.wheel_rad
-            wpos = limb.wheel_pos          # fraction along limb
-            # Position along limb from attachment
-            wpx  = dir_x * (limb.length * wpos - half_l)
-            wpy  = dir_y * (limb.length * wpos - half_l)
-            wpz  = -wr                     # wheel hangs below limb
-
-            wheel_xml = f"""
-          <body name="wheel_{i}" pos="{wpx:.4f} {wpy:.4f} {wpz:.4f}">
-            <joint name="wheel_{i}_joint" type="hinge"
-                   axis="{-dir_y:.4f} {dir_x:.4f} 0"
-                   damping="0.05" frictionloss="0.02"/>
-            <geom name="wheel_{i}_geom" type="cylinder"
-                  size="{wr:.4f} {wr*0.15:.4f}"
-                  mass="{WHEEL_MASS:.4f}"
-                  friction="{WHEEL_FRICTION}"
-                  solimp="{SOLIMP}" solref="{SOLREF}"
-                  rgba="0.1 0.1 0.1 1"
-                  euler="1.5708 0 0"/>
-          </body>"""
-
-            actuator_lines.append(
-                f'  <velocity name="wheel_{i}_vel" joint="wheel_{i}_joint"'
-                f' gear="1" kv="2.0"/>'
-            )
-
-        limb_bodies.append(f"""
-      <body name="limb_{i}" pos="{ax:.4f} {ay:.4f} {az:.4f}">
-        <joint name="limb_{i}_joint" type="hinge"
-               axis="{jax:.4f} {jay:.4f} 0"
-               range="-1.5708 1.5708"
-               damping="0.5" frictionloss="0.1"
-               armature="0.01"/>
-        <geom name="limb_{i}_geom" type="capsule"
-              fromto="{-cx:.4f} {-cy:.4f} 0  {cx:.4f} {cy:.4f} 0"
-              size="{radius:.4f}"
-              mass="{mass:.4f}"
-              friction="{FRICTION}"
-              solimp="{SOLIMP}" solref="{SOLREF}"
-              rgba="{_rgba_limb(i)}"/>{wheel_xml}
-      </body>""")
-
-        actuator_lines.append(
-            f'  <position name="limb_{i}_pos" joint="limb_{i}_joint"'
-            f' gear="1" kp="8.0" forcelimited="true" forcerange="-10 10"/>'
+        # Build segment chain XML (populates actuator_lines)
+        chain_xml = _segment_chain_xml(
+            i, 0, limb, dir_x, dir_y, jax, jay, actuator_lines
         )
 
-    limb_xml      = "\n".join(limb_bodies)
-    actuator_xml  = "\n".join(actuator_lines)
+        limb_bodies.append(f"""
+      <body name="limb_{i}_s0" pos="{ax:.4f} {ay:.4f} {az:.4f}">
+        <joint name="limb_{i}_s0_joint" type="hinge"
+               axis="{jax:.4f} {jay:.4f} 0"
+               range="-1.5708 1.5708"
+               ref="{insertion:.4f}"
+               damping="0.5" frictionloss="0.1" armature="0.01"/>
+{chain_xml}
+      </body>""")
+
+    limb_xml     = "\n".join(limb_bodies)
+    actuator_xml = "\n".join(actuator_lines)
 
     mjcf = f"""<mujoco model="darwinbot">
 
@@ -162,7 +223,7 @@ def genome_to_mjcf(robot: RobotGenome) -> str:
           cone="elliptic" noslip_iterations="5"/>
 
   <default>
-    <geom condim="6" solimp="0.99 0.99 0.01" solref="0.02 1"/>
+    <geom condim="6" solimp="{SOLIMP}" solref="{SOLREF}"/>
     <joint damping="0.5" armature="0.05" frictionloss="0.1"/>
     <motor ctrlrange="-1 1" ctrllimited="true"/>
   </default>

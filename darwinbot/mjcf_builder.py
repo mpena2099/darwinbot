@@ -31,13 +31,42 @@ import os
 import tempfile
 import numpy as np
 
-from darwinbot.genome import RobotGenome, LimbGenes, SegmentGenes, N_SEGMENTS
+from darwinbot.genome import RobotGenome, LimbGenes, SegmentGenes, N_SEGMENTS, N_LIMBS
 
-# ── Body constants ────────────────────────────────────────────────────────────
-BODY_SIZE_X = 0.20
-BODY_SIZE_Y = 0.15
-BODY_SIZE_Z = 0.08
-BODY_MASS   = 1.5
+# ── Body size — proportional to number of limbs ───────────────────────────────
+#
+# We need enough perimeter to space N_LIMBS attachment points with clearance.
+# Each point needs at least SEG_CLEARANCE metres of arc between neighbours.
+# We model the body as an ellipse with aspect ratio 4:3 and compute the
+# semi-axes so that the arc length per limb ≥ SEG_CLEARANCE.
+#
+# Approximation: perimeter of ellipse ≈ π × (3(a+b) − √((3a+b)(a+3b)))
+# We iterate to find a satisfying the constraint, then derive b = a × 0.75.
+#
+SEG_CLEARANCE = 0.10   # min arc spacing between attachment points (m)
+BODY_SIZE_Z   = 0.08   # height of body box (fixed)
+BODY_DENSITY  = 800.0  # kg/m³ for body mass scaling
+
+def _compute_body_size(n_limbs: int):
+    """
+    Return (size_x, size_y, mass) for the base body box.
+    Y (lateral) is longer than X (front-back) so that more attachment
+    points fall on the longer lateral sides, mimicking insect body shape.
+    """
+    min_perimeter = n_limbs * SEG_CLEARANCE
+    r_min = min_perimeter / (2 * np.pi)
+    a = r_min * 0.75   # semi-axis X (front-back) — shorter
+    b = r_min * 1.25   # semi-axis Y (lateral)    — longer
+    # Enforce minimum body size
+    a = max(a, 0.10)
+    b = max(b, 0.16)
+    size_x = a * 2
+    size_y = b * 2
+    vol    = size_x * size_y * BODY_SIZE_Z
+    mass   = max(BODY_DENSITY * vol, 1.0)
+    return size_x, size_y, mass
+
+BODY_SIZE_X, BODY_SIZE_Y, BODY_MASS = _compute_body_size(N_LIMBS)
 
 LIMB_DENSITY = 400.0   # kg/m³
 WHEEL_MASS   = 0.08
@@ -69,11 +98,15 @@ def _rgba_segment(limb_idx: int, seg_idx: int) -> str:
     return f"{r:.2f} {g:.2f} {b:.2f} 1"
 
 
-def _attachment_point(limb_idx: int, n_limbs: int) -> np.ndarray:
-    """XYZ where limb attaches to base body perimeter."""
-    angle = limb_idx * (2 * np.pi / n_limbs)
-    x = BODY_SIZE_X / 2 * np.cos(angle)
-    y = BODY_SIZE_Y / 2 * np.sin(angle)
+def _attachment_point(attach_angle: float) -> np.ndarray:
+    """
+    XYZ where a limb attaches to the base body perimeter.
+    attach_angle is a gene (0..2π) — the limb can connect anywhere
+    on the body ellipse, allowing the evolution to cluster limbs
+    on one side, distribute them evenly, or anything in between.
+    """
+    x = (BODY_SIZE_X / 2) * np.cos(attach_angle)
+    y = (BODY_SIZE_Y / 2) * np.sin(attach_angle)
     z = -BODY_SIZE_Z / 4
     return np.array([x, y, z])
 
@@ -205,18 +238,18 @@ def _segment_chain_xml(limb_idx: int, seg_idx: int,
 def genome_to_mjcf(robot: RobotGenome) -> str:
     """Return a complete MJCF XML string for the given RobotGenome."""
 
-    n_limbs        = robot.n_limbs
     limb_bodies    = []
     actuator_lines = []
 
     for i, limb in enumerate(robot.limbs):
-        attach = _attachment_point(i, n_limbs)
+        # Attachment point from gene — limb can connect anywhere on perimeter
+        attach = _attachment_point(limb.attach_angle)
         ax, ay, az = attach
 
-        # Global outward direction for this limb
-        global_angle = i * (2 * np.pi / n_limbs)
-        dir_x =  np.cos(global_angle)
-        dir_y =  np.sin(global_angle)
+        # Outward direction = same angle as attachment point on the ellipse
+        # This ensures the limb points away from the body surface naturally
+        dir_x =  np.cos(limb.attach_angle)
+        dir_y =  np.sin(limb.attach_angle)
 
         # Joint axis perpendicular to limb direction in XY plane
         jax = -dir_y

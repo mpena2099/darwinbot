@@ -142,20 +142,49 @@ def _segment_chain_xml(limb_idx: int, seg_idx: int,
     else:
         # Last segment — attach wheel if present
         if limb.has_wheel:
-            wr = limb.wheel_rad
-            # Wheel hangs below tip of last segment
+            wr         = limb.wheel_rad
+            wthick     = wr * 0.20     # half-thickness of wheel (thin like a bicycle wheel)
+            axle_half  = wr * 0.65     # half-length of axle (sticks out on both sides)
+            axle_r     = wr * 0.07     # axle radius (thin cylinder)
+
+            # The wheel body centre is placed offset along the axle direction
+            # from the segment tip, so that one end of the axle coincides with
+            # the segment tip — exactly like a bicycle axle held at one end.
+            #
+            # Axle direction = (jax, jay, 0) — perpendicular to limb in XY plane.
+            # The wheel face is perpendicular to the axle, so the wheel rolls
+            # in the limb's outward direction (forward locomotion).
+            #
+            # Body centre = segment_tip + axle_half * axle_dir + drop_z
+            cx = tip_x + jax * axle_half
+            cy = tip_y + jay * axle_half
+            cz = -(r + wthick)   # drop so wheel sits below segment tip
+
+            # fromto in local body frame for axle and wheel:
+            # axle: from -axle_half along axle_dir to +axle_half
+            ax0x = -jax * axle_half;  ax0y = -jay * axle_half
+            ax1x =  jax * axle_half;  ax1y =  jay * axle_half
+            # wheel: same axis direction but only the thickness extent
+            wx0x = -jax * wthick;  wx0y = -jay * wthick
+            wx1x =  jax * wthick;  wx1y =  jay * wthick
+
             children_xml += f"""
-      <body name="wheel_{limb_idx}" pos="{tip_x:.4f} {tip_y:.4f} {-wr:.4f}">
+      <body name="wheel_{limb_idx}" pos="{cx:.4f} {cy:.4f} {cz:.4f}">
         <joint name="wheel_{limb_idx}_joint" type="hinge"
-               axis="{-dir_y:.4f} {dir_x:.4f} 0"
+               axis="{jax:.4f} {jay:.4f} 0"
                damping="0.05" frictionloss="0.02"/>
+        <geom name="axle_{limb_idx}_geom" type="cylinder"
+              fromto="{ax0x:.4f} {ax0y:.4f} 0  {ax1x:.4f} {ax1y:.4f} 0"
+              size="{axle_r:.4f}"
+              mass="0.01"
+              rgba="0.65 0.65 0.65 1"/>
         <geom name="wheel_{limb_idx}_geom" type="cylinder"
-              size="{wr:.4f} {wr*0.15:.4f}"
+              fromto="{wx0x:.4f} {wx0y:.4f} 0  {wx1x:.4f} {wx1y:.4f} 0"
+              size="{wr:.4f}"
               mass="{WHEEL_MASS:.4f}"
               friction="{WHEEL_FRICTION}"
               solimp="{SOLIMP}" solref="{SOLREF}"
-              rgba="0.1 0.1 0.1 1"
-              euler="1.5708 0 0"/>
+              rgba="0.1 0.1 0.1 1"/>
       </body>"""
             actuator_lines.append(
                 f'  <velocity name="wheel_{limb_idx}_vel"'

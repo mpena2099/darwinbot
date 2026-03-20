@@ -209,3 +209,4 @@ checkpoints/
 
 # Others
 *~
+MUJOCO_LOG.TXT

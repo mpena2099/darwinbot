@@ -1,25 +1,25 @@
 """
 darwinbot.scenarios
 -------------------
-Each scenario module exposes a single function:
+Each scenario module exposes two functions:
 
-    build(client: int) -> ScenarioInfo
+    get_xml() -> str
+        Returns MJCF XML snippet injected into the worldbody
+        before model compilation (floors, walls, ramps, etc.)
 
-It loads all necessary URDF/geometry into the given PyBullet client
-and returns a ScenarioInfo describing where to spawn the robot and
-how to score it.
+    build(model, data) -> ScenarioInfo
+        Called after compilation to set spawn position,
+        apply friction overrides, etc.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Tuple, Optional
 
 
 @dataclass
 class ScenarioInfo:
-    name:          str
-    spawn_pos:     Tuple[float, float, float] = (0.0, 0.0, 0.35)
-    spawn_orn:     Tuple[float, float, float] = (0.0, 0.0, 0.0)   # euler RPY
-    # Optional target position for goal-directed scenarios (e.g. confined room)
-    target_pos:    Optional[Tuple[float, float, float]] = None
-    # Friction override applied to scenario ground bodies (informational)
-    ground_friction: float = 0.7
+    name:            str
+    spawn_pos:       Tuple[float, float, float] = (0.0, 0.0, 0.35)
+    spawn_orn:       Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    target_pos:      Optional[Tuple[float, float, float]] = None
+    ground_friction: float = 1.2

@@ -1,110 +1,83 @@
 """
 simulator.py
 ------------
-Loads a URDF into PyBullet, runs the oscillator controller,
-and returns raw simulation metrics.
-
-Always runs in DIRECT mode (no GUI) for speed.
-Use visualise=True only for manual inspection of a single individual.
-
-A scenario builder function can be passed to build the world before
-loading the robot. If None, defaults to the flat floor.
+MuJoCo-based simulation pipeline.
 """
 
 import os
 import numpy as np
-import pybullet as p
-import pybullet_data
-from typing import Callable, Optional
+import mujoco
+import mujoco.viewer
+from typing import Callable, Optional, Tuple
 
 from darwinbot.genome import RobotGenome, oscillator_signal, decode
-from darwinbot.urdf_builder import write_urdf
+from darwinbot.mjcf_builder import write_mjcf
 from darwinbot.scenarios import ScenarioInfo
 
-# Simulation parameters
-SIM_HZ       = 120
-SIM_SECONDS  = 10.0
-SIM_STEPS    = int(SIM_HZ * SIM_SECONDS)
+# ── Simulation parameters ─────────────────────────────────────────────────────
+SIM_HZ      = 500          # steps per second (timestep = 0.002 s)
+SIM_SECONDS = 10.0
+SIM_STEPS   = int(SIM_HZ * SIM_SECONDS)
+
+# How many steps to wait before checking for falls
+# Gives the robot time to settle from the spawn drop
+SETTLE_STEPS = 100
 
 
-def _connect(visualise: bool) -> int:
-    mode   = p.GUI if visualise else p.DIRECT
-    client = p.connect(mode)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath(),
-                              physicsClientId=client)
-    p.setGravity(0, 0, -9.81, physicsClientId=client)
-    p.setTimeStep(1.0 / SIM_HZ,  physicsClientId=client)
-    return client
+# ── Control ───────────────────────────────────────────────────────────────────
 
-
-def _load_robot(urdf_path: str, spawn_pos, spawn_orn_euler,
-                client: int) -> int:
-    orn = p.getQuaternionFromEuler(list(spawn_orn_euler))
-    robot_id = p.loadURDF(
-        urdf_path,
-        basePosition=list(spawn_pos),
-        baseOrientation=orn,
-        physicsClientId=client,
-        flags=p.URDF_USE_SELF_COLLISION,
-    )
-    return robot_id
-
-
-def _get_revolute_joints(robot_id: int, client: int) -> dict:
-    joint_map = {}
-    n = p.getNumJoints(robot_id, physicsClientId=client)
-    for j in range(n):
-        info   = p.getJointInfo(robot_id, j, physicsClientId=client)
-        j_name = info[1].decode("utf-8")
-        j_type = info[2]
-        if j_type == p.JOINT_REVOLUTE:
-            joint_map[j_name] = j
-    return joint_map
-
-
-def _apply_control(robot_id: int, joint_map: dict,
-                   robot: RobotGenome, t: float, client: int):
+def _apply_control(model: mujoco.MjModel, data: mujoco.MjData,
+                   robot: RobotGenome, t: float):
+    """Write actuator targets into data.ctrl."""
+    ctrl_idx = 0
     for i, limb in enumerate(robot.limbs):
-        j_name = f"base_limb_{i}_joint"
-        if j_name in joint_map:
-            target = oscillator_signal(limb, t)
-            p.setJointMotorControl2(
-                robot_id, joint_map[j_name],
-                controlMode=p.POSITION_CONTROL,
-                targetPosition=target,
-                force=8.0,
-                physicsClientId=client,
-            )
+        # Position control: oscillator target angle
+        data.ctrl[ctrl_idx] = oscillator_signal(limb, t)
+        ctrl_idx += 1
+        # Velocity control: constant wheel spin
         if limb.has_wheel:
-            w_name = f"limb_{i}_wheel_joint"
-            n_j = p.getNumJoints(robot_id, physicsClientId=client)
-            for j in range(n_j):
-                info = p.getJointInfo(robot_id, j, physicsClientId=client)
-                if info[1].decode("utf-8") == w_name:
-                    p.setJointMotorControl2(
-                        robot_id, j,
-                        controlMode=p.VELOCITY_CONTROL,
-                        targetVelocity=10.0,
-                        force=2.0,
-                        physicsClientId=client,
-                    )
-                    break
+            data.ctrl[ctrl_idx] = 10.0
+            ctrl_idx += 1
 
+
+# ── Fall detection ────────────────────────────────────────────────────────────
+
+def _fell(data: mujoco.MjData, spawn_z: float) -> bool:
+    """
+    Check if the robot has toppled.
+
+    data.xpos[1] = base body world position (x, y, z)
+    data.xmat[1] = base body rotation matrix, stored column-major (9 floats)
+                   Column layout: [Xx Yx Zx | Xy Yy Zy | Xz Yz Zz]
+                   The world-Z component of the body's local Z axis is xmat[1][8]
+                   (last element = Zz). When upright, Zz ≈ 1.0.
+    """
+    base_z = data.xpos[1][2]
+    zz     = data.xmat[1][8]          # cos(tilt from vertical)
+    tilt   = 1.0 - zz                 # 0 = upright, 2 = upside-down
+
+    too_low    = base_z < spawn_z - 0.20
+    too_tilted = tilt > 0.8           # ~63° from vertical
+
+    return bool(too_low or too_tilted)
+
+
+# ── Main simulate function ────────────────────────────────────────────────────
 
 def simulate(
     genes: np.ndarray,
-    scenario_builder: Optional[Callable] = None,
+    scenario: Optional[Tuple[Callable, Callable]] = None,
     visualise: bool = False,
 ) -> dict:
     """
-    Full simulation pipeline for one individual in one scenario.
+    Simulate one individual and return performance metrics.
 
     Parameters
     ----------
-    genes            : flat genome vector
-    scenario_builder : callable(client) -> ScenarioInfo
-                       If None, uses flat floor.
-    visualise        : open GUI window (manual inspection only)
+    genes     : flat genome vector
+    scenario  : (get_xml_fn, build_fn) tuple from registry.
+                If None, uses flat floor.
+    visualise : open interactive MuJoCo viewer (blocks until closed)
 
     Returns
     -------
@@ -112,52 +85,75 @@ def simulate(
         distance_x   – forward displacement (m)
         lateral_dev  – absolute lateral drift (m)
         fell         – True if robot toppled
-        energy       – sum |torque × velocity| over all steps
+        energy       – sum |ctrl × qvel| over all steps
         final_pos    – (x, y, z) tuple
         scenario     – scenario name string
-        _pos0        – spawn position tuple
-        _pos_final   – final position tuple
-        _info        – ScenarioInfo object
+        _pos0, _pos_final, _info
     """
-    from darwinbot.scenarios.flat import build as flat_build
-    if scenario_builder is None:
-        scenario_builder = flat_build
+    from darwinbot.scenarios.flat import build as flat_build, get_xml as flat_xml
+    if scenario is None:
+        get_xml_fn = flat_xml
+        build_fn   = flat_build
+    else:
+        get_xml_fn, build_fn = scenario
 
-    robot  = decode(genes)
-    urdf   = write_urdf(robot)
-    client = _connect(visualise)
+    robot = decode(genes)
+    mjcf  = write_mjcf(robot, scenario_xml=get_xml_fn())
 
     try:
-        info: ScenarioInfo = scenario_builder(client)
-        robot_id  = _load_robot(urdf, info.spawn_pos, info.spawn_orn, client)
-        joint_map = _get_revolute_joints(robot_id, client)
+        model = mujoco.MjModel.from_xml_path(mjcf)
+        data  = mujoco.MjData(model)
 
-        pos0 = np.array(p.getBasePositionAndOrientation(
-            robot_id, physicsClientId=client)[0])
+        # Get scenario info (spawn position etc.)
+        info: ScenarioInfo = build_fn(model, data)
 
-        energy = 0.0
-        fell   = False
+        # Reset state and set spawn position
+        mujoco.mj_resetData(model, data)
+        data.qpos[0] = info.spawn_pos[0]   # x
+        data.qpos[1] = info.spawn_pos[1]   # y
+        data.qpos[2] = info.spawn_pos[2]   # z
+        # qpos[3:7] = quaternion, default [1,0,0,0] = upright — leave as is
+        mujoco.mj_forward(model, data)
 
-        for step in range(SIM_STEPS):
-            t = step / SIM_HZ
-            _apply_control(robot_id, joint_map, robot, t, client)
-            p.stepSimulation(physicsClientId=client)
+        # Record spawn position after settling
+        # Let the robot drop and settle for SETTLE_STEPS before recording pos0
+        for _ in range(SETTLE_STEPS):
+            mujoco.mj_step(model, data)
 
-            pos, orn = p.getBasePositionAndOrientation(
-                robot_id, physicsClientId=client)
-            roll, pitch, _ = p.getEulerFromQuaternion(orn)
+        pos0    = np.array(data.xpos[1]).copy()
+        spawn_z = pos0[2]
+        energy  = 0.0
+        fell    = False
 
-            if pos[2] < pos0[2] - 0.15 or abs(roll) > 1.2 or abs(pitch) > 1.2:
-                fell = True
-                break
+        if visualise:
+            import time
+            with mujoco.viewer.launch_passive(model, data) as viewer:
+                step = 0
+                while viewer.is_running():
+                    t = step / SIM_HZ
+                    _apply_control(model, data, robot, t)
+                    mujoco.mj_step(model, data)
+                    viewer.sync()
+                    time.sleep(1.0 / SIM_HZ)
+                    step += 1
+        else:
+            for step in range(SIM_STEPS):
+                t = step / SIM_HZ
+                _apply_control(model, data, robot, t)
+                mujoco.mj_step(model, data)
 
-            n_j = p.getNumJoints(robot_id, physicsClientId=client)
-            for j in range(n_j):
-                js      = p.getJointState(robot_id, j, physicsClientId=client)
-                energy += abs(js[3]) * abs(js[1]) * (1.0 / SIM_HZ)
+                if _fell(data, spawn_z):
+                    fell = True
+                    break
 
-        pos_final = np.array(p.getBasePositionAndOrientation(
-            robot_id, physicsClientId=client)[0])
+                # Energy proxy
+                n_ctrl = model.nu
+                energy += float(np.sum(
+                    np.abs(data.ctrl[:n_ctrl]) *
+                    np.abs(data.qvel[6:6 + n_ctrl])
+                ) / SIM_HZ)
+
+        pos_final = np.array(data.xpos[1]).copy()
 
         return {
             "distance_x":  float(pos_final[0] - pos0[0]),
@@ -172,8 +168,7 @@ def simulate(
         }
 
     finally:
-        p.disconnect(physicsClientId=client)
         try:
-            os.remove(urdf)
+            os.remove(mjcf)
         except OSError:
             pass

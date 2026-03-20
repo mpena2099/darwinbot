@@ -1,165 +1,107 @@
 """
 scenarios/confined.py
 ---------------------
-Phase 4 — confined room ("elevator shaft").
+Phase 4 — small confined room with a single opening.
 
-A small rectangular room with one opening on one wall.
-The robot spawns just outside the opening, must enter,
-navigate inside, and exit back through the same opening.
-
-Room dimensions (internal):
+Room (internal):
   Width  (X): 1.0 m
   Depth  (Y): 1.2 m
   Height (Z): 0.8 m
-  Opening:    0.5 m wide × 0.6 m tall, centred on the front wall (Y=0)
+  Opening:    0.5 m wide × 0.6 m tall, centred on front wall (Y=0)
 
-Fitness for this scenario is computed differently (see fitness.py):
-  - Reward for crossing the threshold INTO the room
-  - Additional reward for reaching the back wall
-  - Additional reward for exiting back through the opening
-
-The ScenarioInfo.target_pos marks the centre of the room interior.
+Robot spawns just outside the opening, facing +Y (into the room).
+Fitness rewards entering, reaching the back wall, and exiting.
 """
 
 from darwinbot.scenarios import ScenarioInfo
 
-# Room geometry
-ROOM_W   = 1.0    # internal X width
-ROOM_D   = 1.2    # internal Y depth
-ROOM_H   = 0.8    # internal Z height
-WALL_T   = 0.05   # wall thickness
-OPENING_W = 0.50  # opening width (centred in X)
-OPENING_H = 0.60  # opening height (from floor)
-
-WALL_FRICTION = 0.5
-FLOOR_FRICTION = 0.7
-
-# The room's front wall sits at Y=0; interior extends to Y=ROOM_D
-# Robot spawns at Y < 0, facing +Y
+ROOM_W    = 1.0
+ROOM_D    = 1.2
+ROOM_H    = 0.8
+WALL_T    = 0.05
+OPEN_W    = 0.50
+OPEN_H    = 0.60
 
 
-def _static_box(half_extents, pos, rgba, client):
-    import pybullet as p
-    col = p.createCollisionShape(p.GEOM_BOX,
-                                 halfExtents=half_extents,
-                                 physicsClientId=client)
-    vis = p.createVisualShape(p.GEOM_BOX,
-                              halfExtents=half_extents,
-                              rgbaColor=rgba,
-                              physicsClientId=client)
-    body = p.createMultiBody(baseMass=0,
-                             baseCollisionShapeIndex=col,
-                             baseVisualShapeIndex=vis,
-                             basePosition=pos,
-                             physicsClientId=client)
-    p.changeDynamics(body, -1,
-                     lateralFriction=WALL_FRICTION,
-                     physicsClientId=client)
-    return body
+def get_xml() -> str:
+    hw   = ROOM_W / 2
+    ht   = WALL_T / 2
+    hh   = ROOM_H / 2
+    ohw  = OPEN_W / 2       # half opening width
+    pillar_w = (hw - ohw)   # width of each door pillar
 
+    transom_h = ROOM_H - OPEN_H
 
-def build(client: int) -> ScenarioInfo:
-    import pybullet as p
-    import pybullet_data
-    p.setAdditionalSearchPath(pybullet_data.getDataPath(),
-                              physicsClientId=client)
+    pillar_xml = ""
+    if pillar_w > 0:
+        pillar_xml = f"""
+    <!-- Front wall: left pillar -->
+    <geom name="conf_pillar_l" type="box"
+          pos="{-(ohw + pillar_w/2):.4f} {-ht:.4f} {hh:.4f}"
+          size="{pillar_w/2:.4f} {ht:.4f} {hh:.4f}"
+          rgba="0.70 0.70 0.75 1" condim="6"/>
+    <!-- Front wall: right pillar -->
+    <geom name="conf_pillar_r" type="box"
+          pos="{ohw + pillar_w/2:.4f} {-ht:.4f} {hh:.4f}"
+          size="{pillar_w/2:.4f} {ht:.4f} {hh:.4f}"
+          rgba="0.70 0.70 0.75 1" condim="6"/>"""
 
-    hw = ROOM_W / 2          # half width in X
-    ht = WALL_T / 2
-    hh = ROOM_H / 2
-
-    # ── Floor ─────────────────────────────────────────────────────────────────
-    floor = _static_box(
-        half_extents=[hw + WALL_T, ROOM_D / 2 + WALL_T, ht],
-        pos=[0.0, ROOM_D / 2, -ht],
-        rgba=[0.80, 0.80, 0.80, 1],
-        client=client,
-    )
-    p.changeDynamics(floor, -1,
-                     lateralFriction=FLOOR_FRICTION,
-                     physicsClientId=client)
-
-    # ── Ceiling ───────────────────────────────────────────────────────────────
-    _static_box(
-        half_extents=[hw + WALL_T, ROOM_D / 2 + WALL_T, ht],
-        pos=[0.0, ROOM_D / 2, ROOM_H + ht],
-        rgba=[0.85, 0.85, 0.90, 0.4],
-        client=client,
-    )
-
-    # ── Back wall (Y = ROOM_D) ────────────────────────────────────────────────
-    _static_box(
-        half_extents=[hw + WALL_T, ht, hh],
-        pos=[0.0, ROOM_D + ht, hh],
-        rgba=[0.70, 0.70, 0.75, 1],
-        client=client,
-    )
-
-    # ── Left wall (X = -hw) ───────────────────────────────────────────────────
-    _static_box(
-        half_extents=[ht, ROOM_D / 2, hh],
-        pos=[-hw - ht, ROOM_D / 2, hh],
-        rgba=[0.70, 0.70, 0.75, 1],
-        client=client,
-    )
-
-    # ── Right wall (X = +hw) ──────────────────────────────────────────────────
-    _static_box(
-        half_extents=[ht, ROOM_D / 2, hh],
-        pos=[hw + ht, ROOM_D / 2, hh],
-        rgba=[0.70, 0.70, 0.75, 1],
-        client=client,
-    )
-
-    # ── Front wall with opening ───────────────────────────────────────────────
-    # The front wall (Y=0) has a centred opening of OPENING_W × OPENING_H.
-    # Built from three pieces: left pillar, right pillar, top transom.
-
-    open_hw = OPENING_W / 2   # half-width of opening
-
-    # Left pillar
-    left_w = hw - open_hw
-    if left_w > 0:
-        _static_box(
-            half_extents=[left_w / 2, ht, hh],
-            pos=[-open_hw - left_w / 2, -ht, hh],
-            rgba=[0.70, 0.70, 0.75, 1],
-            client=client,
-        )
-
-    # Right pillar
-    if left_w > 0:
-        _static_box(
-            half_extents=[left_w / 2, ht, hh],
-            pos=[open_hw + left_w / 2, -ht, hh],
-            rgba=[0.70, 0.70, 0.75, 1],
-            client=client,
-        )
-
-    # Top transom (above opening, up to ceiling)
-    transom_h = ROOM_H - OPENING_H
+    transom_xml = ""
     if transom_h > 0:
-        _static_box(
-            half_extents=[open_hw, ht, transom_h / 2],
-            pos=[0.0, -ht, OPENING_H + transom_h / 2],
-            rgba=[0.70, 0.70, 0.75, 1],
-            client=client,
-        )
+        transom_xml = f"""
+    <!-- Front wall: transom above opening -->
+    <geom name="conf_transom" type="box"
+          pos="0 {-ht:.4f} {OPEN_H + transom_h/2:.4f}"
+          size="{ohw:.4f} {ht:.4f} {transom_h/2:.4f}"
+          rgba="0.70 0.70 0.75 1" condim="6"/>"""
 
-    # ── Approach floor outside the room ───────────────────────────────────────
-    _static_box(
-        half_extents=[hw, 0.6, ht],
-        pos=[0.0, -0.6, -ht],
-        rgba=[0.75, 0.75, 0.75, 1],
-        client=client,
-    )
+    return f"""
+    <!-- Confined room floor -->
+    <geom name="conf_floor" type="box"
+          pos="0 {ROOM_D/2:.4f} {-ht:.4f}"
+          size="{hw+WALL_T:.4f} {ROOM_D/2+WALL_T:.4f} {ht:.4f}"
+          friction="1.2 0.05 0.001"
+          rgba="0.80 0.80 0.80 1" condim="6"/>
 
+    <!-- Ceiling -->
+    <geom name="conf_ceil" type="box"
+          pos="0 {ROOM_D/2:.4f} {ROOM_H+ht:.4f}"
+          size="{hw+WALL_T:.4f} {ROOM_D/2+WALL_T:.4f} {ht:.4f}"
+          rgba="0.85 0.85 0.90 0.4" condim="6"/>
+
+    <!-- Back wall -->
+    <geom name="conf_back" type="box"
+          pos="0 {ROOM_D+ht:.4f} {hh:.4f}"
+          size="{hw+WALL_T:.4f} {ht:.4f} {hh:.4f}"
+          rgba="0.70 0.70 0.75 1" condim="6"/>
+
+    <!-- Left wall -->
+    <geom name="conf_left" type="box"
+          pos="{-hw-ht:.4f} {ROOM_D/2:.4f} {hh:.4f}"
+          size="{ht:.4f} {ROOM_D/2:.4f} {hh:.4f}"
+          rgba="0.70 0.70 0.75 1" condim="6"/>
+
+    <!-- Right wall -->
+    <geom name="conf_right" type="box"
+          pos="{hw+ht:.4f} {ROOM_D/2:.4f} {hh:.4f}"
+          size="{ht:.4f} {ROOM_D/2:.4f} {hh:.4f}"
+          rgba="0.70 0.70 0.75 1" condim="6"/>
+    {pillar_xml}
+    {transom_xml}
+
+    <!-- Approach floor outside room -->
+    <geom name="conf_approach" type="box"
+          pos="0 -0.6 {-ht:.4f}" size="{hw:.4f} 0.6 {ht:.4f}"
+          friction="1.2 0.05 0.001"
+          rgba="0.75 0.75 0.75 1" condim="6"/>
+"""
+
+
+def build(model, data) -> ScenarioInfo:
     return ScenarioInfo(
         name="confined",
-        # Spawn just outside the opening, facing +Y (into the room)
         spawn_pos=(0.0, -0.5, 0.35),
         spawn_orn=(0.0, 0.0, 0.0),
-        # Target: centre of the room interior
         target_pos=(0.0, ROOM_D / 2, 0.2),
-        ground_friction=FLOOR_FRICTION,
+        ground_friction=1.2,
     )

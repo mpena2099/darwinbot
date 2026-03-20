@@ -1,22 +1,10 @@
 """
 fitness.py
 ----------
-Multi-scenario fitness function.
+Multi-scenario fitness function for MuJoCo-based simulation.
 
 Each individual is evaluated in ALL active scenarios.
-The final fitness is a weighted average of per-scenario scores,
-with weights defined in scenarios/registry.py.
-
-Per-scenario scoring
---------------------
-flat / surfaces / obstacles:
-    score = distance_x - LATERAL_W * lateral_dev - ENERGY_W * energy
-    Fall  → FALL_PENALTY
-
-confined:
-    Scored on progress toward and through the room, not raw X distance.
-    score = entry_bonus + depth_bonus + exit_bonus - ENERGY_W * energy
-    Fall  → FALL_PENALTY
+Final fitness = weighted average of per-scenario scores.
 """
 
 import numpy as np
@@ -24,22 +12,20 @@ from typing import List, Tuple, Callable
 
 from darwinbot.simulator import simulate
 
-# Shared penalty/weight constants
-FALL_PENALTY   = -15.0
-LATERAL_W      =   0.4
-ENERGY_W       =   0.001
-MIN_SCORE      =  -5.0
+FALL_PENALTY = -15.0
+LATERAL_W    =   0.4
+ENERGY_W     =   0.001
+MIN_SCORE    =  -5.0
 
-# Confined scenario bonuses
-ENTRY_BONUS    =  2.0    # crossed the opening threshold into room
-DEPTH_BONUS    =  3.0    # reached back half of room
-EXIT_BONUS     =  4.0    # exited back through the opening
+# Confined room bonuses
+ENTRY_BONUS  =  2.0
+DEPTH_BONUS  =  3.0
+EXIT_BONUS   =  4.0
 
 
 # ── Per-scenario scorers ──────────────────────────────────────────────────────
 
 def _score_default(metrics: dict) -> float:
-    """Used for flat, surfaces, obstacles."""
     if metrics["fell"]:
         return FALL_PENALTY
     score = (
@@ -51,10 +37,6 @@ def _score_default(metrics: dict) -> float:
 
 
 def _score_confined(metrics: dict) -> float:
-    """
-    Scores progress in the confined room scenario.
-    Uses Y displacement (robot moves in +Y direction into the room).
-    """
     if metrics["fell"]:
         return FALL_PENALTY
 
@@ -62,25 +44,14 @@ def _score_confined(metrics: dict) -> float:
     pos0      = metrics["_pos0"]
     pos_final = metrics["_pos_final"]
 
-    # Room interior spans Y = 0 .. ROOM_D
-    # Robot spawns at Y ~ -0.5
-    y0    = pos0[1]
     y_f   = pos_final[1]
     score = 0.0
 
-    # Entered the room (crossed Y=0 threshold)
     if y_f > 0.0:
         score += ENTRY_BONUS
-
-    # Reached the back half of the room
-    if info.target_pos is not None:
-        room_mid_y = info.target_pos[1]
-        if y_f >= room_mid_y:
-            score += DEPTH_BONUS
-
-    # Exited back through the opening (returned to Y < 0 after entering)
-    # Approximate: final Y is back near spawn
-    if y_f < -0.1 and y0 < 0:
+    if info.target_pos is not None and y_f >= info.target_pos[1]:
+        score += DEPTH_BONUS
+    if y_f < -0.1 and pos0[1] < 0:
         score += EXIT_BONUS
 
     score -= ENERGY_W * metrics["energy"]
@@ -99,20 +70,21 @@ _SCORERS = {
 
 def evaluate(
     genes,
-    active_scenarios: List[Tuple[str, Callable, float]] = None,
+    active_scenarios: List[Tuple[str, Callable, Callable, float]] = None,
 ) -> tuple:
     """
     Evaluate one individual across all active scenarios.
 
     Parameters
     ----------
-    genes            : list or np.ndarray (DEAP passes a list)
-    active_scenarios : list of (name, builder_fn, weight) from registry.
+    genes            : list or np.ndarray
+    active_scenarios : list of (name, get_xml_fn, build_fn, weight)
+                       from registry.get_active_scenarios().
                        If None, defaults to flat floor only.
 
     Returns
     -------
-    (weighted_fitness_score,)  — tuple required by DEAP
+    (weighted_fitness_score,)
     """
     from darwinbot.scenarios.registry import get_active_scenarios
     if active_scenarios is None:
@@ -121,10 +93,10 @@ def evaluate(
     genes = np.array(genes, dtype=float)
 
     total_score  = 0.0
-    total_weight = 0.0   # weights already normalised, but be safe
+    total_weight = 0.0
 
-    for name, builder, weight in active_scenarios:
-        metrics = simulate(genes, scenario_builder=builder)
+    for name, get_xml_fn, build_fn, weight in active_scenarios:
+        metrics = simulate(genes, scenario=(get_xml_fn, build_fn))
         scorer  = _SCORERS.get(name, _score_default)
         score   = scorer(metrics)
         total_score  += weight * score

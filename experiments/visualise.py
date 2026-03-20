@@ -13,11 +13,8 @@ python experiments/visualise.py --checkpoint checkpoints/gen_0050.pkl --speed 0.
 
 import argparse
 import pickle
-import sys
 import os
 import numpy as np
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from darwinbot.genome import decode, genome_summary
 from darwinbot.mjcf_builder import write_mjcf

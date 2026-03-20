@@ -70,8 +70,8 @@ def _clip_individual(ind):
 # ── Main evolution function ───────────────────────────────────────────────────
 
 def run_evolution(
-    pop_size:       int   = 60,
-    n_generations:  int   = 100,
+    pop_size:       int   = 40,
+    n_generations:  int   = 50,
     cx_prob:        float = 0.6,
     mut_prob:       float = 0.3,
     n_workers:      int   = None,

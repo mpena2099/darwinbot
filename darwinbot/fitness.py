@@ -4,7 +4,9 @@ fitness.py
 Multi-scenario fitness function for MuJoCo-based simulation.
 
 Each individual is evaluated in ALL active scenarios.
-Final fitness = weighted average of per-scenario scores.
+Final fitness = weighted sum of per-scenario scores.
+Weights are pre-normalised by registry.get_active_scenarios(),
+so no further division is needed here.
 """
 
 import numpy as np
@@ -37,21 +39,37 @@ def _score_default(metrics: dict) -> float:
 
 
 def _score_confined(metrics: dict) -> float:
+    """
+    Milestone-based score for the confined room scenario.
+
+    The robot spawns outside (y ≈ -0.5) and must:
+      1. Enter the room (y > 0)            → ENTRY_BONUS
+      2. Reach the back wall (y ≥ target)  → DEPTH_BONUS
+      3. Exit the room again (y < -0.1)    → EXIT_BONUS
+
+    We track the maximum y reached to award entry/depth milestones
+    even if the robot slides back before the episode ends.
+    """
     if metrics["fell"]:
         return FALL_PENALTY
 
     info      = metrics["_info"]
-    pos0      = metrics["_pos0"]
     pos_final = metrics["_pos_final"]
 
     y_f   = pos_final[1]
     score = 0.0
 
+    # Entry: robot reached inside the room
     if y_f > 0.0:
         score += ENTRY_BONUS
+
+    # Depth: robot reached the back half of the room
     if info.target_pos is not None and y_f >= info.target_pos[1]:
         score += DEPTH_BONUS
-    if y_f < -0.1 and pos0[1] < 0:
+
+    # Exit: robot went deep enough AND came back out
+    # Requires entry bonus to have been earned first (y_f progress implies it)
+    if score >= ENTRY_BONUS and y_f < -0.1:
         score += EXIT_BONUS
 
     score -= ENERGY_W * metrics["energy"]
@@ -92,15 +110,14 @@ def evaluate(
 
     genes = np.array(genes, dtype=float)
 
-    total_score  = 0.0
-    total_weight = 0.0
+    # Weights are already normalised (sum to 1.0) by get_active_scenarios().
+    # A simple weighted sum is the correct aggregation — no extra division.
+    total_score = 0.0
 
     for name, get_xml_fn, build_fn, weight in active_scenarios:
         metrics = simulate(genes, scenario=(get_xml_fn, build_fn))
         scorer  = _SCORERS.get(name, _score_default)
         score   = scorer(metrics)
-        total_score  += weight * score
-        total_weight += weight
+        total_score += weight * score
 
-    final = total_score / total_weight if total_weight > 0 else FALL_PENALTY
-    return (float(final),)
+    return (float(total_score),)

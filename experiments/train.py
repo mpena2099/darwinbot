@@ -26,16 +26,15 @@ python experiments/train.py --resume checkpoints/gen_0050.pkl --scenarios phase2
 
 import argparse
 import functools
-import sys
 import os
 import numpy as np
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from darwinbot.scenarios.registry import get_active_scenarios, list_scenarios
 from darwinbot.fitness import evaluate
 from darwinbot.evolution import run_evolution, toolbox
 from darwinbot.genome import genome_summary
+from darwinbot.mjcf_builder import write_mjcf
+from darwinbot.genome import decode
 
 
 def main():
@@ -55,7 +54,15 @@ def main():
                             f"Presets: phase1 phase2 phase3 phase4 all. "
                             f"Available: {', '.join(list_scenarios())}"
                         ))
+    parser.add_argument("--seed",     type=int, default=None,
+                        help="Random seed for reproducibility (default: random)")
     args = parser.parse_args()
+
+    if args.seed is not None:
+        import random
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        print(f"  Seed       : {args.seed}")
 
     active = get_active_scenarios(args.scenarios)
 
@@ -85,6 +92,11 @@ def main():
     print(genome_summary(best_genes))
     print(f"\n  Fitness    : {hof[0].fitness.values[0]:.4f}")
     print(f"  Checkpoints: checkpoints/")
+
+    # Save best robot MJCF XML for easy inspection / replay
+    best_xml_path = os.path.join("checkpoints", "best_robot.xml")
+    write_mjcf(decode(best_genes), path=best_xml_path)
+    print(f"  Best MJCF  : {best_xml_path}")
 
 
 if __name__ == "__main__":

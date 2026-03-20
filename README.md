@@ -2,7 +2,7 @@
 
 Co-evolution of robot morphology and locomotion control using genetic algorithms.
 
-Robots evolve both their **body structure** (limb lengths, insertion angles) and **hybrid locomotion** (oscillator-driven joints + motorised wheels), targeting environments built for humans — corridors, ramps, doorways.
+Robots evolve both their **body structure** (limb attachment angles, segment lengths) and **hybrid locomotion** (oscillator-driven joints + motorised wheels), targeting environments built for humans — corridors, ramps, doorways.
 
 Simulation runs on **MuJoCo** with evaluation managed by the **DEAP** evolutionary framework.
 
@@ -11,9 +11,9 @@ Simulation runs on **MuJoCo** with evaluation managed by the **DEAP** evolutiona
 ```
 darwinbot/
 ├── darwinbot/
-│   ├── genome.py          # genome encoding / decoding (6 limbs × 9 genes)
+│   ├── genome.py          # genome encoding / decoding (6 limbs × 19 genes = 114 genes)
 │   ├── mjcf_builder.py    # genome → MJCF XML for MuJoCo
-│   ├── simulator.py       # physics simulation + oscillator control
+│   ├── simulator.py       # physics simulation + CPG oscillator control
 │   ├── fitness.py         # multi-scenario fitness function
 │   ├── evolution.py       # DEAP evolutionary loop (SBX + Gaussian)
 │   └── scenarios/
@@ -26,14 +26,23 @@ darwinbot/
 │   ├── train.py           # entry point: run evolution
 │   ├── visualise.py       # replay best individual in MuJoCo viewer
 │   └── plot_progress.py   # real-time fitness plots (matplotlib)
-├── checkpoints/           # saved populations (.pkl)
+├── tests/
+│   ├── test_genome.py     # genome encode/decode, CPG signal tests
+│   ├── test_fitness.py    # scorer unit tests (no MuJoCo needed)
+│   └── test_registry.py   # scenario registry + weight normalisation tests
+├── checkpoints/           # saved populations (.pkl) + best_robot.xml
+├── pyproject.toml
 └── requirements.txt
 ```
 
 ## Install
 
 ```bash
-pip install -r requirements.txt
+# Create and activate a virtual environment (recommended)
+python -m venv venv && source venv/bin/activate
+
+# Install the package and its dependencies in editable mode
+pip install -e .
 ```
 
 Dependencies: `mujoco >= 3.6`, `deap >= 1.4`, `numpy >= 1.23`, `matplotlib >= 3.6`.
@@ -46,6 +55,9 @@ python experiments/train.py
 
 # Custom parameters
 python experiments/train.py --pop 80 --gen 200 --workers 6
+
+# Reproducible run with a fixed seed
+python experiments/train.py --seed 42
 
 # Phase 2 — flat + varied surfaces
 python experiments/train.py --scenarios phase2
@@ -63,25 +75,39 @@ python experiments/train.py --resume checkpoints/gen_0050.pkl
 python experiments/visualise.py --checkpoint checkpoints/gen_0050.pkl
 python experiments/visualise.py --checkpoint checkpoints/gen_0050.pkl --scenario obstacles --speed 0.3
 
-# Real-time progress plots (run in a second terminal)
+# Real-time progress plots (run in a second terminal while training)
 python experiments/plot_progress.py
+```
+
+After training completes, the best robot's MJCF XML is saved to `checkpoints/best_robot.xml`.
+
+## Run tests
+
+```bash
+pip install pytest
+pytest tests/ -v
 ```
 
 ## Genome structure
 
-Each individual encodes `6 limbs × 9 genes = 54 floats`:
+Each individual encodes `6 limbs × 19 genes = 114 floats`.
+Each limb has **3 segments in series** (like an insect leg), with an optional wheel at the tip.
 
-| Gene | Description | Range |
-|------|-------------|-------|
-| length | limb length (m) | 0.10 – 0.50 |
-| width | limb radius (m) | 0.03 – 0.15 |
-| angle | insertion angle (rad) | −π/2 – π/2 |
-| has_wheel | wheel present | 0 or 1 |
-| wheel_pos | position along limb | 0.3 – 0.9 |
-| wheel_rad | wheel radius (m) | 0.04 – 0.12 |
-| osc_freq | oscillator frequency (Hz) | 0.3 – 3.0 |
-| osc_phase | oscillator phase (rad) | 0 – 2π |
-| osc_amp | oscillator amplitude (rad) | 0.2 – 1.2 |
+### Per-limb layout
+
+| Offset | Gene | Description | Range |
+|--------|------|-------------|-------|
+| 0 | `attach_angle` | Attachment point on body ellipse (rad) | 0 – 2π |
+| 1 | `angle` | Insertion direction from body (rad) | −π/2 – π/2 |
+| 2 | `seg0.length` | Segment 0 length (m) | 0.06 – 0.25 |
+| 3 | `seg0.width` | Segment 0 radius (m) | 0.02 – 0.08 |
+| 4 | `seg0.osc_freq` | Oscillator frequency (Hz) | 0.3 – 3.0 |
+| 5 | `seg0.osc_phase` | Oscillator phase (rad) | 0 – 2π |
+| 6 | `seg0.osc_amp` | Oscillator amplitude (rad) | 0.1 – 1.0 |
+| 7–11 | `seg1.*` | Segment 1 (same 5 genes) | — |
+| 12–16 | `seg2.*` | Segment 2 (same 5 genes) | — |
+| 17 | `has_wheel` | Wheel present | 0 or 1 |
+| 18 | `wheel_rad` | Wheel radius (m) | 0.04 – 0.12 |
 
 ## Evolutionary strategy
 
@@ -101,12 +127,14 @@ Each individual encodes `6 limbs × 9 genes = 54 floats`:
 | 3 | `obstacles` | Step, staircase, ramp | 1.5 |
 | 4 | `confined` | Small room with narrow opening | 1.0 |
 
+Weights are **normalised** across active scenarios before evaluation.
+
 ## Fitness function
 
 ```
 fitness = distance_x − 0.4 × lateral_dev − 0.001 × energy
 ```
 
-- Multi-scenario: weighted average of per-scenario scores
+- Multi-scenario: weighted sum of per-scenario scores (weights sum to 1.0)
 - A fall returns a fixed penalty of −15
-- Confined scenario adds bonuses for entry (+2), reaching back wall (+3), and exit (+4)
+- Confined scenario awards milestones: entry (+2), back wall (+3), exit (+4)

@@ -18,10 +18,11 @@ from darwinbot.mjcf_builder import write_mjcf
 from darwinbot.scenarios import ScenarioInfo
 
 # ── Simulation parameters ─────────────────────────────────────────────────────
-SIM_HZ       = 500
-SIM_SECONDS  = 10.0
-SIM_STEPS    = int(SIM_HZ * SIM_SECONDS)
-SETTLE_STEPS = 150   # steps to settle before recording pos0
+SIM_HZ             = 500
+SIM_SECONDS        = 10.0
+SIM_STEPS          = int(SIM_HZ * SIM_SECONDS)
+SETTLE_STEPS       = 150    # steps to settle before recording pos0
+WHEEL_SPEED_CTRL   = 10.0   # rad/s target for velocity-actuated wheels
 
 
 # ── Control ───────────────────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ def _apply_control(model: mujoco.MjModel, data: mujoco.MjData,
             data.ctrl[ctrl_idx] = segment_signal(seg, t)
             ctrl_idx += 1
         if limb.has_wheel:
-            data.ctrl[ctrl_idx] = 10.0   # rad/s constant wheel spin
+            data.ctrl[ctrl_idx] = WHEEL_SPEED_CTRL
             ctrl_idx += 1
 
 
@@ -97,6 +98,7 @@ def simulate(
         get_xml_fn, build_fn = scenario
 
     robot = decode(genes)
+    mjcf  = None
     mjcf  = write_mjcf(robot, scenario_xml=get_xml_fn())
 
     try:
@@ -162,7 +164,8 @@ def simulate(
         }
 
     finally:
-        try:
-            os.remove(mjcf)
-        except OSError:
-            pass
+        if mjcf is not None:
+            try:
+                os.remove(mjcf)
+            except OSError:
+                pass

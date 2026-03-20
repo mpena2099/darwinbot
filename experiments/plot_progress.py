@@ -16,7 +16,6 @@ Close the window to stop.
 """
 
 import os
-import sys
 import glob
 import pickle
 import argparse
@@ -27,9 +26,10 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from matplotlib.gridspec import GridSpec
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from darwinbot.genome import N_LIMBS, GENES_PER_LIMB
+from darwinbot.genome import (
+    N_LIMBS, GENES_PER_LIMB, G_HAS_WHEEL,
+    seg_base, GS_LENGTH, N_SEGMENTS,
+)
 
 POLL_INTERVAL = 4.0   # seconds between checkpoint scans
 
@@ -60,8 +60,7 @@ def load_checkpoints(checkpoint_dir: str) -> list[dict]:
         if not fitnesses:
             continue
 
-        # Count average wheels — G_HAS_WHEEL position changes with N_SEGMENTS
-        from darwinbot.genome import N_LIMBS, GENES_PER_LIMB, G_HAS_WHEEL
+        # Count average wheels per individual
         wheel_counts = []
         for ind in pop:
             genes  = np.array(ind)
@@ -204,7 +203,6 @@ def update_plot(fig, ax_fitness, ax_wheels, ax_hof,
         for rank, ind in enumerate(hof):
             genes = np.array(ind)
             fit   = ind.fitness.values[0]
-            from darwinbot.genome import N_LIMBS, GENES_PER_LIMB, G_HAS_WHEEL, seg_base, GS_LENGTH, N_SEGMENTS
             n_w     = sum(round(genes[i * GENES_PER_LIMB + G_HAS_WHEEL]) for i in range(N_LIMBS))
             avg_len = np.mean([
                 genes[i * GENES_PER_LIMB + seg_base(0) + GS_LENGTH]

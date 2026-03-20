@@ -170,9 +170,19 @@ def run_evolution(
             for ind, fit in zip(invalid, fitnesses):
                 ind.fitness.values = fit
 
-            # -- Replace population (with elitism via HoF) --
+            # -- Replace population with elitism --
             population[:] = offspring
             hof.update(population)
+
+            # Elitism: ensure the best individual survives
+            if hof:
+                worst_idx = min(
+                    range(len(population)),
+                    key=lambda k: population[k].fitness.values[0]
+                    if population[k].fitness.valid else float('inf'),
+                )
+                elite = toolbox.clone(hof[0])
+                population[worst_idx] = elite
 
             record = stats.compile(population)
             logbook.record(gen=gen, nevals=len(invalid), **record)

@@ -80,7 +80,7 @@ def genome_to_mjcf(robot: RobotGenome) -> str:
         ax, ay, az = attach
 
         # Limb axis direction (unit vector from base outward)
-        angle  = limb_idx_angle = i * (2 * np.pi / n_limbs)
+        angle  = i * (2 * np.pi / n_limbs)
         dir_x  = np.cos(angle)
         dir_y  = np.sin(angle)
 
@@ -121,7 +121,7 @@ def genome_to_mjcf(robot: RobotGenome) -> str:
                   friction="{WHEEL_FRICTION}"
                   solimp="{SOLIMP}" solref="{SOLREF}"
                   rgba="0.1 0.1 0.1 1"
-                  euler="90 0 0"/>
+                  euler="1.5708 0 0"/>
           </body>"""
 
             actuator_lines.append(

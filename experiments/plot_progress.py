@@ -29,6 +29,8 @@ from matplotlib.gridspec import GridSpec
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from darwinbot.genome import N_LIMBS, GENES_PER_LIMB
+
 POLL_INTERVAL = 4.0   # seconds between checkpoint scans
 
 
@@ -177,8 +179,8 @@ def update_plot(fig, ax_fitness, ax_wheels, ax_hof,
     ax_wheels.set_facecolor("#16213e")
     ax_wheels.plot(gens, n_wheels, color="#ffd700", linewidth=1.8,
                    marker="o", markersize=3)
-    ax_wheels.set_ylim(-0.1, 4.2)
-    ax_wheels.set_yticks([0, 1, 2, 3, 4])
+    ax_wheels.set_ylim(-0.1, N_LIMBS + 0.2)
+    ax_wheels.set_yticks(list(range(N_LIMBS + 1)))
     ax_wheels.set_xlabel("generation")
     ax_wheels.set_ylabel("avg wheels / individual")
     ax_wheels.set_title("wheel count evolution",

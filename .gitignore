@@ -216,3 +216,7 @@ MUJOCO_LOG.TXT
 venv-gpu/
 .scratch/
 exports/
+
+# Local plans and Claude Code settings
+docs/plano-*.md
+.claude/

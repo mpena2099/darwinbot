@@ -1,6 +1,6 @@
 # Dados de hardware para a simulação
 
-Referência para a Fase 2 de `plano-hardware.md`. "Não verificado" = valor de
+Valores de hardware usados na simulação. "Não verificado" = valor de
 loja ou derivado, não de folha de dados oficial.
 
 ## Servo Feetech STS3215

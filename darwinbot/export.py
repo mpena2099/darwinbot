@@ -1,8 +1,7 @@
 """
 export.py
 ---------
-Evolved robot -> build folder for the real DarwinBot (Phase 4 of
-docs/plano-hardware.md): control.json, STL parts, bill of materials, assembly
+Evolved robot -> build folder for the real DarwinBot: control.json, STL parts, bill of materials, assembly
 notes and the MJCF used in simulation.
 
 The body is a module tree (darwinbot/morphology.py), so everything is read by

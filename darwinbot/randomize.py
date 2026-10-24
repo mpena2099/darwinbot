@@ -6,7 +6,7 @@ on details the real robot will not reproduce (exact friction, mass, servo
 strength, command latency).
 
 The base model is never modified: `perturb` returns a copy plus the command
-latency to apply. Ranges follow docs/plano-hardware.md, Fase 3.
+latency to apply. Ranges follow the tolerances in docs/hardware-dados.md.
 """
 
 import copy

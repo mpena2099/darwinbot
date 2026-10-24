@@ -10,7 +10,7 @@ latency) and compare with the nominal model.
   python experiments/validate.py --archive checkpoints/archive.pkl --workers 4
 
 Prints PASS (exit 0) when the mean distance loss across terrains is below 30%
-(docs/plano-hardware.md, Fase 3), else FAIL (exit 1).
+else FAIL (exit 1).
 """
 
 import argparse

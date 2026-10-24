@@ -61,6 +61,8 @@ def test_run_writes_archive(tmp_path):
 
 def test_type_name_bins():
     assert evolve.type_name([0.9, 0.2, 8, 0.0]) == "8servos-low-crawl"
+    assert evolve.type_name([0.3, 0.2, 8, 0.0]) == "8servos-low-trot"
+    assert evolve.type_name([0.05, 0.2, 8, 0.0]) == "8servos-low-belly"
     assert evolve.type_name([0.6, 0.5, 12, 0.0]) == "12servos-mid-walk"
     assert evolve.type_name([0.3, 1.0, 16, 0.0]) == "16servos-high-trot"
     assert evolve.type_name([0.9, 0.2, 4, 0.8]) == "4servos-low-roll"   # wheels win

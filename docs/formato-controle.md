@@ -1,7 +1,7 @@
 # Formato do arquivo de controle
 
-Arquivo JSON gerado pelo export (Fase 4 de `plano-hardware.md`) e lido pelo
-firmware do ESP32 (Fase 5). Descreve um robô já evoluído: quais servos
+Arquivo JSON gerado por `experiments/export.py` e lido pelo firmware do
+ESP32. Descreve um robô já evoluído: quais servos
 existem e o controlador que cada um segue. O firmware não precisa saber nada
 sobre evolução, morfologia ou MuJoCo.
 

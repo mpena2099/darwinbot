@@ -47,7 +47,7 @@ PARENT_SELECTIONS = ("novelty", "uniform")
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
 ROLL_SHARE  = 0.5                   # wheel share of contact time above this: roll
-CRAWL_DUTY, WALK_DUTY = 0.8, 0.5
+CRAWL_DUTY, WALK_DUTY, BELLY_DUTY = 0.8, 0.5, 0.15
 
 Cell = int                          # index of the CVT cell
 
@@ -80,12 +80,15 @@ def type_name(behaviour) -> str:
         gait = "crawl"
     elif duty >= WALK_DUTY:
         gait = "walk"
-    else:
+    elif duty >= BELLY_DUTY:
         gait = "trot"
+    else:
+        # tips barely touch the ground: the robot slides on its body
+        gait = "belly"
     return f"{int(round(servos))}servos-{band}-{gait}"
 
 
-_NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|roll)(?:-(\d+))?$")
+_NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll)(?:-(\d+))?$")
 
 
 def parse_cell_name(name: str) -> Tuple[str, Optional[int]]:

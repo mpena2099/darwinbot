@@ -146,7 +146,7 @@ python experiments/train.py --device gpu --popsize 128
 On the GPU, bodies are optimised one at a time and `--workers` is ignored (one
 device, and forking with CUDA does not work). `--popsize` defaults to 64 on the
 GPU. A strong NVIDIA GPU is needed to beat the CPU: the GeForce 940MX on this
-machine is about 12x slower, see `docs/plano-gpu.md`.
+machine is about 12x slower.
 
 ### Viewing the different robot types
 
@@ -162,7 +162,7 @@ A type is a short name derived from the cell, `<servos>servos-<height>-<gait>`
 |------|--------|---------|
 | `servos` | 1 to 16 | number of servos, the cost of the robot |
 | `height` | `low`, `mid`, `high` | mean torso height over body reach: below 0.4, below 0.8, above |
-| `gait` | `crawl`, `walk`, `trot`, `roll` | duty, the share of time the tips touch the ground: above 0.8, 0.5 to 0.8, below 0.5; `roll` when wheels carry more than half of the contact time |
+| `gait` | `crawl`, `walk`, `trot`, `belly`, `roll` | duty, the share of time the tips touch the ground: above 0.8, 0.5 to 0.8, 0.15 to 0.5, below 0.15 (sliding on the body); `roll` when wheels carry more than half of the contact time |
 
 Several cells can share a name; the later ones get the cell index appended
 (`12servos-low-walk-133`).
@@ -351,6 +351,37 @@ Multi-terrain runs use a blend of mean and worst score:
 fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 ```
 
+## Results
+
+A short run on a 4-core laptop (`--terrains terrain --batches 5 --workers 3`,
+about 20,000 episodes in 2 hours) filled 50 of the ~300 cells:
+
+| Gait | Types | Best fitness |
+|------|-------|--------------|
+| `roll` | 18 | 0.95 |
+| `trot` | 20 | 0.39 |
+| `belly` | 6 | 0.09 |
+| `walk` | 3 | 0.01 |
+| `crawl` | 3 | 0.02 |
+
+Servo counts go from 1 to 16 and the bodies are often asymmetric: wheeled
+quadrupeds, a tilted body that rolls on one side wheel, long-legged spiders.
+25 types move forward (fitness above 0.05), 8 of them with legs carrying most
+of the ground contact. The best of those, `13servos-low-trot`, loses 1% on
+randomised physics in `validate.py` (PASS) and exports as 13 servos and 31
+printed parts. Wheels still win on speed, by a factor of about 2.4. The filled-cell count was still rising linearly
+when the run stopped, so longer runs should find more.
+
+![Evolved body plans](docs/img/robots.png)
+
+![Best wheel-less gait](docs/img/gait.gif)
+
+![MAP-Elites archive](docs/img/archive_map.png)
+
+![Training progress](docs/img/progress.png)
+
+![Printable parts of the best robot](docs/img/parts.png)
+
 ## What counts as success (honestly)
 
 | Level | What it means | Promised? |
@@ -364,11 +395,9 @@ list, not in any single robot.
 
 ## Known limitations
 
-- Wheels were far ahead of legs before the switch to real parts (large
-  wheels spinning at 15 rad/s). With servo-speed wheels of 3 to 6 cm the gap
-  should shrink, but it has not been measured on a full run yet.
-- No firmware yet: the ESP32 side (Phase 5 of `docs/plano-hardware.md`) waits
-  for real hardware. The control file format it will read is already fixed.
+- Wheels still lead: the best rolling robot covers about 2.4 times the
+  distance of the best legged one, and the top of the archive is mostly `roll`.
+- No firmware yet: the ESP32 side waits for real hardware. The control file format it will read is already fixed.
 - Randomised training (`--variants`) is CPU only.
 - The only feedback is the servo load. The controller never sees the world, so
   tasks that need steering or reacting (finding a doorway, avoiding a wall) are

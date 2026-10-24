@@ -17,7 +17,7 @@ an open-loop two-harmonic CPG. Wheels ignore everything but the offset gene,
 which is their signed speed: target = ramp(t) * speed.
 
 The controller vector has a fixed size for every morphology and is indexed by
-the stable node slot id (see docs/plano-diversidade.md). Genes of slots that
+the stable node slot id (see morphology.py). Genes of slots that
 are absent from the body are ignored, so a child can inherit its parent's
 controller verbatim.
 

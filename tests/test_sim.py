@@ -239,7 +239,7 @@ def test_rolling_robot_is_named_roll():
     assert evolve.type_name(behaviour_vector(morph, m)).endswith("-roll")
     legs = mo.decode(LEGS)
     m = Episode(legs, te.flat(), seconds=2.0).run(_ctrl(legs, amp=0.6))
-    assert evolve.type_name(behaviour_vector(legs, m)).endswith(("crawl", "walk", "trot"))
+    assert evolve.type_name(behaviour_vector(legs, m)).endswith(("crawl", "walk", "trot", "belly"))
 
 
 def test_optimise_returns_nominal_flat_behaviour():

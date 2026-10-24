@@ -18,8 +18,8 @@ def test_ctrl_length():
 
 def test_active_genes_follow_pairs_and_wheels():
     pairs = [
-        mo.LegPair(0, 0.0, 0.0, 0.10, 0.10, 0.02, True, 0.05),
-        mo.LegPair(2, 0.0, 0.0, 0.10, 0.10, 0.02, False, 0.05),
+        mo.LegPair(0, 0.0, 0.0, 0.10, 0.10, True, True, 0.05),
+        mo.LegPair(2, 0.0, 0.0, 0.10, 0.10, False, False, 0.05),
     ]
     m = mo.Morphology(body_length=0.4, body_width=0.2, pairs=pairs)
     active = set(co.active_genes(m))
@@ -29,6 +29,11 @@ def test_active_genes_follow_pairs_and_wheels():
     wheel_2 = 1 + 2 * co.PAIR_CTRL + co.PAIR_CTRL - 1
     assert wheel_0 in active
     assert wheel_2 not in active
+
+    yaw_0 = range(1, 1 + co.JOINT_CTRL)
+    yaw_2 = range(1 + 2 * co.PAIR_CTRL, 1 + 2 * co.PAIR_CTRL + co.JOINT_CTRL)
+    assert set(yaw_0) <= active
+    assert not active.intersection(yaw_2)
 
     absent = range(1 + co.PAIR_CTRL, 1 + 2 * co.PAIR_CTRL)
     assert not active.intersection(absent)
@@ -68,3 +73,12 @@ def test_right_phase_is_left_plus_side_shift():
     assert cpg.amp[0] == pytest.approx(cpg.amp[1])
     assert cpg.offset[0] == pytest.approx(cpg.offset[1])
     assert cpg.phase[1] - cpg.phase[0] == pytest.approx(0.4 * 2 * np.pi)
+
+
+def test_cpg_amplitude_respects_servo_speed():
+    ctrl = np.full(co.CTRL_LENGTH, 1.0)    # max frequency and amplitude
+    cpg = co.CPG(ctrl, [(0, 0, "knee"), (0, 0, "wheel")])
+
+    assert np.all(cpg.amp * cpg.omega <= co.SERVO_SPEED + 1e-12)
+    assert cpg.amp[0] < co.AMP_RANGE[1]
+    assert cpg.offset[1] == pytest.approx(co.WHEEL_RANGE[1])

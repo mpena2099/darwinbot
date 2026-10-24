@@ -11,11 +11,13 @@ dependencies = [
     "mujoco>=3.6.0",
     "numpy>=1.23.0",
     "cma>=3.3",
+    "ribs>=0.12",
     "matplotlib>=3.6.0",
 ]
 
 [project.optional-dependencies]
 video = ["imageio[ffmpeg]"]
+gpu = ["jax[cuda12]", "mujoco-mjx"]
 
 [tool.setuptools.packages.find]
 where = ["."]

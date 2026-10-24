@@ -12,7 +12,7 @@ generator (CPG) is tuned with CMA-ES for each candidate body.
 The program invents robots and teaches each one to move. A robot is a box with
 legs; evolution decides how many legs, how long, where they attach and whether
 they end in a wheel. For every new body, an optimiser searches for the rhythm
-of joint movements that carries it farthest forward in 8 simulated seconds.
+of joint movements that carries it farthest forward in a few simulated seconds.
 The run does not keep a single winner: it keeps the best robot of each *kind*
 (two-legged with wheels, six-legged without wheels, long legs, short legs...),
 so at the end you can browse a catalogue of different solutions.
@@ -21,11 +21,11 @@ so at the end you can browse a catalogue of different solutions.
 
 Two nested loops:
 
-1. **Outer loop, MAP-Elites over bodies.** The archive is a grid indexed by the
-   number of leg pairs, the number of wheeled pairs and a leg-length bin. Each
-   cell keeps the best body found with those features, so a run ends with a map
-   of specialists (best walker, best wheeler, best long-legged hexapod) instead
-   of a single design.
+1. **Outer loop, MAP-Elites over bodies.** The archive is a pyribs GridArchive
+   indexed by the number of leg pairs, the number of wheeled pairs and a
+   leg-length bin. Each cell keeps the best body found with those features, so
+   a run ends with a map of specialists (best walker, best wheeler, best
+   long-legged hexapod) instead of a single design.
 2. **Inner loop, CMA-ES over a CPG.** For a fixed body, CMA-ES searches the
    controller genes that this body actually uses. A promising body is therefore
    judged by the best gait it can learn, not by a lucky random controller.
@@ -66,7 +66,7 @@ python experiments/replay.py
 
 # List the robot types found so far, then open one of them
 python experiments/replay.py --list
-python experiments/replay.py --type 6legs-0wheels-medium --terrain rough
+python experiments/replay.py --type 6legs-2wheels-14servos --terrain rough
 
 # Record a video instead of opening a window (needs the video extra)
 python experiments/replay.py --record out.mp4 --seconds 8
@@ -81,37 +81,51 @@ that file by default (`--archive` changes it). `plot_archive.py` saves
 `archive_heatmap.png` and `archive_history.png` to `checkpoints/` (`--out`
 changes the directory).
 
+### GPU (optional)
+
+The inner CMA-ES loop can run on an NVIDIA GPU through MJX. The CPU remains the
+default and works without JAX installed.
+
+```bash
+pip install -e ".[gpu]"
+python experiments/train.py --device gpu --popsize 128
+```
+
+On the GPU, bodies are optimised one at a time and `--workers` is ignored (one
+device, and forking with CUDA does not work). `--popsize` defaults to 64 on the
+GPU. A strong NVIDIA GPU is needed to beat the CPU: the GeForce 940MX on this
+machine is about 12x slower, see `docs/plano-gpu.md`.
+
 ### Viewing the different robot types
 
 The archive keeps one robot per **type**: the best one found with that number
-of legs, number of wheels and leg length. A new robot only replaces the one
+of legs, number of wheels and number of servos (the cost of the robot). A new robot only replaces the one
 of its own type, and only if it scores higher, so slow walkers survive next to
 fast wheeled robots.
 
-A type is named `<legs>legs-<wheels>wheels-<length>`:
+A type is named `<legs>legs-<wheels>wheels-<servos>servos`:
 
 | Part | Values | Meaning |
 |------|--------|---------|
 | `legs` | 2, 4, 6 | number of legs (always in mirrored pairs) |
 | `wheels` | 0 up to `legs` | how many legs end in a wheel |
-| `length` | `xshort`, `short`, `medium`, `long`, `xlong` | mean leg length (thigh + shin): 0.10-0.18, 0.18-0.26, 0.26-0.34, 0.34-0.42, 0.42-0.50 m |
+| `servos` | 4, 6, ..., 24 | total servos: hip pitch and knee per leg, plus one per yaw joint and one per wheel |
 
 Step 1, see which types the run has found, best first:
 
 ```
 $ python experiments/replay.py --list
-type                    fitness  leg length
-2legs-2wheels-xlong        6.84  0.49 m
-4legs-4wheels-medium       6.43  0.26 m
-6legs-0wheels-long         1.80  0.39 m
-6legs-0wheels-medium       0.84  0.28 m
+type                    fitness  leg length  servos
+2legs-2wheels-6servos      0.85  0.16 m     6
+4legs-4wheels-12servos     0.60  0.20 m     12
+6legs-0wheels-18servos    -0.06  0.17 m     18
 ...
 ```
 
 Step 2, open one in the 3D viewer (or add `--record name.mp4` for a video):
 
 ```bash
-python experiments/replay.py --type 6legs-0wheels-medium
+python experiments/replay.py --type 6legs-2wheels-14servos
 ```
 
 Without `--type`, `replay.py` shows the best robot overall.
@@ -127,8 +141,10 @@ leaves the terrain.
 
 ### Long runs
 
-A run on the `terrain` preset with 3 workers takes roughly 45 min for the
-initial batch and 15 min for each later batch. The archive is saved after
+A run on the `terrain` preset with 3 workers takes roughly 15 to 20 min for
+the initial batch and 3 to 4 min for each later batch (5 s episodes,
+0.004 s physics step, 120 CMA-ES evaluations per child; see `--seconds`,
+`--budget-init` and `--budget-child`). The archive is saved after
 every batch; stopping mid-batch loses only that batch. Keep the machine awake
 and the process alive when the terminal closes:
 
@@ -156,8 +172,8 @@ Length: `MORPH_LENGTH = 2 + N_PAIRS * 8 = 26` with `N_PAIRS = 3`.
 
 | Index | Gene | Range | Meaning |
 |-------|------|-------|---------|
-| 0 | `body_length` | 0.20 - 0.50 m | torso length |
-| 1 | `body_width` | 0.10 - 0.30 m | torso width |
+| 0 | `body_length` | 0.15 - 0.40 m | torso length |
+| 1 | `body_width` | 0.10 - 0.25 m | torso width |
 
 Per pair `p`, with base `b = 2 + 8 * p`:
 
@@ -166,11 +182,11 @@ Per pair `p`, with base `b = 2 + 8 * p`:
 | +0 | `enabled` | 0 - 1 | pair exists when > 0.5 |
 | +1 | `attach_x` | -1.0 - 1.0 | position along the torso side, rear to front |
 | +2 | `splay` | -0.6 - 0.6 rad | leg yaw at rest |
-| +3 | `thigh_len` | 0.05 - 0.25 m | thigh capsule length |
-| +4 | `shin_len` | 0.05 - 0.25 m | shin capsule length |
-| +5 | `radius` | 0.012 - 0.030 m | capsule radius |
+| +3 | `thigh_len` | 0.06, 0.08, 0.10 or 0.12 m | printed link; the gene picks the catalogue index |
+| +4 | `shin_len` | 0.06, 0.08, 0.10 or 0.12 m | printed link; same catalogue |
+| +5 | `has_yaw` | 0 - 1 | hip has a yaw servo when > 0.5 |
 | +6 | `has_wheel` | 0 - 1 | wheel at the shin tip when > 0.5 |
-| +7 | `wheel_rad` | 0.03 - 0.10 m | wheel radius |
+| +7 | `wheel_rad` | 0.03 - 0.06 m | wheel radius |
 
 If no pair is enabled, the pair with the highest `enabled` gene is switched on
 so every body has at least one leg pair.
@@ -187,15 +203,25 @@ Per pair `p`, with base `b = 1 + 11 * p`:
 
 | Offset | Gene | Range | Meaning |
 |--------|------|-------|---------|
-| +0, +1, +2 | `hip_yaw` amp, offset, phase | 0 - 0.8 rad, -0.6 - 0.6 rad, 0 - 2*pi | yaw joint signal |
+| +0, +1, +2 | `hip_yaw` amp, offset, phase | 0 - 0.8 rad, -0.6 - 0.6 rad, 0 - 2*pi | yaw joint signal (ignored without `has_yaw`) |
 | +3, +4, +5 | `hip_pitch` amp, offset, phase | same | pitch joint signal |
 | +6, +7, +8 | `knee` amp, offset, phase | same | knee signal |
 | +9 | `side_shift` | 0 - 2*pi | right leg phase = left phase + `side_shift` |
-| +10 | `wheel_speed` | -15 - 15 rad/s | signed wheel velocity |
+| +10 | `wheel_speed` | -5.45 - 5.45 rad/s | signed wheel velocity |
 
 The signal is `ramp(t) * (offset + amp * sin(omega * t + phase))`, where `ramp`
-fades the gait in over `RAMP_TIME = 0.5 s`. Genes of absent pairs or absent
-wheels are ignored.
+fades the gait in over `RAMP_TIME = 0.5 s`. Genes of absent pairs, absent yaw
+joints or absent wheels are ignored. Each joint amplitude is clipped so that
+`amp * omega <= 5.45 rad/s`, the servo speed limit. The simulation updates the
+servo targets at 50 Hz and holds them in between, like the ESP32.
+
+## Real parts
+
+Every simulated robot is built from parts you can buy or print: Feetech
+STS3215 servos at 7.4 V (1.91 N*m stall, 5.45 rad/s, run at 70% of the torque),
+60 g per servo, an ESP32 + 2S LiPo + regulator payload of 0.13 kg in the torso,
+printed links of 60, 80, 100 or 120 mm, and self-collision between legs. The
+sources and the values still to be checked are in `docs/hardware-dados.md`.
 
 ## Terrains
 
@@ -239,7 +265,8 @@ fitness = 0.7 * mean(scores) + 0.3 * min(scores)
   advantage.
 - The controller is open loop: it never senses the ground, so tasks that need
   steering or reacting (finding a doorway, avoiding a wall) are out of scope.
-- Legs do not collide with each other, a deliberate simplification.
+- A body whose legs overlap at spawn is not buildable and scores `UNSTABLE_SCORE`
+  without being simulated (about 12% of random genomes).
 
 ## Project structure
 

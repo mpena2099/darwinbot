@@ -24,19 +24,34 @@ def main():
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--budget-init", type=int, default=400,
                    help="CMA-ES evaluations for a body with a random controller")
-    p.add_argument("--budget-child", type=int, default=200,
+    p.add_argument("--budget-child", type=int, default=120,
                    help="CMA-ES evaluations for a body with an inherited controller")
     p.add_argument("--workers", type=int, default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="checkpoints")
+    p.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
+                   help="simulate on the CPU (default) or with MJX on the GPU")
+    p.add_argument("--popsize", type=int, default=None,
+                   help="CMA-ES population (gpu default: 64)")
+    p.add_argument("--seconds", type=float, default=5.0,
+                   help="simulated seconds per episode (ignored on --resume)")
     p.add_argument("--resume", default=None)
     a = p.parse_args()
+
+    if a.device == "gpu":
+        try:
+            import jax  # noqa: F401
+            from mujoco import mjx  # noqa: F401
+        except ImportError:
+            raise SystemExit("--device gpu needs JAX and MJX: "
+                             "pip install -e '.[gpu]'")
 
     archive = evolve.run(
         terrains=a.terrains, n_init=a.init, n_batches=a.batches,
         batch_size=a.batch_size, budget_init=a.budget_init,
         budget_child=a.budget_child, workers=a.workers, seed=a.seed,
-        out_dir=a.out, resume=a.resume,
+        out_dir=a.out, resume=a.resume, episode_seconds=a.seconds,
+        device=a.device, popsize=a.popsize,
     )
     best = archive.best()
     print(f"\nBest fitness {best.fitness:.3f}  scores {[round(s, 2) for s in best.scores]}")

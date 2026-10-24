@@ -19,6 +19,9 @@ Layout (all genes in [0, 1])
     for joint in JOINTS: amplitude, offset, phase
     side_shift
     wheel_speed
+
+The yaw genes only matter for pairs whose hip has a yaw servo. Joint
+amplitudes are clipped so no servo is asked to move faster than SERVO_SPEED.
 """
 
 from typing import List, Tuple
@@ -32,7 +35,9 @@ JOINTS = ("hip_yaw", "hip_pitch", "knee")
 FREQ_RANGE  = (0.5, 3.0)     # Hz
 AMP_RANGE   = (0.0, 0.8)     # rad
 OFFSET_RANGE = (-0.6, 0.6)   # rad
-WHEEL_RANGE = (-15.0, 15.0)  # rad/s, signed so wheels may roll either way
+SERVO_SPEED = 5.45           # rad/s, STS3215 no-load speed at 7.4 V
+WHEEL_RANGE = (-SERVO_SPEED, SERVO_SPEED)   # signed so wheels may roll either way
+CONTROL_DT  = 0.02           # s, the ESP32 updates servo targets at 50 Hz
 RAMP_TIME   = 0.5            # s to fade the gait in from rest
 
 JOINT_CTRL = 3                                    # amp, offset, phase
@@ -56,7 +61,8 @@ def active_genes(morph: Morphology) -> np.ndarray:
     idx = [0]
     for pair in morph.pairs:
         b = _pair_base(pair.index)
-        idx.extend(range(b, b + len(JOINTS) * JOINT_CTRL + 1))
+        first = b if pair.has_yaw else b + JOINT_CTRL   # skip the yaw genes
+        idx.extend(range(first, b + len(JOINTS) * JOINT_CTRL + 1))
         if pair.has_wheel:
             idx.append(b + PAIR_CTRL - 1)
     return np.array(idx, dtype=int)
@@ -88,6 +94,8 @@ class CPG:
             self.amp[a]    = _scale(ctrl[j],     *AMP_RANGE)
             self.offset[a] = _scale(ctrl[j + 1], *OFFSET_RANGE)
             self.phase[a]  = _scale(ctrl[j + 2], 0.0, 2 * np.pi) + side * side_shift
+        # A servo cannot follow a sine whose peak speed amp * omega exceeds its own.
+        self.amp = np.minimum(self.amp, SERVO_SPEED / self.omega)
 
     def __call__(self, t: float) -> np.ndarray:
         ramp = min(1.0, t / RAMP_TIME)

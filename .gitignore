@@ -213,3 +213,5 @@ MUJOCO_LOG.TXT
 
 # Recorded replays
 *.mp4
+venv-gpu/
+.scratch/

@@ -5,7 +5,7 @@ Replay an evolved body and gait from an archive checkpoint.
 
   python experiments/replay.py                              # best elite, flat, viewer
   python experiments/replay.py --list                       # robot types found
-  python experiments/replay.py --type 6legs-0wheels-medium --terrain rough
+  python experiments/replay.py --type 6legs-2wheels-14servos --terrain rough
   python experiments/replay.py --record out.mp4 --seconds 8
 """
 
@@ -99,7 +99,7 @@ def main():
     p = argparse.ArgumentParser(description="darwinbot: replay an evolved robot")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
     p.add_argument("--type", dest="cell", default=None,
-                   help="robot type from --list, e.g. 6legs-0wheels-medium "
+                   help="robot type from --list, e.g. 6legs-2wheels-14servos "
                         "(default: best robot overall)")
     p.add_argument("--terrain", default="flat")
     p.add_argument("--record", default=None, metavar="OUT.mp4",
@@ -115,10 +115,10 @@ def main():
     if a.list:
         with open(a.archive, "rb") as f:
             archive = pickle.load(f)
-        print("type                    fitness  leg length")
+        print("type                    fitness  leg length  servos")
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
             m = morpho.decode(e.morph)
-            print(f"{cell_name(cell):22s} {e.fitness:8.2f}  {m.mean_leg_length:.2f} m")
+            print(f"{cell_name(cell):22s} {e.fitness:8.2f}  {m.mean_leg_length:.2f} m     {m.n_servos}")
         return
 
     archive, elite = load(a.archive, a.cell)

@@ -4,6 +4,10 @@ sim.py
 Episode: one morphology on one terrain, compiled once and replayed for as
 many controllers as needed. The inner optimisation loop evaluates hundreds
 of controllers per body, so compiling the model only once matters.
+
+The controller runs at 50 Hz like the ESP32: servo targets are recomputed
+every CONTROL_DT and held in between. A body whose robot geoms already touch
+at spawn (overlapping legs) is not buildable and is never simulated.
 """
 
 from dataclasses import dataclass
@@ -12,7 +16,7 @@ import mujoco
 import numpy as np
 
 from darwinbot.builder import build_mjcf
-from darwinbot.controller import CPG
+from darwinbot.controller import CONTROL_DT, CPG
 from darwinbot.morphology import Morphology
 from darwinbot.terrain import Terrain
 
@@ -31,6 +35,19 @@ class Metrics:
     mass:     float   # total robot mass (kg)
 
 
+def control_hold(timestep: float) -> int:
+    """Physics steps per controller update."""
+    return max(1, round(CONTROL_DT / timestep))
+
+
+def is_buildable(model: mujoco.MjModel) -> bool:
+    """True when no two robot geoms touch at the spawn pose."""
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    robot = model.geom_contype == 2
+    return not any(robot[c.geom1] and robot[c.geom2] for c in data.contact)
+
+
 class Episode:
     def __init__(self, morph: Morphology, terrain: Terrain,
                  seconds: float = EPISODE_SECONDS):
@@ -43,15 +60,21 @@ class Episode:
         self.n_steps = int(seconds / self.model.opt.timestep)
         self.torso = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso")
         self.mass  = float(self.model.body_subtreemass[self.torso])
+        self.hold  = control_hold(self.model.opt.timestep)
+        self.buildable = is_buildable(self.model)
+        self._k = 0
         assert self.model.nu == len(self.layout)
 
     def reset(self, ctrl: np.ndarray) -> CPG:
         mujoco.mj_resetData(self.model, self.data)
         mujoco.mj_forward(self.model, self.data)
+        self._k = 0
         return CPG(ctrl, self.layout)
 
     def step(self, cpg: CPG):
-        self.data.ctrl[:] = cpg(self.data.time)
+        if self._k % self.hold == 0:
+            self.data.ctrl[:] = cpg(self.data.time)
+        self._k += 1
         mujoco.mj_step(self.model, self.data)
 
     def run(self, ctrl: np.ndarray) -> Metrics:

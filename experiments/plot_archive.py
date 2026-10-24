@@ -14,7 +14,7 @@ import pickle
 import numpy as np
 
 from darwinbot import morphology as morpho
-from darwinbot.evolve import LEG_LENGTH_BINS
+from darwinbot.evolve import N_SERVO_BINS, SERVO_MIN, SERVO_STEP
 
 
 def load(path):
@@ -28,7 +28,7 @@ def heatmap(archive):
 
     if not archive.cells:
         raise SystemExit("archive has no elites to plot")
-    n_bins = len(LEG_LENGTH_BINS) - 1
+    n_bins = N_SERVO_BINS
     fits = [elite.fitness for elite in archive.cells.values()]
     norm = Normalize(vmin=min(fits), vmax=max(fits))
 
@@ -43,9 +43,9 @@ def heatmap(archive):
         image = ax.imshow(grid, origin="lower", aspect="auto", cmap="viridis",
                           norm=norm)
         ax.set_title(f"{panel} leg pair(s)")
-        ax.set_xlabel("leg length bin")
+        ax.set_xlabel("servos")
         ax.set_ylabel("wheeled pairs")
-        ax.set_xticks(range(n_bins))
+        ax.set_xticks(range(n_bins), [SERVO_MIN + SERVO_STEP * i for i in range(n_bins)])
         ax.set_yticks(range(morpho.N_PAIRS + 1))
     fig.colorbar(image, ax=axes[0].tolist(), label="fitness")
     return fig

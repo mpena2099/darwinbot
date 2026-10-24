@@ -1,11 +1,31 @@
 # darwinbot
 
-Quality-diversity evolution of robot bodies and locomotion controllers.
+[![tests](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml/badge.svg)](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Quality-diversity evolution of robot bodies and locomotion controllers, built
+from real parts so the result can be printed and assembled.
 
 Every robot is a box torso with up to three bilaterally mirrored leg pairs. Each
-pair has a hip yaw joint, a hip pitch joint and a knee, plus an optional wheel at
-the shin tip. Bodies are evolved with MAP-Elites while a central pattern
-generator (CPG) is tuned with CMA-ES for each candidate body.
+pair has a hip pitch joint and a knee, an optional hip yaw joint and an optional
+wheel at the shin tip, all driven by Feetech STS3215 servos. Bodies are evolved
+with MAP-Elites while a central pattern generator (CPG) is tuned with CMA-ES for
+each candidate body, and any robot in the archive can be exported as printable
+parts, a bill of materials and a control file for an ESP32.
+
+## Resumo em português
+
+O DarwinBot inventa robôs e ensina cada um a andar, numa simulação física
+(MuJoCo). A evolução decide o corpo: quantas pernas, de que tamanho, onde se
+prendem, se o quadril gira e se a perna termina numa roda. Para cada corpo, um
+otimizador (CMA-ES) procura o ritmo de movimento das juntas que leva o robô mais
+longe. Em vez de um único vencedor, o programa guarda o melhor robô de cada tipo
+(MAP-Elites), formando um catálogo de soluções diferentes. Os robôs são montados
+com peças reais (servos STS3215, peças impressas em 3D, ESP32 e bateria LiPo),
+treinados com física propositalmente variada para resistir às diferenças entre
+simulação e mundo real, e qualquer um deles pode ser exportado como peças STL,
+lista de materiais, guia de montagem e arquivo de controle. Código e documentação
+técnica em inglês; os dados de hardware em `docs/` estão em português.
 
 ## In one paragraph
 
@@ -292,6 +312,17 @@ Multi-terrain runs use a blend of mean and worst score:
 fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 ```
 
+## What counts as success (honestly)
+
+| Level | What it means | Promised? |
+|-------|---------------|-----------|
+| **Minimum** | Diverse robots that walk or roll in simulation, built only from real parts | Yes |
+| **Good** | An elite that passes `validate.py` (keeps most of its distance on randomised physics) and exports a coherent kit | Yes, with a full training run |
+| **Moonshot** | A printed and assembled robot that walks with its evolved gait | No, it needs the hardware |
+
+The value is in the pipeline being correct end to end, from genome to parts
+list, not in any single robot.
+
 ## Known limitations
 
 - Wheels were far ahead of legs before the switch to real parts (large
@@ -336,3 +367,24 @@ darwinbot/
 ├── pyproject.toml
 └── requirements.txt
 ```
+
+## References and credits
+
+- J.-B. Mouret and J. Clune, "Illuminating search spaces by mapping elites",
+  arXiv:1504.04909, 2015 (MAP-Elites).
+- N. Hansen, "The CMA Evolution Strategy: A Tutorial", arXiv:1604.00772, 2016;
+  implementation: [pycma](https://github.com/CMA-ES/pycma).
+- E. Todorov, T. Erez and Y. Tassa, "MuJoCo: A physics engine for model-based
+  control", IROS 2012; [MuJoCo](https://github.com/google-deepmind/mujoco) and MJX.
+- B. Tjanaka et al., "pyribs: A Bare-Bones Python Library for Quality Diversity
+  Optimization", GECCO 2023; [pyribs](https://github.com/icaros-usc/pyribs).
+- [Open Duck Mini](https://github.com/apirrone/Open_Duck_Mini): STS3215 joint
+  parameters and hardware recipe used as reference.
+- [Revolve2](https://github.com/ci-group/revolve2) and RoboGen: modular,
+  printable evolved robots, a design reference.
+- [build123d](https://github.com/gumyr/build123d): parametric CAD for the parts.
+
+## License
+
+MIT, see [LICENSE](LICENSE). To cite this project, use the "Cite this
+repository" button on GitHub (`CITATION.cff`).

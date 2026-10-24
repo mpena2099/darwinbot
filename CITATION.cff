@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "DarwinBot: quality-diversity evolution of buildable robot bodies and gaits"
+type: software
+authors:
+  - family-names: "Pena"
+    given-names: "Mauricio"
+repository-code: "https://github.com/mpena2099/darwinbot"
+license: MIT
+keywords:
+  - "evolutionary robotics"
+  - "MAP-Elites"
+  - "CMA-ES"
+  - "MuJoCo"
+  - "morphology co-design"

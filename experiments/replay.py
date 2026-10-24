@@ -11,6 +11,7 @@ Replay an evolved body and gait from an archive checkpoint.
 
 import argparse
 import pickle
+import signal
 import time
 
 import mujoco
@@ -65,17 +66,33 @@ def record(episode, ctrl, path, seconds, fps=30):
     print(f"wrote {path} ({frames} frames, {frames / fps:.1f} s)")
 
 
-def watch(episode, ctrl):
+def watch(episode, ctrl, speed=1.0):
     from mujoco import viewer
 
     cpg = episode.reset(ctrl)
     dt = episode.model.opt.timestep
-    with viewer.launch_passive(episode.model, episode.data) as handle:
-        while handle.is_running():
-            t0 = time.perf_counter()
-            episode.step(cpg)
-            handle.sync()
-            time.sleep(max(0.0, dt - (time.perf_counter() - t0)))
+    wall_dt = dt / speed     # real seconds per simulation step
+
+    # Ctrl+C must not raise inside the viewer context: the exception unwinds
+    # while the render thread is still drawing, the close hangs and repeated
+    # Ctrl+C ends in a segfault. A flag lets the loop exit and close cleanly.
+    stop = []
+    previous = signal.signal(signal.SIGINT, lambda *_: stop.append(True))
+    try:
+        with viewer.launch_passive(episode.model, episode.data) as handle:
+            while handle.is_running() and not stop:
+                t0 = time.perf_counter()
+                episode.step(cpg)
+                handle.sync()
+                time.sleep(max(0.0, wall_dt - (time.perf_counter() - t0)))
+            handle.close()
+        # close() returns before the render thread has released GLFW; exiting
+        # the interpreter right away segfaults, so give the thread a moment.
+        time.sleep(0.5)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    if stop:
+        print("stopped")
 
 
 def main():
@@ -89,6 +106,8 @@ def main():
                    help="render offscreen instead of opening the viewer")
     p.add_argument("--seconds", type=float, default=8.0,
                    help="recording length")
+    p.add_argument("--speed", type=float, default=1.0,
+                   help="viewer playback speed, e.g. 0.25 for slow motion")
     p.add_argument("--list", action="store_true",
                    help="print every archive cell with its fitness and exit")
     a = p.parse_args()
@@ -115,7 +134,7 @@ def main():
     if a.record:
         record(episode, elite.ctrl, a.record, a.seconds)
     else:
-        watch(episode, elite.ctrl)
+        watch(episode, elite.ctrl, a.speed)
 
 
 if __name__ == "__main__":

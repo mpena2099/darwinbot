@@ -369,8 +369,27 @@ quadrupeds, a tilted body that rolls on one side wheel, long-legged spiders.
 25 types move forward (fitness above 0.05), 8 of them with legs carrying most
 of the ground contact. The best of those, `13servos-low-trot`, loses 1% on
 randomised physics in `validate.py` (PASS) and exports as 13 servos and 31
-printed parts. Wheels still win on speed, by a factor of about 2.4. The filled-cell count was still rising linearly
-when the run stopped, so longer runs should find more.
+printed parts. Wheels still win on speed, by a factor of about 2.4. The
+filled-cell count was still rising linearly when the run stopped, so longer
+runs should find more.
+
+Compared with the earlier version (bodies built from 1 to 3 mirrored leg pairs,
+archive laid out by body shape, single-sine open-loop controller), trained on
+the same terrains for a similar number of batches:
+
+| | Earlier version | Current version |
+|---|---|---|
+| Robot types in the archive | 20 | 50 |
+| Types that move forward (fitness above 0.05) | 14 | 25 |
+| Unbuildable elites (overlapping parts) | 5 | 1 |
+| Body plans | symmetric, 2 to 6 legs | trees, often asymmetric |
+| Servo counts | 4 to 22 | 1 to 16 |
+| Best rolling robot | 1.27 | 0.95 |
+| Best legged robot | 0.40 | 0.39 |
+| Wheels / legs ratio | 3.2 | 2.4 |
+
+The new version trades a little top speed for variety: two and a half times
+as many robot types, with legs closer to wheels.
 
 ![Evolved body plans](docs/img/robots.png)
 

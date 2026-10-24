@@ -1,4 +1,4 @@
 mujoco>=3.6.0
-deap>=1.4.1
 numpy>=1.23.0
+cma>=3.3
 matplotlib>=3.6.0

@@ -9,10 +9,13 @@ description = "Co-evolution of robot morphology and locomotion control using gen
 requires-python = ">=3.10"
 dependencies = [
     "mujoco>=3.6.0",
-    "deap>=1.4.1",
     "numpy>=1.23.0",
+    "cma>=3.3",
     "matplotlib>=3.6.0",
 ]
+
+[project.optional-dependencies]
+video = ["imageio[ffmpeg]"]
 
 [tool.setuptools.packages.find]
 where = ["."]

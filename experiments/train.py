@@ -1,102 +1,46 @@
 """
 experiments/train.py
 --------------------
-Runs the evolutionary loop and saves checkpoints.
+Run MAP-Elites over body plans, with CMA-ES learning each body's gait.
 
-Usage
------
-# Phase 1 — flat floor (default)
-python experiments/train.py
-
-# Phase 2 — flat + varied surfaces
-python experiments/train.py --scenarios phase2
-
-# Phase 3 — flat + surfaces + obstacles
-python experiments/train.py --scenarios phase3
-
-# All scenarios
-python experiments/train.py --scenarios all
-
-# Custom population and generation count
-python experiments/train.py --pop 80 --gen 200 --workers 6
-
-# Resume from a previous checkpoint
-python experiments/train.py --resume checkpoints/gen_0050.pkl --scenarios phase2
+  python experiments/train.py                          # flat, defaults
+  python experiments/train.py --terrains terrain       # flat + rough + steps
+  python experiments/train.py --batches 60 --workers 8
+  python experiments/train.py --resume checkpoints/archive.pkl --batches 20
 """
 
 import argparse
-import functools
-import os
-import numpy as np
 
-from darwinbot.scenarios.registry import get_active_scenarios, list_scenarios
-from darwinbot.fitness import evaluate
-from darwinbot.evolution import run_evolution, toolbox
-from darwinbot.genome import genome_summary
-from darwinbot.mjcf_builder import write_mjcf
-from darwinbot.genome import decode
+from darwinbot import evolve
+from darwinbot.morphology import decode, summary
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="darwinbot — train: evolve robot morphology + locomotion")
-    parser.add_argument("--pop",      type=int, default=40,
-                        help="Population size (default: 40)")
-    parser.add_argument("--gen",      type=int, default=50,
-                        help="Number of generations (default: 50)")
-    parser.add_argument("--workers",  type=int, default=None,
-                        help="Parallel workers (default: cpu_count - 1)")
-    parser.add_argument("--resume",   type=str, default=None,
-                        help="Path to checkpoint .pkl to resume from")
-    parser.add_argument("--scenarios", type=str, default="phase1",
-                        help=(
-                            "Scenario preset or comma-separated names. "
-                            f"Presets: phase1 phase2 phase3 phase4 all. "
-                            f"Available: {', '.join(list_scenarios())}"
-                        ))
-    parser.add_argument("--seed",     type=int, default=None,
-                        help="Random seed for reproducibility (default: random)")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="darwinbot: evolve bodies and gaits")
+    p.add_argument("--terrains", default="flat",
+                   help="preset (flat, terrain, all) or comma list of terrain names")
+    p.add_argument("--init", type=int, default=24, help="random bodies to start with")
+    p.add_argument("--batches", type=int, default=30)
+    p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--budget-init", type=int, default=400,
+                   help="CMA-ES evaluations for a body with a random controller")
+    p.add_argument("--budget-child", type=int, default=200,
+                   help="CMA-ES evaluations for a body with an inherited controller")
+    p.add_argument("--workers", type=int, default=None)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out", default="checkpoints")
+    p.add_argument("--resume", default=None)
+    a = p.parse_args()
 
-    if args.seed is not None:
-        import random
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        print(f"  Seed       : {args.seed}")
-
-    active = get_active_scenarios(args.scenarios)
-
-    print("=" * 60)
-    print("  darwinbot — train")
-    print("=" * 60)
-    print(f"  Scenarios  : {[n for n, _, _, _ in active]}")
-    print(f"  Weights    : {[round(w, 3) for _, _, _, w in active]}")
-    print(f"  Pop size   : {args.pop}")
-    print(f"  Generations: {args.gen}")
-    print()
-
-    eval_fn = functools.partial(evaluate, active_scenarios=active)
-    toolbox.register("evaluate", eval_fn)
-
-    population, logbook, hof = run_evolution(
-        pop_size      = args.pop,
-        n_generations = args.gen,
-        n_workers     = args.workers,
-        resume_from   = args.resume,
+    archive = evolve.run(
+        terrains=a.terrains, n_init=a.init, n_batches=a.batches,
+        batch_size=a.batch_size, budget_init=a.budget_init,
+        budget_child=a.budget_child, workers=a.workers, seed=a.seed,
+        out_dir=a.out, resume=a.resume,
     )
-
-    best_genes = np.array(hof[0])
-    print("\n" + "=" * 60)
-    print("  Best individual found:")
-    print("=" * 60)
-    print(genome_summary(best_genes))
-    print(f"\n  Fitness    : {hof[0].fitness.values[0]:.4f}")
-    print(f"  Checkpoints: checkpoints/")
-
-    # Save best robot MJCF XML for easy inspection / replay
-    best_xml_path = os.path.join("checkpoints", "best_robot.xml")
-    write_mjcf(decode(best_genes), path=best_xml_path)
-    print(f"  Best MJCF  : {best_xml_path}")
+    best = archive.best()
+    print(f"\nBest fitness {best.fitness:.3f}  scores {[round(s, 2) for s in best.scores]}")
+    print(summary(decode(best.morph)))
 
 
 if __name__ == "__main__":

@@ -210,3 +210,6 @@ checkpoints/
 # Others
 *~
 MUJOCO_LOG.TXT
+
+# Recorded replays
+*.mp4

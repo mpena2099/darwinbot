@@ -101,3 +101,36 @@ def test_old_archive_is_rejected():
     state.pop("body_model")
     with pytest.raises(ValueError, match="older body model"):
         evolve.Archive.__new__(evolve.Archive).__setstate__(state)
+
+
+def test_variants_deterministic_and_per_terrain():
+    from darwinbot.inner import optimise_controller
+    from darwinbot.terrain import get_terrains
+    morph = mo.decode(np.full(mo.MORPH_LENGTH, 0.5))
+    terrains = get_terrains("terrain")
+    kw = dict(budget=4, seed=5, seconds=1.0, variants=2)
+    a = optimise_controller(morph, terrains, **kw)
+    b = optimise_controller(morph, terrains, **kw)
+    assert a.fitness == b.fitness
+    assert np.array_equal(a.ctrl, b.ctrl)
+    assert len(a.scores) == len(terrains)
+
+
+def test_gpu_rejects_variants():
+    from darwinbot.inner import optimise_controller
+    from darwinbot.terrain import get_terrains
+    morph = mo.decode(np.full(mo.MORPH_LENGTH, 0.5))
+    with pytest.raises(ValueError, match="CPU only"):
+        optimise_controller(morph, get_terrains("flat"), device="gpu", variants=2)
+
+
+def test_validate_runs_on_tiny_archive(tmp_path):
+    import subprocess
+    import sys
+    evolve.run(n_init=2, n_batches=0, batch_size=2, budget_init=6,
+               workers=1, episode_seconds=1.0, out_dir=str(tmp_path))
+    r = subprocess.run([sys.executable, "experiments/validate.py", "--archive",
+                        str(tmp_path / "archive.pkl"), "--n", "2"],
+                       capture_output=True, text=True)
+    assert r.returncode in (0, 1), r.stderr
+    assert "mean loss" in r.stdout

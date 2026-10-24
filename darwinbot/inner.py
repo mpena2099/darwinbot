@@ -21,6 +21,8 @@ from typing import List, Optional, Sequence
 import cma
 import numpy as np
 
+from darwinbot import randomize
+
 from darwinbot.controller import CTRL_LENGTH, active_genes, random_controller
 from darwinbot.fitness import UNSTABLE_SCORE, aggregate, score
 from darwinbot.morphology import Morphology
@@ -37,9 +39,20 @@ class ControllerResult:
     evals:   int
 
 
-def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray):
-    metrics = [ep.run(ctrl) for ep in episodes]
-    scores  = [score(m) for m in metrics]
+def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None):
+    """
+    variants: None, or one list of randomize.Variant per episode. The terrain
+    score is then the mean over its variants (metrics keep the first one).
+    """
+    if not variants:
+        metrics = [ep.run(ctrl) for ep in episodes]
+        scores  = [score(m) for m in metrics]
+        return aggregate(scores), scores, metrics
+    metrics, scores = [], []
+    for ep, vs in zip(episodes, variants):
+        ms = [ep.run(ctrl, v) for v in vs]
+        metrics.append(ms[0])
+        scores.append(float(np.mean([score(m) for m in ms])))
     return aggregate(scores), scores, metrics
 
 
@@ -60,7 +73,15 @@ def optimise_controller(
     seconds: float = EPISODE_SECONDS,
     device: str = "cpu",
     popsize: Optional[int] = None,
+    variants: int = 0,
 ) -> ControllerResult:
+    """
+    variants > 0: every candidate is scored on that many randomised models per
+    terrain (domain randomisation, CPU only). They are drawn once per body from
+    its seed, so all candidates face the same ones (common random numbers).
+    """
+    if variants > 0 and device == "gpu":
+        raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     rng = np.random.default_rng(seed)
     base = np.array(x0, dtype=float) if x0 is not None else random_controller(rng)
     assert base.shape == (CTRL_LENGTH,)
@@ -99,8 +120,14 @@ def optimise_controller(
         if not episodes[0].buildable:
             return _unbuildable(base, terrains, episodes[0].mass)
 
+        var_sets = None
+        if variants > 0:
+            vrng = np.random.default_rng([seed, 1])    # leaves rng untouched
+            var_sets = [[randomize.perturb(ep.model, vrng) for _ in range(variants)]
+                        for ep in episodes]
+
         def run_one(c, n: int = 1):
-            return evaluate(episodes, c)
+            return evaluate(episodes, c, var_sets)
 
         fit, scores, metrics = run_one(base)
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)

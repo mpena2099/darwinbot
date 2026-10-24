@@ -35,6 +35,9 @@ def main():
                    help="CMA-ES population (gpu default: 64)")
     p.add_argument("--seconds", type=float, default=5.0,
                    help="simulated seconds per episode (ignored on --resume)")
+    p.add_argument("--variants", type=int, default=None,
+                   help="randomised models per terrain for every evaluation "
+                        "(default: 2 on cpu, 0 on gpu; ignored on --resume)")
     p.add_argument("--resume", default=None)
     a = p.parse_args()
 
@@ -46,12 +49,13 @@ def main():
             raise SystemExit("--device gpu needs JAX and MJX: "
                              "pip install -e '.[gpu]'")
 
+    variants = a.variants if a.variants is not None else (2 if a.device == "cpu" else 0)
     archive = evolve.run(
         terrains=a.terrains, n_init=a.init, n_batches=a.batches,
         batch_size=a.batch_size, budget_init=a.budget_init,
         budget_child=a.budget_child, workers=a.workers, seed=a.seed,
         out_dir=a.out, resume=a.resume, episode_seconds=a.seconds,
-        device=a.device, popsize=a.popsize,
+        device=a.device, popsize=a.popsize, variants=variants,
     )
     best = archive.best()
     print(f"\nBest fitness {best.fitness:.3f}  scores {[round(s, 2) for s in best.scores]}")

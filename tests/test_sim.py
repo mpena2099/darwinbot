@@ -4,12 +4,14 @@ test_sim.py
 MuJoCo episode construction, standing, wheel drive and determinism.
 """
 
+import mujoco
 import numpy as np
 import pytest
 
 from darwinbot import controller as co
 from darwinbot import fitness
 from darwinbot import morphology as mo
+from darwinbot import randomize
 from darwinbot import terrain as te
 from darwinbot.sim import Episode, Metrics
 
@@ -153,3 +155,38 @@ def test_aggregate_blends_mean_and_min():
     scores = [1.0, 2.0, 6.0]
     expected = 0.7 * np.mean(scores) + 0.3 * min(scores)
     assert fitness.aggregate(scores) == pytest.approx(expected)
+
+
+def _episode():
+    return Episode(mo.decode(LEGS), te.get_terrains("flat")[0], seconds=1.0)
+
+
+def test_variant_none_is_bit_identical():
+    ep = _episode()
+    ctrl = np.random.default_rng(3).random(co.CTRL_LENGTH)
+    a = ep.run(ctrl)
+    nominal = randomize.Variant(ep.model, 0)
+    assert ep.run(ctrl, nominal) == a
+    assert ep.run(ctrl) == a
+
+
+def test_latency_delays_first_command(monkeypatch):
+    ctrl = np.random.default_rng(3).random(co.CTRL_LENGTH)
+
+    def first_nonzero(latency):
+        ep = _episode()
+        ep.n_steps = ep.hold * 6
+        applied = []
+        real = mujoco.mj_step
+
+        def spy(model, data):
+            real(model, data)
+            if ep._k % ep.hold == 1:          # first step after a control update
+                applied.append(np.abs(data.ctrl).max())
+
+        monkeypatch.setattr(mujoco, "mj_step", spy)
+        ep.run(ctrl, randomize.Variant(ep.model, latency))
+        monkeypatch.undo()
+        return next(i for i, a in enumerate(applied) if a > 0)
+
+    assert first_nonzero(2) == first_nonzero(0) + 2

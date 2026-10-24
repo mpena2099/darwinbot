@@ -10,6 +10,7 @@ every CONTROL_DT and held in between. A body whose robot geoms already touch
 at spawn (overlapping legs) is not buildable and is never simulated.
 """
 
+from collections import deque
 from dataclasses import dataclass
 
 import mujoco
@@ -65,9 +66,10 @@ class Episode:
         self._k = 0
         assert self.model.nu == len(self.layout)
 
-    def reset(self, ctrl: np.ndarray) -> CPG:
-        mujoco.mj_resetData(self.model, self.data)
-        mujoco.mj_forward(self.model, self.data)
+    def reset(self, ctrl: np.ndarray, model=None) -> CPG:
+        model = model or self.model
+        mujoco.mj_resetData(model, self.data)
+        mujoco.mj_forward(model, self.data)
         self._k = 0
         return CPG(ctrl, self.layout)
 
@@ -77,16 +79,35 @@ class Episode:
         self._k += 1
         mujoco.mj_step(self.model, self.data)
 
-    def run(self, ctrl: np.ndarray) -> Metrics:
+    def run(self, ctrl: np.ndarray, variant=None) -> Metrics:
+        """
+        Simulate one episode. With a randomize.Variant the perturbed model is
+        stepped instead (same sizes, so the MjData is reused) and every new
+        command reaches the servos variant.latency control periods late; until
+        the first one arrives the targets stay at zero.
+        """
         m, d = self.model, self.data
-        cpg  = self.reset(ctrl)
+        sim_model = variant.model if variant is not None else m
+        cpg  = self.reset(ctrl, sim_model)
+        queue = (deque([np.zeros(m.nu)] * variant.latency)
+                 if variant is not None and variant.latency > 0 else None)
         x0, y0 = d.xpos[self.torso][:2].copy()
         dt = m.opt.timestep
         energy = 0.0
         fell = unstable = False
 
         for _ in range(self.n_steps):
-            self.step(cpg)
+            if variant is None:
+                self.step(cpg)
+            else:
+                if self._k % self.hold == 0:
+                    target = cpg(d.time)
+                    if queue is not None:
+                        queue.append(target)
+                        target = queue.popleft()
+                    d.ctrl[:] = target
+                self._k += 1
+                mujoco.mj_step(sim_model, d)
             energy += float(np.abs(d.actuator_force * d.actuator_velocity).sum()) * dt
             if not np.isfinite(d.qacc).all() or np.abs(d.qvel).max() > 1e3:
                 unstable = True

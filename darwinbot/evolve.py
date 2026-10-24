@@ -80,6 +80,7 @@ class Archive:
     batch:    int = 0
     evals:    int = 0
     seconds:  float = 8.0      # simulated seconds per episode in this run
+    variants: int = 0          # randomised models per terrain in this run
     body_model: int = BODY_MODEL
     _grid:    Optional[GridArchive] = field(default=None, repr=False)
 
@@ -138,6 +139,7 @@ class Archive:
         self.__dict__.update(state)
         self.__dict__.setdefault("_grid", None)
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
+        self.__dict__.setdefault("variants", 0)    # and no randomisation
         for elite in (old_cells or {}).values():
             self.insert(elite)
 
@@ -155,11 +157,12 @@ class Archive:
 def _work(task):
     """Pool worker: optimise one body's controller. Runs in a subprocess."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
-     device, popsize) = task
+     device, popsize, variants) = task
     morph = morpho.decode(morph_genes)
     res = optimise_controller(morph, get_terrains(terrains), x0=x0,
                               budget=budget, sigma0=sigma0, seed=seed,
-                              seconds=seconds, device=device, popsize=popsize)
+                              seconds=seconds, device=device, popsize=popsize,
+                              variants=variants)
     return morph_genes, res.ctrl, res.fitness, res.scores, res.evals
 
 
@@ -178,7 +181,10 @@ def run(
     resume: Optional[str] = None,
     device: str = "cpu",
     popsize: Optional[int] = None,
+    variants: int = 2,
 ) -> Archive:
+    if device == "gpu" and variants > 0 and not resume:
+        raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     os.makedirs(out_dir, exist_ok=True)
     rng = np.random.default_rng(seed)
     if device == "gpu":
@@ -194,7 +200,10 @@ def run(
         terrains = archive.terrains
         rng = np.random.default_rng(seed + archive.batch)
     else:
-        archive = Archive(terrains=terrains, seconds=episode_seconds)
+        archive = Archive(terrains=terrains, seconds=episode_seconds,
+                          variants=variants)
+    if device == "gpu" and archive.variants > 0:
+        raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
     def new_seed():
         return int(rng.integers(0, 2**31 - 1))
@@ -203,19 +212,19 @@ def run(
         if not archive.cells:
             return [(morpho.random_morphology(rng), None, terrains,
                      budget_init, 0.25, new_seed(), archive.seconds,
-                     device, popsize) for _ in range(n_init)]
+                     device, popsize, archive.variants) for _ in range(n_init)]
         parents = archive.sample_elites(batch_size, rng)
         tasks = []
         for i in range(batch_size):
             if rng.random() < random_frac:
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
-                              device, popsize))
+                              device, popsize, archive.variants))
             else:
                 child = morpho.mutate(parents["solution"][i], rng)
                 tasks.append((child, parents["ctrl"][i], terrains,
                               budget_child, 0.12, new_seed(), archive.seconds,
-                              device, popsize))
+                              device, popsize, archive.variants))
         return tasks
 
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "

@@ -22,9 +22,20 @@ from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
 
+def open_archive(path):
+    """Unpickle an archive, turning the usual failures into a plain message."""
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"{path} not found: train first with experiments/train.py")
+    except ValueError as e:
+        raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
+                         f"(or pass --archive with a newer one).")
+
+
 def load(path, cell):
-    with open(path, "rb") as f:
-        archive = pickle.load(f)
+    archive = open_archive(path)
     if not archive.cells:
         raise SystemExit(f"{path} has no elites")
     if cell is None:
@@ -113,8 +124,7 @@ def main():
     a = p.parse_args()
 
     if a.list:
-        with open(a.archive, "rb") as f:
-            archive = pickle.load(f)
+        archive = open_archive(a.archive)
         print("type                    fitness  leg length  servos")
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
             m = morpho.decode(e.morph)

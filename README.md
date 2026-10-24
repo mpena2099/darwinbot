@@ -42,11 +42,13 @@ python -m venv venv && source venv/bin/activate
 pip install -e .
 ```
 
-Dependencies: `mujoco >= 3.6`, `numpy >= 1.23`, `cma >= 3.3`,
-`matplotlib >= 3.6`. `imageio` is optional and only needed for video recording:
+Dependencies: `mujoco >= 3.6`, `numpy >= 1.23`, `cma >= 3.3`, `ribs >= 0.12`,
+`matplotlib >= 3.6`. Optional extras:
 
 ```bash
-pip install -e ".[video]"      # or: pip install imageio[ffmpeg]
+pip install -e ".[video]"      # video recording (imageio + ffmpeg)
+pip install -e ".[cad]"        # STL parts in the export (build123d)
+pip install -e ".[gpu]"        # MJX backend (jax with CUDA 12)
 ```
 
 ## Run
@@ -71,6 +73,15 @@ python experiments/replay.py --type 6legs-2wheels-14servos --terrain rough
 # Record a video instead of opening a window (needs the video extra)
 python experiments/replay.py --record out.mp4 --seconds 8
 
+# Train on randomised models (default 2 per terrain on cpu, 0 on gpu)
+python experiments/train.py --variants 4
+
+# Check the elite on 50 randomised models per terrain (PASS if mean loss < 30%)
+python experiments/validate.py --n 50
+
+# Export a robot to build: parts, bill of materials, assembly, control file
+python experiments/export.py --type 4legs-0wheels-8servos
+
 # Plot the archive heatmap and the progress curves
 python experiments/plot_archive.py
 python experiments/plot_archive.py --show
@@ -80,6 +91,14 @@ Training writes `checkpoints/archive.pkl` after every batch. `replay.py` reads
 that file by default (`--archive` changes it). `plot_archive.py` saves
 `archive_heatmap.png` and `archive_history.png` to `checkpoints/` (`--out`
 changes the directory).
+
+`--variants N` scores every candidate gait on N randomised copies of each
+terrain (friction, mass, servo torque and stiffness, joint play, 0 to 2
+control periods of command delay) and takes the mean, so gaits that depend on
+exact simulator details lose. It costs about N times more per evaluation, is
+CPU only, and is stored in the archive. `validate.py` runs the elite on
+`--n` fresh variants (`--seed`, `--workers`) and prints nominal, mean and
+worst distance, fall rate and relative loss per terrain.
 
 ### GPU (optional)
 
@@ -141,10 +160,10 @@ leaves the terrain.
 
 ### Long runs
 
-A run on the `terrain` preset with 3 workers takes roughly 15 to 20 min for
-the initial batch and 3 to 4 min for each later batch (5 s episodes,
-0.004 s physics step, 120 CMA-ES evaluations per child; see `--seconds`,
-`--budget-init` and `--budget-child`). The archive is saved after
+A run on the `terrain` preset with 3 workers and the default 2 variants takes
+roughly 30 to 40 min for the initial batch and 6 to 8 min for each later batch
+(5 s episodes, 0.004 s physics step, 120 CMA-ES evaluations per child; see
+`--seconds`, `--variants`, `--budget-init` and `--budget-child`). The archive is saved after
 every batch; stopping mid-batch loses only that batch. Keep the machine awake
 and the process alive when the terminal closes:
 
@@ -153,6 +172,22 @@ tmux new -s darwin
 systemd-inhibit --what=sleep python experiments/train.py --terrains terrain --batches 40 --workers 3
 # detach with Ctrl+b d, reattach with: tmux attach -t darwin
 ```
+
+## Exporting a robot to build
+
+`experiments/export.py --type <type>` writes `exports/<type>/`:
+
+| File | Content |
+|------|---------|
+| `control.json` | the evolved gait for the ESP32 firmware, format in `docs/formato-controle.md` |
+| `bom.md`, `bom.csv` | servos, printed parts with quantities and material, electronics, screws, tyres |
+| `assembly.md` | servo id per joint and leg, mounting direction, calibration step |
+| `parts/*.stl` | torso plate, links, servo brackets, feet, wheels (needs the `cad` extra) |
+| `robot.xml` | the MuJoCo model, for inspection |
+
+Servo dimensions in `darwinbot/parts.py` (horn and mounting holes, body size)
+are placeholders marked "measure a real STS3215 and update": check them
+against a real servo before printing.
 
 ## Tests
 
@@ -259,10 +294,12 @@ fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 
 ## Known limitations
 
-- Wheels dominate. On the current terrains a body that rolls on two large
-  wheels scores about 7, while the best six-legged walker scores below 1. The
-  3 cm steps are too low to stop a wheel; taller steps would give legs a real
-  advantage.
+- Wheels were far ahead of legs before the switch to real parts (large
+  wheels spinning at 15 rad/s). With servo-speed wheels of 3 to 6 cm the gap
+  should shrink, but it has not been measured on a full run yet.
+- No firmware yet: the ESP32 side (Phase 5 of `docs/plano-hardware.md`) waits
+  for real hardware. The control file format it will read is already fixed.
+- Randomised training (`--variants`) is CPU only.
 - The controller is open loop: it never senses the ground, so tasks that need
   steering or reacting (finding a doorway, avoiding a wall) are out of scope.
 - A body whose legs overlap at spawn is not buildable and scores `UNSTABLE_SCORE`
@@ -278,19 +315,24 @@ darwinbot/
 │   ├── builder.py      # morphology + terrain -> MJCF
 │   ├── terrain.py      # terrain snippets and presets
 │   ├── sim.py          # Episode: compile once, replay controllers
+│   ├── sim_gpu.py      # optional MJX batch simulator
+│   ├── randomize.py    # randomised model variants (sim-to-real)
 │   ├── fitness.py      # episode score and multi-terrain aggregate
 │   ├── inner.py        # CMA-ES inner loop
-│   └── evolve.py       # MAP-Elites archive and outer loop
+│   ├── evolve.py       # MAP-Elites archive (pyribs) and outer loop
+│   ├── parts.py        # printable parts (build123d)
+│   ├── control_file.py # JSON control file for the firmware
+│   └── export.py       # robot -> parts, BOM, assembly, control file
 ├── experiments/
 │   ├── train.py        # run evolution
 │   ├── replay.py       # viewer or video for an elite
+│   ├── validate.py     # elite on randomised models (sim-to-real check)
+│   ├── export.py       # export a robot to build
 │   └── plot_archive.py # heatmap and progress plots
-├── tests/
-│   ├── test_morphology.py
-│   ├── test_controller.py
-│   ├── test_sim.py
-│   └── test_evolve.py
+├── tests/              # pytest suite (GPU tests skip without jax)
+├── docs/               # hardware data, control file format
 ├── checkpoints/        # archive.pkl and plots
+├── exports/            # export.py output (ignored by git)
 ├── pyproject.toml
 └── requirements.txt
 ```

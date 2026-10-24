@@ -18,8 +18,8 @@ from darwinbot.evolve import N_SERVO_BINS, SERVO_MIN, SERVO_STEP
 
 
 def load(path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
+    from replay import open_archive   # same directory; shared error messages
+    return open_archive(path)
 
 
 def heatmap(archive):

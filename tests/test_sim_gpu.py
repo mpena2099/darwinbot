@@ -19,11 +19,8 @@ from darwinbot.inner import optimise_controller
 from darwinbot.sim import Episode
 from darwinbot.sim_gpu import BatchEpisode
 
-# Four-legged body, no wheels.
-MORPH = mo.Morphology(
-    body_length=0.4, body_width=0.2,
-    pairs=[mo.LegPair(i, x, 0.0, 0.10, 0.10, True, False, 0.05)
-           for i, x in enumerate((0.4, -0.4))])
+# Four-legged body, yaw hips, no wheels.
+MORPH = mo.template(2, wheels=False, yaw=True)
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +35,8 @@ def test_batch_matches_cpu(batch):
     for got, ref in zip(batch.run_batch(ctrls), (cpu.run(c) for c in ctrls)):
         assert got.fell == ref.fell
         assert abs(got.dx - ref.dx) < 0.05, (got.dx, ref.dx)
+        assert abs(got.duty - ref.duty) < 0.1, (got.duty, ref.duty)
+        assert abs(got.height - ref.height) < 0.05, (got.height, ref.height)
 
 
 def test_gpu_optimise_returns_finite(batch, monkeypatch):

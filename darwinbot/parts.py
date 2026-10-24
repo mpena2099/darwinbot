@@ -2,7 +2,7 @@
 parts.py
 --------
 Parametric printable parts (build123d) for the real DarwinBot: servo bracket,
-link, TPU foot, wheel and torso plate. All dimensions in mm.
+link, TPU foot, wheel and torso plate (one mount per used core slot). All dimensions in mm.
 
 Conventions: a link lies along +X with the horn axis at the origin and the
 next servo axis at x = length_mm; servo and wheel axes point along Z.
@@ -113,14 +113,15 @@ def wheel(radius_mm: float) -> Part:
     return part
 
 
-def torso_plate(length_mm: float, width_mm: float, hip_positions) -> Part:
-    """Base plate; each hip gets a bracket mount (4 M3 holes) around its position."""
+def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
+    """Base plate; each used core slot, given as an (x, y) mm position in `mounts`,
+    gets a bracket mount (4 M3 holes) around it."""
     t = PLATE_T
     part = Box(length_mm, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
     part = fillet(part.edges().filter_by(lambda e: abs(e.length - t) < 1e-6), 5)
     ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
     ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
-    for x, y in hip_positions:
+    for x, y in mounts:
         for sx in (-1, 1):
             for sy in (-1, 1):
                 part -= Pos(x + sx * (ol / 2 - 3), y + sy * (ow / 2 - 3), 0) * Cylinder(M3 / 2, t * 3)

@@ -5,7 +5,7 @@ Replay an evolved body and gait from an archive checkpoint.
 
   python experiments/replay.py                              # best elite, flat, viewer
   python experiments/replay.py --list                       # robot types found
-  python experiments/replay.py --type 6legs-2wheels-14servos --terrain rough
+  python experiments/replay.py --type 8servos-low-crawl --terrain rough
   python experiments/replay.py --record out.mp4 --seconds 8
 """
 
@@ -17,7 +17,6 @@ import time
 import mujoco
 
 from darwinbot import morphology as morpho
-from darwinbot.evolve import cell_name, parse_cell_name
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
@@ -41,12 +40,9 @@ def load(path, cell):
     if cell is None:
         return archive, archive.best()
     try:
-        key = parse_cell_name(cell)
+        key = archive.find(cell)
     except ValueError as e:
-        raise SystemExit(str(e))
-    if key not in archive.cells:
-        raise SystemExit(f"no {cell} robot in the archive yet; "
-                         f"see the available types with --list")
+        raise SystemExit(f"{e}; see the available types with --list")
     return archive, archive.cells[key]
 
 
@@ -110,7 +106,7 @@ def main():
     p = argparse.ArgumentParser(description="darwinbot: replay an evolved robot")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
     p.add_argument("--type", dest="cell", default=None,
-                   help="robot type from --list, e.g. 6legs-2wheels-14servos "
+                   help="robot type from --list, e.g. 8servos-low-crawl "
                         "(default: best robot overall)")
     p.add_argument("--terrain", default="flat")
     p.add_argument("--record", default=None, metavar="OUT.mp4",
@@ -120,15 +116,16 @@ def main():
     p.add_argument("--speed", type=float, default=1.0,
                    help="viewer playback speed, e.g. 0.25 for slow motion")
     p.add_argument("--list", action="store_true",
-                   help="print every archive cell with its fitness and exit")
+                   help="print every archive cell with its fitness, duty, height and servos, then exit")
     a = p.parse_args()
 
     if a.list:
         archive = open_archive(a.archive)
-        print("type                    fitness  leg length  servos")
+        names = archive.names()
+        print("type                       fitness  duty  height  servos")
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
-            m = morpho.decode(e.morph)
-            print(f"{cell_name(cell):22s} {e.fitness:8.2f}  {m.mean_leg_length:.2f} m     {m.n_servos}")
+            duty, height, servos, _ = e.behaviour
+            print(f"{names[cell]:26s} {e.fitness:7.2f}  {duty:4.2f}  {height:6.2f}  {int(servos):6d}")
         return
 
     archive, elite = load(a.archive, a.cell)

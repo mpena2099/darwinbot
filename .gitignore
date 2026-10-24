@@ -220,3 +220,4 @@ exports/
 # Local plans and Claude Code settings
 docs/plano-*.md
 .claude/
+/venv

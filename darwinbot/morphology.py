@@ -1,188 +1,746 @@
 """
 morphology.py
 -------------
-Body genome: a box torso with up to N_PAIRS bilaterally mirrored leg pairs.
+Body genome: a tree of real modules (Karl Sims / Revolve2 style).
 
-Every gene lives in [0, 1] and is mapped linearly onto its physical range on
-decode. Keeping the raw genome normalised makes mutation and crossover
-scale-free: one sigma works for every gene.
+Modules
+  core   root, torso plate + ESP32 + LiPo. 8 slots: 0 front, 1 back,
+         2..4 left side (front, middle, rear), 5..7 right side
+  joint  one STS3215 servo + a catalogue link. Slots: 0 tip, 1 left, 2 right
+         (the side slots are a 90 degree elbow at the end of the link)
+  link   passive catalogue link, same slots as the joint
+  wheel  servo in wheel mode + wheel, terminal
+  foot   TPU tip, terminal. A joint or link with no child ends in an implicit foot.
 
-Leg anatomy (one side; the other side is the mirror image across the XZ plane)
-  hip   : pitch servo (lift/lower) + optional yaw servo (swing fore/aft)
-  thigh : capsule, horizontal, pointing outward from the torso side
-  knee  : pitch joint
-  shin  : capsule, pointing straight down at rest
-  foot  : optional wheel at the shin tip, axle along the body Y axis
+Every slot also has a discrete roll (0, 90, 180, 270 degrees around the slot
+direction), so a child can point up, down or sideways. A joint turns about
+its pitch (local Z), yaw (local Y) or roll (local X) axis; local X is the
+direction of the link. `flip` negates the axis, which is how a mirrored copy
+keeps "same signal, mirrored motion".
 
-Genome layout
-  [0]  body_length
-  [1]  body_width
-  then per pair p (PAIR_GENES each):
-  [+0] enabled     > 0.5 means the pair exists
-  [+1] attach_x    position along the torso side, -1 (rear) .. +1 (front)
-  [+2] splay       leg yaw at rest, rad (positive points the leg forward)
-  [+3] thigh_len   snapped to LINK_LENGTHS (gene picks the catalogue index)
-  [+4] shin_len    snapped to LINK_LENGTHS
-  [+5] has_yaw     > 0.5 means the hip has a yaw servo
-  [+6] has_wheel   > 0.5 means the foot is a wheel
-  [+7] wheel_rad
+Genome: MAX_NODES blocks of BLOCK_GENES genes in [0, 1], one per node slot.
+The block index is the stable slot id of the node (the controller is indexed
+by it). Block 0 is always the core. A block is
+  [ACTIVE, PARENT, SLOT, ROT, TYPE, AXIS, LENGTH, WHEEL, FLIP]
+(for the core, LENGTH and WHEEL hold body length and width).
 
-Thigh and shin are printed links of fixed catalogue lengths with a constant
-capsule radius, so every body is a list of real parts (see n_servos).
+decode() accepts any vector and always returns a body that respects
+MAX_NODES, MAX_SERVOS and MAX_DEPTH: blocks that are inactive, unreachable,
+clash on a slot or break a limit are dropped. Mutation works on the tree
+(decode, edit, encode), so a repaired genome is just encode(decode(genes)).
+
+Frames: X forward, Y left, Z up in the torso frame.
 """
 
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, field
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
 
-N_PAIRS = 3
+MAX_NODES  = 20
+MAX_SERVOS = 16
+MAX_DEPTH  = 5      # core is depth 0
 
 LINK_LENGTHS = (0.06, 0.08, 0.10, 0.12)   # m, printed link catalogue
 LINK_RADIUS  = 0.012                      # m, capsule radius of every link
-
+FOOT_RADIUS  = 0.02                       # m, TPU foot sphere
+WHEEL_RANGE_M = (0.03, 0.06)              # m, wheel radius
 BODY_BOUNDS = [
     (0.15, 0.40),   # body_length (m)
     (0.10, 0.25),   # body_width  (m)
 ]
-PAIR_BOUNDS = [
-    (0.0, 1.0),     # enabled
-    (-1.0, 1.0),    # attach_x (fraction of half length)
-    (-0.6, 0.6),    # splay (rad)
-    (0.0, 1.0),     # thigh_len (index into LINK_LENGTHS)
-    (0.0, 1.0),     # shin_len (index into LINK_LENGTHS)
-    (0.0, 1.0),     # has_yaw
-    (0.0, 1.0),     # has_wheel
-    (0.03, 0.06),   # wheel_rad (m)
-]
-PAIR_GENES = len(PAIR_BOUNDS)
-MORPH_LENGTH = len(BODY_BOUNDS) + N_PAIRS * PAIR_GENES
-BOUNDS = BODY_BOUNDS + PAIR_BOUNDS * N_PAIRS
+TORSO_HEIGHT = 0.06                       # m
+SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
+ELBOW = 0.04        # m, side slot offset from the link axis
+SIDE_X = (0.7, 0.0, -0.7)           # core side slots, fraction of half length
+
+TYPE_KINDS = ("joint", "link", "wheel", "foot")     # decoded from the TYPE gene
+AXES = ("pitch", "yaw", "roll")
+AXIS_LOCAL = {"pitch": (0.0, 0.0, 1.0), "yaw": (0.0, 1.0, 0.0),
+              "roll": (1.0, 0.0, 0.0)}
+
+(ACTIVE, PARENT, SLOT, ROT, TYPE, AXIS, LENGTH, WHEEL, FLIP) = range(9)
+BLOCK_GENES  = 9
+MORPH_LENGTH = MAX_NODES * BLOCK_GENES
+
+N_SLOTS = {"core": 8, "joint": 3, "link": 3, "wheel": 0, "foot": 0}
+
+
+class Actuator(NamedTuple):
+    """One entry of the actuator layout, in model order."""
+    slot: int       # stable node slot id
+    kind: str       # "joint" or "wheel"
+    axis: str       # pitch / yaw / roll for joints, "wheel" for wheels
+
+
+ActuatorLayout = List[Actuator]
 
 
 @dataclass
-class LegPair:
-    index:     int      # pair slot 0..N_PAIRS-1, stable across mutation
-    attach_x:  float
-    splay:     float
-    thigh_len: float
-    shin_len:  float
-    has_yaw:   bool
-    has_wheel: bool
-    wheel_rad: float
+class Node:
+    id:     int
+    kind:   str
+    parent: int = -1
+    slot:   int = 0              # slot used on the parent
+    rot:    int = 0              # roll of the slot, in quarter turns
+    axis:   str = "pitch"        # joint only
+    length: float = LINK_LENGTHS[1]   # joint and link
+    wheel_rad: float = 0.045     # wheel only
+    flip:   bool = False         # joint only
 
-    @property
-    def radius(self) -> float:
-        return LINK_RADIUS
 
-    @property
-    def n_servos(self) -> int:
-        """Servos in both legs of the pair: hip pitch, knee, yaw, wheel."""
-        return 2 * (2 + self.has_yaw + self.has_wheel)
+def _rz(k: int) -> np.ndarray:
+    c, s = [(1, 0), (0, 1), (-1, 0), (0, -1)][k % 4]
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=float)
 
-    @property
-    def reach(self) -> float:
-        """Distance from hip height down to the ground contact point at rest."""
-        if self.has_wheel:
-            return self.shin_len + self.wheel_rad
-        return self.shin_len + self.radius
+
+def _rx(k: int) -> np.ndarray:
+    c, s = [(1, 0), (0, 1), (-1, 0), (0, -1)][k % 4]
+    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=float)
 
 
 @dataclass
 class Morphology:
     body_length: float
     body_width:  float
-    pairs:       List[LegPair]
+    nodes: Dict[int, Node] = field(default_factory=dict)
+
+    # structure ----------------------------------------------------------
+    def child_map(self) -> Dict[int, Dict[int, int]]:
+        out: Dict[int, Dict[int, int]] = {}
+        for n in self.nodes.values():
+            if n.parent >= 0:
+                out.setdefault(n.parent, {})[n.slot] = n.id
+        return out
 
     @property
-    def n_legs(self) -> int:
-        return 2 * len(self.pairs)
+    def order(self) -> List[int]:
+        """Node ids in depth first order, children by slot. Model order."""
+        cm = self.child_map()
+        out: List[int] = []
+
+        def visit(i):
+            out.append(i)
+            for s in sorted(cm.get(i, {})):
+                visit(cm[i][s])
+        visit(0)
+        return out
+
+    def depth(self, i: int) -> int:
+        d = 0
+        while self.nodes[i].parent >= 0:
+            i = self.nodes[i].parent
+            d += 1
+        return d
+
+    @property
+    def max_depth(self) -> int:
+        return max(self.depth(i) for i in self.nodes)
+
+    def free_slots(self) -> List[Tuple[int, int]]:
+        taken = {(n.parent, n.slot) for n in self.nodes.values() if n.parent >= 0}
+        return [(i, s) for i, n in self.nodes.items()
+                for s in range(N_SLOTS[n.kind]) if (i, s) not in taken]
+
+    def copy(self) -> "Morphology":
+        return Morphology(self.body_length, self.body_width,
+                          {i: Node(**vars(n)) for i, n in self.nodes.items()})
+
+    # counts ------------------------------------------------------------
+    @property
+    def n_nodes(self) -> int:
+        return len(self.nodes)
+
+    @property
+    def n_joints(self) -> int:
+        return sum(n.kind == "joint" for n in self.nodes.values())
 
     @property
     def n_wheels(self) -> int:
-        return 2 * sum(p.has_wheel for p in self.pairs)
+        return sum(n.kind == "wheel" for n in self.nodes.values())
 
     @property
     def n_servos(self) -> int:
-        return sum(p.n_servos for p in self.pairs)
+        return self.n_joints + self.n_wheels
+
+    def layout(self) -> ActuatorLayout:
+        out = []
+        for i in self.order:
+            n = self.nodes[i]
+            if n.kind == "joint":
+                out.append(Actuator(i, "joint", n.axis))
+            elif n.kind == "wheel":
+                out.append(Actuator(i, "wheel", "wheel"))
+        return out
+
+    # geometry (rest pose) ------------------------------------------------
+    def slot_frame(self, parent: Node, slot: int) -> Tuple[np.ndarray, np.ndarray]:
+        """Offset and rotation of a slot in the frame of its parent."""
+        if parent.kind == "core":
+            if slot == 0:
+                return np.array([self.body_length / 2, 0, 0]), _rz(0)
+            if slot == 1:
+                return np.array([-self.body_length / 2, 0, 0]), _rz(2)
+            side = 1.0 if slot < 5 else -1.0
+            x = SIDE_X[(slot - 2) % 3] * self.body_length / 2
+            return (np.array([x, side * self.body_width / 2, 0]),
+                    _rz(1 if side > 0 else -1))
+        if slot == 0:
+            return np.array([parent.length, 0, 0]), _rz(0)
+        side = 1.0 if slot == 1 else -1.0
+        return (np.array([parent.length, side * ELBOW, 0]),
+                _rz(1 if side > 0 else -1))
+
+    def rel_frame(self, node: Node) -> Tuple[np.ndarray, np.ndarray]:
+        """Offset and rotation of a node in the frame of its parent."""
+        off, rot = self.slot_frame(self.nodes[node.parent], node.slot)
+        return off, rot @ _rx(node.rot)
+
+    def frames(self) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
+        out = {0: (np.zeros(3), np.eye(3))}
+        for i in self.order[1:]:
+            n = self.nodes[i]
+            pp, pr = out[n.parent]
+            off, rot = self.rel_frame(n)
+            out[i] = (pp + pr @ off, pr @ rot)
+        return out
+
+    def wheel_axis_sign(self, rot: np.ndarray) -> float:
+        """Sign of the local Y axle so that positive speed rolls forward
+        (spin about world +Y)."""
+        return -1.0 if rot[1, 1] < -0.5 else 1.0
+
+    def wheel_hub(self, node: Node, pos: np.ndarray, rot: np.ndarray) -> np.ndarray:
+        """Wheel centre offset from the node origin, in the node frame: the
+        wheel sits on the outer side of its servo."""
+        half_t = max(0.01, 0.25 * node.wheel_rad)
+        s = 1.0
+        if abs(rot[1, 1]) > 0.5:
+            s = np.sign(rot[1, 1]) * (-1.0 if pos[1] < 0 else 1.0)
+        return np.array([0.0, s * (SERVO_BOX[1] / 2 + half_t), 0.0])
+
+    def terminal_points(self) -> List[Tuple[int, np.ndarray, float]]:
+        """
+        Ground contact candidates at rest, torso frame: (node id, point,
+        radius) for every wheel, foot and free tip of a joint or link.
+        """
+        fr = self.frames()
+        cm = self.child_map()
+        out = []
+        for i in self.order:
+            n = self.nodes[i]
+            pos, rot = fr[i]
+            if n.kind == "wheel":
+                out.append((i, pos + rot @ self.wheel_hub(n, pos, rot), n.wheel_rad))
+            elif n.kind == "foot":
+                out.append((i, pos.copy(), FOOT_RADIUS))
+            elif n.kind in ("joint", "link") and i not in cm:
+                out.append((i, pos + rot @ np.array([n.length, 0, 0]), LINK_RADIUS))
+        return out
 
     @property
-    def mean_leg_length(self) -> float:
-        return float(np.mean([p.thigh_len + p.shin_len for p in self.pairs]))
+    def n_terminals(self) -> int:
+        return len(self.terminal_points())
+
+    @property
+    def max_reach(self) -> float:
+        """Largest distance from the torso centre to any point of the body."""
+        r = float(np.linalg.norm([self.body_length / 2, self.body_width / 2,
+                                  TORSO_HEIGHT / 2]))
+        for i, (pos, rot) in self.frames().items():
+            n = self.nodes[i]
+            r = max(r, float(np.linalg.norm(pos)))
+            if n.kind in ("joint", "link"):
+                tip = pos + rot @ np.array([n.length, 0, 0])
+                r = max(r, float(np.linalg.norm(tip)) + LINK_RADIUS)
+        for _, p, rad in self.terminal_points():
+            r = max(r, float(np.linalg.norm(p)) + rad)
+        return r
+
+    def lowest_z(self) -> float:
+        """Lowest point of the body relative to the torso centre at rest."""
+        low = -TORSO_HEIGHT / 2
+        corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1)
+                            for sz in (-1, 1)]) * (np.array(SERVO_BOX) / 2)
+        for i, (pos, rot) in self.frames().items():
+            n = self.nodes[i]
+            if n.kind in ("joint", "wheel"):
+                low = min(low, float((pos + corners @ rot.T)[:, 2].min()))
+            if n.kind in ("joint", "link"):
+                tip = pos + rot @ np.array([n.length, 0, 0])
+                low = min(low, pos[2] - LINK_RADIUS, tip[2] - LINK_RADIUS)
+            elif n.kind == "wheel":
+                c = pos + rot @ self.wheel_hub(n, pos, rot)
+                az = abs(float((rot @ np.array([0.0, 1.0, 0.0]))[2]))
+                half = max(0.01, 0.25 * n.wheel_rad)
+                low = min(low, float(c[2] - half * az
+                                     - n.wheel_rad * np.sqrt(max(0.0, 1 - az * az))))
+            elif n.kind == "foot":
+                low = min(low, pos[2] - FOOT_RADIUS)
+        return low
+
+
+# --------------------------------------------------------------------------
+# Genome <-> tree
+# --------------------------------------------------------------------------
+
+def _pick(u: float, n: int) -> int:
+    return min(int(np.clip(u, 0.0, 1.0) * n), n - 1)
+
+
+def _bin(i: int, n: int) -> float:
+    return (i + 0.5) / n
 
 
 def _scale(u: float, lo: float, hi: float) -> float:
     return lo + float(np.clip(u, 0.0, 1.0)) * (hi - lo)
 
 
-def _snap(u: float) -> float:
-    """Gene in [0, 1] -> nearest-below catalogue length."""
-    i = min(int(np.clip(u, 0.0, 1.0) * len(LINK_LENGTHS)), len(LINK_LENGTHS) - 1)
-    return LINK_LENGTHS[i]
+def _unscale(v: float, lo: float, hi: float) -> float:
+    return float(np.clip((v - lo) / (hi - lo), 0.0, 1.0))
 
 
 def decode(genes: np.ndarray) -> Morphology:
+    """Genome -> body. Total: any vector in [0, 1] gives a valid body."""
     genes = np.asarray(genes, dtype=float)
     assert genes.shape == (MORPH_LENGTH,), genes.shape
-    phys = [_scale(u, lo, hi) for u, (lo, hi) in zip(genes, BOUNDS)]
+    blocks = genes.reshape(MAX_NODES, BLOCK_GENES)
 
-    enabled = [genes[2 + p * PAIR_GENES] > 0.5 for p in range(N_PAIRS)]
-    if not any(enabled):
-        # A body with no legs is a brick: keep the pair closest to switching on.
-        best = int(np.argmax([genes[2 + p * PAIR_GENES] for p in range(N_PAIRS)]))
-        enabled[best] = True
+    morph = Morphology(round(_scale(blocks[0, LENGTH], *BODY_BOUNDS[0]), 6),
+                       round(_scale(blocks[0, WHEEL], *BODY_BOUNDS[1]), 6),
+                       {0: Node(0, "core")})
+    kinds = {0: "core"}
+    for i in range(1, MAX_NODES):
+        kinds[i] = TYPE_KINDS[_pick(blocks[i, TYPE], len(TYPE_KINDS))]
 
-    pairs = []
-    for p in range(N_PAIRS):
-        if not enabled[p]:
+    # Who claims which slot: the lowest block id wins a clash.
+    claims: Dict[Tuple[int, int], int] = {}
+    for i in range(1, MAX_NODES):
+        b = blocks[i]
+        if b[ACTIVE] <= 0.5:
             continue
-        b = 2 + p * PAIR_GENES
-        pairs.append(LegPair(
-            index     = p,
-            attach_x  = phys[b + 1],
-            splay     = phys[b + 2],
-            thigh_len = _snap(genes[b + 3]),
-            shin_len  = _snap(genes[b + 4]),
-            has_yaw   = genes[b + 5] > 0.5,
-            has_wheel = genes[b + 6] > 0.5,
-            wheel_rad = phys[b + 7],
-        ))
-    return Morphology(body_length=phys[0], body_width=phys[1], pairs=pairs)
+        p = _pick(b[PARENT], MAX_NODES)
+        if p == i or N_SLOTS[kinds[p]] == 0:
+            continue
+        claims.setdefault((p, _pick(b[SLOT], N_SLOTS[kinds[p]])), i)
+    kids: Dict[int, List[Tuple[int, int]]] = {}
+    for (p, s), i in claims.items():
+        kids.setdefault(p, []).append((s, i))
+
+    servos = 0
+    frontier = [0]
+    for _ in range(MAX_DEPTH):
+        nxt = []
+        for p in frontier:
+            for s, i in sorted(kids.get(p, [])):
+                kind = kinds[i]
+                if kind in ("joint", "wheel"):
+                    if servos >= MAX_SERVOS:
+                        continue
+                    servos += 1
+                morph.nodes[i] = _node_from_block(i, kind, p, s, blocks[i])
+                nxt.append(i)
+        frontier = nxt
+    _ensure_servo(morph)
+    return morph
+
+
+def _node_from_block(i, kind, parent, slot, b) -> Node:
+    n = Node(i, kind, parent, slot, _pick(b[ROT], 4))
+    if kind == "joint":
+        n.axis = AXES[_pick(b[AXIS], 3)]
+        n.flip = bool(b[FLIP] > 0.5)
+    if kind in ("joint", "link"):
+        n.length = LINK_LENGTHS[_pick(b[LENGTH], len(LINK_LENGTHS))]
+    if kind == "wheel":
+        n.wheel_rad = round(_scale(b[WHEEL], *WHEEL_RANGE_M), 6)
+    return n
+
+
+def encode(morph: Morphology) -> np.ndarray:
+    """Body -> canonical genome (inverse of decode)."""
+    blocks = np.zeros((MAX_NODES, BLOCK_GENES))
+    blocks[0, ACTIVE] = 1.0
+    blocks[0, LENGTH] = _unscale(morph.body_length, *BODY_BOUNDS[0])
+    blocks[0, WHEEL] = _unscale(morph.body_width, *BODY_BOUNDS[1])
+    for i, n in morph.nodes.items():
+        if i == 0:
+            continue
+        b = blocks[i]
+        b[ACTIVE] = 1.0
+        b[PARENT] = _bin(n.parent, MAX_NODES)
+        b[SLOT] = _bin(n.slot, N_SLOTS[morph.nodes[n.parent].kind])
+        b[ROT] = _bin(n.rot, 4)
+        b[TYPE] = _bin(TYPE_KINDS.index(n.kind), len(TYPE_KINDS))
+        b[AXIS] = _bin(AXES.index(n.axis), 3)
+        b[LENGTH] = _bin(LINK_LENGTHS.index(n.length), len(LINK_LENGTHS))
+        b[WHEEL] = _unscale(n.wheel_rad, *WHEEL_RANGE_M)
+        b[FLIP] = 0.75 if n.flip else 0.25
+    return blocks.reshape(-1)
+
+
+def repair(genes: np.ndarray) -> np.ndarray:
+    """Canonical genome of the body the genes decode to."""
+    return encode(decode(genes))
+
+
+def _free_id(morph: Morphology) -> Optional[int]:
+    for i in range(1, MAX_NODES):
+        if i not in morph.nodes:
+            return i
+    return None
+
+
+def _ensure_servo(morph: Morphology):
+    """A body without servos is a brick: hang a default joint on the core."""
+    if morph.n_servos:
+        return
+    i = _free_id(morph)
+    taken = morph.child_map().get(0, {})
+    slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1) if s not in taken)
+    morph.nodes[i] = Node(i, "joint", 0, slot, 3)
+
+
+def prune(morph: Morphology) -> Morphology:
+    """Enforce the limits in place by dropping deepest leaves first."""
+    while True:
+        parents = {n.parent for n in morph.nodes.values()}
+        leaves = [i for i in morph.nodes if i != 0 and i not in parents]
+        if morph.max_depth > MAX_DEPTH:
+            drop = [i for i in leaves if morph.depth(i) > MAX_DEPTH]
+        elif morph.n_nodes > MAX_NODES:
+            drop = leaves
+        elif morph.n_servos > MAX_SERVOS:
+            drop = [i for i in leaves if morph.nodes[i].kind in ("joint", "wheel")]
+            drop = drop or leaves
+        else:
+            break
+        del morph.nodes[max(drop, key=lambda i: (morph.depth(i), i))]
+    _ensure_servo(morph)
+    return morph
+
+
+# --------------------------------------------------------------------------
+# Mirroring and templates
+# --------------------------------------------------------------------------
+
+def mirror_slot(kind: str, slot: int) -> int:
+    """Slot on the other side of the XZ plane."""
+    if kind == "core":
+        return slot + 3 if 2 <= slot <= 4 else slot - 3 if slot >= 5 else slot
+    return {1: 2, 2: 1}.get(slot, slot)
+
+
+def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
+                 mirror: bool = False) -> Optional[int]:
+    """
+    Copy the subtree under `root` onto a free slot of `parent`, breadth first,
+    stopping where a limit is hit (so a partial copy is still a valid body).
+    mirror=True reflects it across the XZ plane: sides swapped, rolls
+    negated, pitch and roll axes flipped. Returns the new root id or None.
+    """
+    if (parent, slot) in {(n.parent, n.slot) for n in morph.nodes.values()}:
+        return None
+    base = morph.depth(parent) + 1 - morph.depth(root)
+    cm = morph.child_map()
+    queue = [(root, parent, slot)]
+    new_root = None
+    while queue:
+        src, par, sl = queue.pop(0)
+        node = morph.nodes[src]
+        i = _free_id(morph)
+        if i is None or base + morph.depth(src) > MAX_DEPTH:
+            continue
+        if node.kind in ("joint", "wheel") and morph.n_servos >= MAX_SERVOS:
+            continue
+        new = Node(**vars(node))
+        new.id, new.parent, new.slot = i, par, sl
+        if mirror:
+            new.rot = (-node.rot) % 4
+            if node.kind == "joint" and node.axis != "yaw":
+                new.flip = not node.flip
+        morph.nodes[i] = new
+        new_root = i if new_root is None else new_root
+        for s, c in sorted(cm.get(src, {}).items()):
+            queue.append((c, i, mirror_slot(node.kind, s) if mirror else s))
+    return new_root
+
+
+def template(n_pairs: int = 2, wheels: bool = False, yaw: bool = False,
+             thigh: float = 0.10, shin: float = 0.10, wheel_rad: float = 0.05,
+             body_length: float = 0.40, body_width: float = 0.20) -> Morphology:
+    """
+    Mirrored leg pairs on the core sides, like the old fixed genome:
+    [yaw joint] -> hip pitch (thigh) -> elbow -> knee pitch (shin) -> [wheel].
+    The right leg is a mirror copy of the left one; pairs beyond MAX_NODES or
+    MAX_SERVOS are left out. Positive pitch lifts the
+    thigh and swings the shin outward, positive yaw swings the foot forward.
+    """
+    morph = Morphology(body_length, body_width, {0: Node(0, "core")})
+    chain = []                       # (kind, slot on the parent, fields)
+    if yaw:
+        chain.append(("joint", 0, dict(axis="yaw", length=LINK_LENGTHS[0])))
+    chain.append(("joint", 0, dict(axis="pitch", length=thigh, flip=True)))
+    chain.append(("joint", 1, dict(axis="pitch", length=shin, flip=True)))
+    if wheels:
+        chain.append(("wheel", 0, dict(wheel_rad=wheel_rad)))
+    for core_slot in {1: (3,), 2: (2, 4), 3: (2, 3, 4)}[n_pairs]:
+        servos = sum(k in ("joint", "wheel") for k, _, _ in chain)
+        if (morph.n_nodes + 2 * len(chain) > MAX_NODES
+                or morph.n_servos + 2 * servos > MAX_SERVOS):
+            break                    # a pair that does not fit is left out
+        parent, first = 0, None
+        for kind, slot, fields in chain:
+            i = _free_id(morph)
+            first = i if first is None else first
+            morph.nodes[i] = Node(i, kind, parent, core_slot if parent == 0 else slot,
+                                  3 if parent == 0 else 0, **fields)
+            parent = i
+        copy_subtree(morph, first, 0, mirror_slot("core", core_slot), mirror=True)
+    return morph
+
+
+def _random_seed(rng: np.random.Generator) -> Morphology:
+    wheels = bool(rng.random() < 0.35)
+    yaw = bool(rng.random() < 0.5)
+    n_pairs = int(rng.integers(1, 4))
+    while n_pairs > 1 and 2 * n_pairs * (2 + yaw + wheels) > MAX_SERVOS:
+        n_pairs -= 1
+    return template(n_pairs, wheels, yaw,
+                    thigh=float(rng.choice(LINK_LENGTHS)),
+                    shin=float(rng.choice(LINK_LENGTHS)),
+                    wheel_rad=round(float(rng.uniform(0.03, 0.05)), 6),
+                    body_length=round(float(rng.uniform(
+                        0.30 if n_pairs > 1 else 0.15, 0.40)), 6),
+                    body_width=round(float(rng.uniform(*BODY_BOUNDS[1])), 6))
+
+
+# --------------------------------------------------------------------------
+# Random bodies and mutation
+# --------------------------------------------------------------------------
+
+def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
+    n = Node(0, kind, parent, slot, int(rng.integers(4)))
+    if kind == "joint":
+        n.axis = str(rng.choice(AXES, p=[0.6, 0.25, 0.15]))
+        n.flip = bool(rng.random() < 0.5)
+    if kind in ("joint", "link"):
+        n.length = float(rng.choice(LINK_LENGTHS))
+    if kind == "wheel":
+        n.wheel_rad = round(float(rng.uniform(*WHEEL_RANGE_M)), 6)
+    return n
+
+
+def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
+    i = _free_id(morph)
+    if i is None or morph.depth(p) + 1 > MAX_DEPTH:
+        return None
+    kind = str(rng.choice(TYPE_KINDS, p=[0.55, 0.15, 0.1, 0.2]))
+    if kind in ("joint", "wheel") and morph.n_servos >= MAX_SERVOS:
+        kind = "link" if rng.random() < 0.5 else "foot"
+    node = _random_node(rng, kind, p, s)
+    node.id = i
+    morph.nodes[i] = node
+    return i
+
+
+def _grow_limb(morph: Morphology, rng, slot: int) -> Optional[int]:
+    """A chain of 1 to 3 joints or links from a core slot, maybe a wheel/foot."""
+    parent, sl, first = 0, slot, None
+    for step in range(int(rng.integers(1, 4))):
+        i = _free_id(morph)
+        if i is None or morph.n_servos >= MAX_SERVOS:
+            break
+        node = _random_node(rng, "joint" if rng.random() < 0.8 else "link", parent, sl)
+        if step == 0 and rng.random() < 0.7:
+            node.rot = 3            # side limbs start pointing down
+        node.id = i
+        morph.nodes[i] = node
+        first = i if first is None else first
+        parent, sl = i, (0 if rng.random() < 0.4 else int(rng.integers(1, 3)))
+    if parent and rng.random() < 0.5:
+        _add_random(morph, rng, parent, sl)
+    return first
+
+
+def _random_tree(rng: np.random.Generator) -> Morphology:
+    morph = Morphology(round(float(rng.uniform(*BODY_BOUNDS[0])), 6),
+                       round(float(rng.uniform(*BODY_BOUNDS[1])), 6),
+                       {0: Node(0, "core")})
+    for _ in range(int(rng.integers(1, 4))):
+        slot = int(rng.choice([2, 3, 4, 0, 1], p=[.25, .15, .25, .2, .15]))
+        if slot in morph.child_map().get(0, {}):
+            continue
+        first = _grow_limb(morph, rng, slot)
+        if first is not None and slot >= 2 and rng.random() < 0.8:
+            copy_subtree(morph, first, 0, mirror_slot("core", slot), mirror=True)
+    return prune(morph)
 
 
 def random_morphology(rng: np.random.Generator) -> np.ndarray:
-    return rng.uniform(0.0, 1.0, MORPH_LENGTH)
+    """Half template seeds (mirrored leg pairs), half small random trees."""
+    morph = _random_seed(rng) if rng.random() < 0.5 else _random_tree(rng)
+    return encode(prune(morph))
+
+
+def _op_param(morph, rng):
+    n = morph.nodes[int(rng.choice(list(morph.nodes)))]
+    if n.kind == "core":
+        if rng.random() < 0.5:
+            morph.body_length = round(float(np.clip(
+                morph.body_length + rng.normal(0, 0.04), *BODY_BOUNDS[0])), 6)
+        else:
+            morph.body_width = round(float(np.clip(
+                morph.body_width + rng.normal(0, 0.03), *BODY_BOUNDS[1])), 6)
+        return
+    choices = ["rot"]
+    if n.kind in ("joint", "link"):
+        choices += ["length"] * 2
+    if n.kind == "joint":
+        choices += ["axis", "flip"]
+    if n.kind == "wheel":
+        choices += ["radius"] * 2
+    what = str(rng.choice(choices))
+    if what == "rot":
+        n.rot = int(rng.integers(4))
+    elif what == "length":
+        i = LINK_LENGTHS.index(n.length) + int(rng.choice([-1, 1]))
+        n.length = LINK_LENGTHS[int(np.clip(i, 0, len(LINK_LENGTHS) - 1))]
+    elif what == "axis":
+        n.axis = str(rng.choice(AXES))
+    elif what == "flip":
+        n.flip = not n.flip
+    else:
+        n.wheel_rad = round(float(np.clip(n.wheel_rad + rng.normal(0, 0.008),
+                                          *WHEEL_RANGE_M)), 6)
+
+
+def _op_type(morph, rng):
+    """Swap the type of a joint/link, or of a leaf (also wheel and foot)."""
+    parents = {n.parent for n in morph.nodes.values()}
+    cand = [i for i, n in morph.nodes.items() if i != 0
+            and (n.kind in ("joint", "link") or i not in parents)]
+    if not cand:
+        return
+    i = int(rng.choice(cand))
+    n = morph.nodes[i]
+    kinds = ["joint", "link"] + (["wheel", "foot"] if i not in parents else [])
+    kind = str(rng.choice([k for k in kinds if k != n.kind]))
+    if kind in ("joint", "wheel") and n.kind not in ("joint", "wheel") \
+            and morph.n_servos >= MAX_SERVOS:
+        return
+    new = _random_node(rng, kind, n.parent, n.slot)
+    new.id, new.rot = i, n.rot
+    if kind in ("joint", "link") and n.kind in ("joint", "link"):
+        new.length = n.length
+    morph.nodes[i] = new
+
+
+def _op_add(morph, rng):
+    """A new module, sometimes with one more behind it, in a free slot."""
+    free = [fs for fs in morph.free_slots() if morph.depth(fs[0]) < MAX_DEPTH]
+    if not free:
+        return
+    p, s = free[int(rng.integers(len(free)))]
+    i = _add_random(morph, rng, p, s)
+    if i is not None and morph.nodes[i].kind in ("joint", "link") and rng.random() < 0.4:
+        slots = [(p2, s2) for p2, s2 in morph.free_slots() if p2 == i]
+        if slots:
+            _add_random(morph, rng, *slots[int(rng.integers(len(slots)))])
+
+
+def _op_remove(morph, rng):
+    cand = [i for i in morph.nodes if i != 0]
+    if not cand:
+        return
+    cm = morph.child_map()
+    stack, gone = [int(rng.choice(cand))], []
+    while stack:
+        i = stack.pop()
+        gone.append(i)
+        stack.extend(cm.get(i, {}).values())
+    for i in gone:
+        del morph.nodes[i]
+
+
+def _op_mirror(morph, rng):
+    """Duplicate a subtree on the opposite side (left/right)."""
+    taken = {(n.parent, n.slot) for n in morph.nodes.values()}
+    cand = []
+    for i, n in morph.nodes.items():
+        if i == 0:
+            continue
+        ms = mirror_slot(morph.nodes[n.parent].kind, n.slot)
+        if ms != n.slot and (n.parent, ms) not in taken:
+            cand.append((i, ms))
+    if cand:
+        i, ms = cand[int(rng.integers(len(cand)))]
+        copy_subtree(morph, i, morph.nodes[i].parent, ms, mirror=True)
+
+
+def _op_copy(morph, rng):
+    """Copy a subtree to another free slot."""
+    cand = [i for i in morph.nodes if i != 0]
+    free = morph.free_slots()
+    if not cand or not free:
+        return
+    i = int(rng.choice(cand))
+    p, s = free[int(rng.integers(len(free)))]
+    q = p
+    while q >= 0 and q != i:          # a subtree cannot grow inside itself
+        q = morph.nodes[q].parent
+    if q != i:
+        copy_subtree(morph, i, p, s)
+
+
+MUTATIONS = ((_op_param, 0.35), (_op_type, 0.15), (_op_add, 0.2),
+             (_op_remove, 0.1), (_op_mirror, 0.15), (_op_copy, 0.05))
 
 
 def mutate(genes: np.ndarray, rng: np.random.Generator,
-           sigma: float = 0.08, flip_prob: float = 0.08) -> np.ndarray:
-    """
-    Gaussian step on every continuous gene, plus an independent chance of
-    flipping each discrete switch (enabled, has_yaw, has_wheel). Flips are applied by
-    reflecting the gene around 0.5 so the rest of its value is kept.
-    """
-    child = genes + rng.normal(0.0, sigma, genes.shape)
-    for p in range(N_PAIRS):
-        for offset in (0, 5, 6):
-            idx = 2 + p * PAIR_GENES + offset
-            if rng.random() < flip_prob:
-                child[idx] = 1.0 - child[idx]
-    return np.clip(child, 0.0, 1.0)
+           n_ops: Optional[int] = None) -> np.ndarray:
+    """Apply 1 to 3 tree operators to the decoded body, then repair."""
+    morph = decode(genes)
+    probs = np.array([p for _, p in MUTATIONS])
+    for _ in range(n_ops or int(rng.integers(1, 4))):
+        op, _ = MUTATIONS[int(rng.choice(len(MUTATIONS), p=probs / probs.sum()))]
+        op(morph, rng)
+        prune(morph)
+    return encode(morph)
 
+
+# --------------------------------------------------------------------------
+# Descriptors and summary
+# --------------------------------------------------------------------------
 
 def descriptor(m: Morphology) -> tuple:
-    """Features used as MAP-Elites axes: (pairs, wheeled pairs, servos)."""
-    return (len(m.pairs), m.n_wheels // 2, m.n_servos)
+    """Features used as MAP-Elites axes: (limb pairs, wheeled pairs, servos)."""
+    # TODO D3: the map moves to behaviour descriptors.
+    pairs = int(np.clip(round(m.n_terminals / 2), 1, 3))
+    return (pairs, int(np.clip(m.n_wheels // 2, 0, 3)),
+            int(np.clip(m.n_servos, 4, 24)))
 
 
 def summary(m: Morphology) -> str:
     lines = [f"torso {m.body_length:.2f} x {m.body_width:.2f} m, "
-             f"{m.n_legs} legs, {m.n_wheels} wheels, {m.n_servos} servos"]
-    for p in m.pairs:
-        foot = f"wheel r={p.wheel_rad:.3f}" if p.has_wheel else "foot"
-        yaw = "yaw" if p.has_yaw else "no yaw"
-        lines.append(
-            f"  pair {p.index}: x={p.attach_x:+.2f} splay={np.degrees(p.splay):+.0f}deg "
-            f"thigh={p.thigh_len:.2f} shin={p.shin_len:.2f} {yaw} {foot}"
-        )
+             f"{m.n_nodes} modules, {m.n_servos} servos, {m.n_wheels} wheels, "
+             f"{m.n_terminals} ground points, depth {m.max_depth}"]
+    cm = m.child_map()
+
+    def show(i, indent):
+        n = m.nodes[i]
+        desc = "core"
+        if n.kind != "core":
+            desc = n.kind
+            if n.kind == "joint":
+                desc += f" {n.axis}{'-' if n.flip else ''} {n.length * 1000:.0f}mm"
+            elif n.kind == "link":
+                desc += f" {n.length * 1000:.0f}mm"
+            elif n.kind == "wheel":
+                desc += f" r={n.wheel_rad * 1000:.0f}mm"
+            desc += f" (slot {n.slot}, roll {n.rot * 90})"
+        lines.append("  " * indent + f"#{i} {desc}")
+        for s in sorted(cm.get(i, {})):
+            show(cm[i][s], indent + 1)
+    show(0, 1)
     return "\n".join(lines)

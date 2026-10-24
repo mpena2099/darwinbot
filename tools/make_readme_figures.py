@@ -40,7 +40,6 @@ from replay import open_archive   # noqa: E402
 
 from darwinbot.fitness import UNSTABLE_SCORE   # noqa: E402
 from darwinbot import morphology as morpho   # noqa: E402
-from darwinbot.evolve import cell_name   # noqa: E402
 from darwinbot.sim import Episode   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
 
@@ -59,12 +58,14 @@ FILES = {"robots": "robots.png", "gait": "gait.gif", "map": "archive_map.png",
 # ---------------------------------------------------------------- selection
 
 def ranked(archive, seed):
-    """(cell, elite) pairs, best first; ties broken by a seeded shuffle.
+    """(type name, elite) pairs, best first; ties broken by a seeded shuffle.
 
     Elites at UNSTABLE_SCORE are left out: they are bodies that cannot be
     built (overlapping parts) or whose physics blew up, not robots to show.
     """
-    items = [kv for kv in archive.cells.items() if kv[1].fitness > UNSTABLE_SCORE]
+    names = archive.names()
+    items = [(names[c], e) for c, e in archive.cells.items()
+             if e.fitness > UNSTABLE_SCORE]
     if not items:
         raise SystemExit("no buildable robot in the archive yet")
     order = np.random.default_rng(seed).permutation(len(items))
@@ -80,7 +81,8 @@ def pick_distinct(items, n=6):
     """
     groups = {}
     for cell, elite in items:                  # items are sorted: first = best
-        groups.setdefault((cell[0], cell[1] > 0), (cell, elite))
+        m = morpho.decode(elite.morph)
+        groups.setdefault((m.n_terminals, m.n_wheels > 0), (cell, elite))
     firsts, seen = [], set()
     for key, val in groups.items():
         if key[0] not in seen:
@@ -93,7 +95,7 @@ def pick_distinct(items, n=6):
 
 def best_wheelless(items):
     for cell, elite in items:
-        if cell[1] == 0:
+        if morpho.decode(elite.morph).n_wheels == 0:
             return cell, elite
     return items[0]
 
@@ -106,7 +108,7 @@ def follow_camera(episode, azimuth, elevation, distance_scale=3.0):
     cam.type = mujoco.mjtCamera.mjCAMERA_FREE
     cam.azimuth, cam.elevation = azimuth, elevation
     m = episode.morph
-    reach = max(p.reach for p in m.pairs) + m.body_length / 2
+    reach = m.max_reach
     cam.distance = max(0.55, distance_scale * reach)
     return cam
 
@@ -138,7 +140,7 @@ def make_robots(items, out, seed):
         aim(cam, ep)
         r = mujoco.Renderer(ep.model, height=h, width=w)
         r.update_scene(ep.data, camera=cam)
-        tiles.append((r.render().copy(), f"{cell_name(cell)}\nfitness {elite.fitness:.2f}"))
+        tiles.append((r.render().copy(), f"{cell}\nfitness {elite.fitness:.2f}"))
         r.close()
 
     cols = 3
@@ -186,7 +188,7 @@ def make_gait(items, out, seed, seconds=4.0, fps=15, size=(480, 320)):
     path = os.path.join(out, FILES["gait"])
     paletted[0].save(path, save_all=True, append_images=paletted[1:], loop=0,
                      duration=round(1000 / fps), optimize=True, disposal=1)
-    print(f"gait: {cell_name(cell)}, fitness {elite.fitness:.2f}")
+    print(f"gait: {cell}, fitness {elite.fitness:.2f}")
     return [path]
 
 
@@ -308,7 +310,7 @@ def make_parts(items, out, seed):
         ax.text(u, v, f"{n[:-4]}\n{size[0]:.0f} x {size[1]:.0f} mm", ha="center",
                 va="bottom", fontsize=8, color="#222",
                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.75))
-    ax.text(12, 22, f"{cell_name(cell)}: printable parts (one of each; blue PLA, orange TPU or wheel)",
+    ax.text(12, 22, f"{cell}: printable parts (one of each; blue PLA, orange TPU or wheel)",
             fontsize=10, color="#222", bbox=dict(fc="white", ec="none", alpha=0.75))
     path = os.path.join(out, FILES["parts"])
     fig.savefig(path, dpi=100)

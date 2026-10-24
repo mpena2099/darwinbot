@@ -1,17 +1,17 @@
 """
 builder.py
 ----------
-Morphology + terrain -> MuJoCo MJCF string, plus the actuator layout the
+Morphology tree + terrain -> MuJoCo MJCF string, plus the actuator layout the
 controller needs to address each motor.
 
-Frames: X forward, Y left, Z up. Every leg is built so that, at zero joint
-angles, the thigh is horizontal and the shin hangs straight down. Joint axes
-are mirrored between left and right so a given signal means the same motion
-on both sides:
-  hip_yaw   positive swings the foot forward
-  hip_pitch positive lifts the thigh
-  knee      positive swings the foot outward
-  wheel     positive rolls the robot forward
+Frames: X forward, Y left, Z up. Every module is a body placed from its
+parent's slot (offset, slot rotation, roll); joint axes are in the module
+frame (pitch Z, yaw Y, roll X, negated when `flip` is set), so joint angle
+zero is the straight rest pose. Wheel speed is positive when the robot rolls
+forward.
+
+The layout is a list of morphology.Actuator(slot, kind, axis) in model order
+(depth first, children by slot), which is the order of the <actuator> block.
 
 Parts are real: every joint is a Feetech STS3215 (7.4 V) with the torque and
 speed limits of its data sheet, minus a safety margin. Each servo adds a 60 g
@@ -27,24 +27,23 @@ from typing import Tuple
 
 import numpy as np
 
-from darwinbot.controller import ActuatorLayout, SERVO_SPEED
-from darwinbot.morphology import Morphology
+from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
+from darwinbot.morphology import (AXIS_LOCAL, FOOT_RADIUS, LINK_RADIUS,
+                                  SERVO_BOX, TORSO_HEIGHT, Actuator,
+                                  ActuatorLayout, Morphology)
 
-TORSO_HEIGHT   = 0.06
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
 PAYLOAD_MASS   = 0.13    # kg: ESP32 + 2S LiPo + regulator
 SERVO_MASS     = 0.060   # kg
-SERVO_BOX      = (0.045, 0.025, 0.035)   # m, length along the leg, width, height
 ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
-JOINT_RANGE = {"hip_yaw": 0.9, "hip_pitch": 1.3, "knee": 1.3}   # +/- rad
+JOINT_RANGE = {"yaw": 0.9, "pitch": 1.3, "roll": 0.9}   # +/- rad
 JOINT_DAMPING  = 0.56
 JOINT_FRICTION = 0.068
 JOINT_ARMATURE = 0.027
 JOINT_KP       = 13.37
-SERVO_TORQUE   = 1.91 * 0.7   # N*m: 7.4 V stall torque with a 30% margin
 WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
 WHEEL_DAMPING  = 0.05         # wheel spins freely, unlike a position servo
 
@@ -57,82 +56,72 @@ def _f(*values) -> str:
 
 
 def spawn_height(morph: Morphology) -> float:
-    """Torso centre height that puts the longest leg just above z = 0."""
-    return max(p.reach for p in morph.pairs) + SPAWN_CLEARANCE
+    """Torso centre height that puts the lowest point of the body just above z = 0."""
+    return -morph.lowest_z() + SPAWN_CLEARANCE
 
 
-def _leg_xml(morph: Morphology, pair, side: int,
-             actuators: list, layout: ActuatorLayout) -> str:
-    sign = 1.0 if side == 0 else -1.0
-    tag  = f"p{pair.index}{'L' if side == 0 else 'R'}"
+def _frame_attrs(morph: Morphology, node) -> str:
+    off, rot = morph.rel_frame(node)
+    return f'pos="{_f(*off)}" xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
 
-    hip_x = pair.attach_x * morph.body_length / 2 * 0.9
-    hip_y = sign * morph.body_width / 2
-    d = np.array([np.sin(pair.splay), sign * np.cos(pair.splay), 0.0])
-    pitch_axis = np.array([d[1], -d[0], 0.0])        # d x z: positive lifts
-    yaw_axis   = np.array([0.0, 0.0, -sign])         # positive swings forward
-    knee_pos   = d * pair.thigh_len
 
-    def joint(kind, axis):
-        name = f"{tag}_{kind}"
-        rng = JOINT_RANGE[kind]
+def _servo_box() -> str:
+    half = _f(*(np.array(SERVO_BOX) / 2))
+    return f'<geom type="box" size="{half}" {SERVO_GEOM}/>'
+
+
+def _link_geom(length: float) -> str:
+    return (f'<geom type="capsule" fromto="{_f(0, 0, 0, length, 0, 0)}" '
+            f'size="{LINK_RADIUS:.4f}" density="{LIMB_DENSITY}" '
+            f'rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+
+
+def _node_xml(morph: Morphology, node, frames, children, actuators: list,
+              layout: ActuatorLayout) -> str:
+    """MJCF body of one module and, recursively, of everything below it."""
+    i = node.id
+    inner = ""
+    if node.kind == "joint":
+        name = f"j{i}"
+        rng = JOINT_RANGE[node.axis]
+        sign = -1.0 if node.flip else 1.0
+        axis = sign * np.array(AXIS_LOCAL[node.axis])
         actuators.append(
             f'<position name="{name}" joint="{name}" kp="{JOINT_KP}" kv="0" '
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
-        layout.append((pair.index, side, kind))
-        return (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                f'range="{-rng} {rng}"/>')
-
-    # Actuators are appended in call order, which must follow JOINTS and
-    # then the wheel: CPG relies on layout matching model order.
-    hip_yaw   = joint("hip_yaw", yaw_axis) if pair.has_yaw else ""
-    hip_pitch = joint("hip_pitch", pitch_axis)
-    knee      = joint("knee", pitch_axis)
-
-    # Servo boxes are long along the leg: rotate them with the splay.
-    half = _f(SERVO_BOX[1] / 2, SERVO_BOX[0] / 2, SERVO_BOX[2] / 2)
-    hip_box = (f'<geom type="box" size="{half}" pos="{_f(*(d * SERVO_BOX[0] / 2))}" '
-               f'euler="0 0 {-sign * pair.splay:.4f}" {SERVO_GEOM}/>')
-    if pair.has_yaw:   # second servo, same place: mass only matters
-        hip_box += hip_box.replace('<geom ', '<geom name="%s_yaw_servo" ' % tag)
-    knee_box = (f'<geom type="box" size="{half}" euler="0 0 {-sign * pair.splay:.4f}" '
-                f'{SERVO_GEOM}/>')
-
-    wheel_xml = ""
-    if pair.has_wheel:
-        half_t = max(0.01, 0.25 * pair.wheel_rad)
-        # Servo at the shin tip, wheel hub on its outer side.
-        wy = sign * (SERVO_BOX[1] / 2 + half_t)
-        name = f"{tag}_wheel"
+        layout.append(Actuator(i, "joint", node.axis))
+        inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
+                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_link_geom(node.length)}')
+    elif node.kind == "link":
+        inner = _link_geom(node.length)
+    elif node.kind == "wheel":
+        pos, rot = frames[i]
+        name = f"w{i}"
+        hub = morph.wheel_hub(node, pos, rot)
+        half_t = max(0.01, 0.25 * node.wheel_rad)
+        axle = np.array([0.0, morph.wheel_axis_sign(rot), 0.0])
         actuators.append(
             f'<velocity name="{name}" joint="{name}" kv="{WHEEL_KV}" '
             f'ctrlrange="{-SERVO_SPEED} {SERVO_SPEED}" '
             f'forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
-        layout.append((pair.index, side, "wheel"))
-        knee_box += (f'<geom type="box" size="{_f(*(np.array(SERVO_BOX) / 2))}" '
-                     f'pos="{_f(0, 0, -pair.shin_len)}" {SERVO_GEOM}/>')
-        wheel_xml = f"""
-          <body name="{name}" pos="{_f(0, wy, -pair.shin_len)}">
-            <joint name="{name}" type="hinge" axis="0 1 0" damping="{WHEEL_DAMPING}"/>
+        layout.append(Actuator(i, "wheel", "wheel"))
+        inner = f"""{_servo_box()}
+          <body name="{name}" pos="{_f(*hub)}">
+            <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{WHEEL_DAMPING}"/>
             <geom type="cylinder" fromto="{_f(0, -half_t, 0, 0, half_t, 0)}"
-                  size="{pair.wheel_rad:.4f}" density="{LIMB_DENSITY}"
+                  size="{node.wheel_rad:.4f}" density="{LIMB_DENSITY}"
                   rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
           </body>"""
-
+    elif node.kind == "foot":
+        inner = (f'<geom type="sphere" size="{FOOT_RADIUS:.4f}" density="{LIMB_DENSITY}" '
+                 f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+    # Actuators follow the depth first order of Morphology.order.
+    below = "".join(
+        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout)
+        for _, c in sorted(children.get(i, {}).items()))
     return f"""
-      <body name="{tag}_hip" pos="{_f(hip_x, hip_y, 0)}">
-        {hip_yaw}
-        {hip_pitch}
-        {hip_box}
-        <geom type="capsule" fromto="{_f(0, 0, 0, *knee_pos)}" size="{pair.radius:.4f}"
-              density="{LIMB_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>
-        <body name="{tag}_knee" pos="{_f(*knee_pos)}">
-          {knee}
-          {knee_box}
-          <geom type="capsule" fromto="{_f(0, 0, 0, 0, 0, -pair.shin_len)}"
-                size="{pair.radius:.4f}" density="{LIMB_DENSITY}"
-                rgba="0.70 0.72 0.78 1" {ROBOT_GEOM}/>{wheel_xml}
-        </body>
+      <body name="n{i}" {_frame_attrs(morph, node)}>
+        {inner}{below}
       </body>"""
 
 
@@ -141,10 +130,13 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
                ground_z: float = 0.0) -> Tuple[str, ActuatorLayout]:
     actuators: list = []
     layout: ActuatorLayout = []
+    frames = morph.frames()
+    children = morph.child_map()
     legs = "".join(
-        _leg_xml(morph, pair, side, actuators, layout)
-        for pair in morph.pairs for side in (0, 1)
+        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout)
+        for _, c in sorted(children.get(0, {}).items())
     )
+    assert layout == morph.layout()
     z0 = ground_z + spawn_height(morph)
     actuator_xml = "\n    ".join(actuators)
 

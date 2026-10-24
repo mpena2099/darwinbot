@@ -1,15 +1,20 @@
 """
 evolve.py
 ---------
-Outer loop: MAP-Elites over body plans.
+Outer loop: quality diversity over body plans.
 
-The archive is a pyribs GridArchive indexed by morphology features (leg pairs,
-wheeled pairs, number of servos). Each cell keeps the best body found with those
-features, together with the controller CMA-ES learned for it. Instead of
-converging on one design, the run ends with a map of the best walker, the best
-wheeler, the best long-legged hexapod, and so on.
+The archive is a pyribs CVTArchive (about 300 cells) over three behaviour and
+cost descriptors, all measured on the nominal flat-terrain episode of the
+body's best controller: duty (fraction of time the terminal points touch the
+ground), height (mean torso height over the body's reach) and cost (number of
+servos). Each cell keeps the best body found there, together with the
+controller CMA-ES learned for it. Instead of converging on one design, the run
+ends with a map of the fastest crawler, the fastest roller, the best tall
+trotter, and so on.
 
-New bodies are mutated copies of random elites; the child starts its inner
+New bodies are mutated copies of elites drawn with probability proportional to
+their novelty (mean distance to the k nearest elites in descriptor space), or
+uniformly with parent_selection="uniform". The child starts its inner
 optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
@@ -17,51 +22,79 @@ much cheaper than learning a gait from scratch.
 import multiprocessing
 import os
 import pickle
+import re
+import signal
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from ribs.archives import GridArchive
+from ribs.archives import CVTArchive
 
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.inner import optimise_controller
+from darwinbot.sim import HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 2                      # bump when the genome meaning changes
-SERVO_MIN  = 4                      # one pair, no yaw, no wheel
-SERVO_STEP = 2                      # both legs of a pair always add servos
-N_SERVO_BINS = 11                   # 4, 6, ..., 24
-SERVO_RANGE = (SERVO_MIN - 1, SERVO_MIN - 1 + SERVO_STEP * N_SERVO_BINS)
+BODY_MODEL = 3                      # bump when the genome meaning changes
+N_CELLS    = 300                    # CVT cells
+CVT_SEED   = 0                      # fixed seed: same centroids in every run
+K_NOVELTY  = 10                     # neighbours in the novelty score
+PARENT_SELECTIONS = ("novelty", "uniform")
 
-Cell = Tuple[int, int, int]
+# Name bins. Height is torso z over body reach, duty is the contact fraction.
+HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
+ROLL_SHARE  = 0.5                   # wheel share of contact time above this: roll
+CRAWL_DUTY, WALK_DUTY = 0.8, 0.5
 
-
-def cell_of(morph: morpho.Morphology) -> Cell:
-    pairs, wheeled, servos = morpho.descriptor(morph)
-    servo_bin = (servos - SERVO_RANGE[0]) // SERVO_STEP
-    return (pairs, wheeled, int(np.clip(servo_bin, 0, N_SERVO_BINS - 1)))
-
-
-def cell_name(cell: Cell) -> str:
-    """Readable cell label, e.g. (3, 1, 5) -> '6legs-2wheels-14servos'."""
-    pairs, wheeled, servo_bin = cell
-    return (f"{2 * pairs}legs-{2 * wheeled}wheels-"
-            f"{SERVO_MIN + SERVO_STEP * servo_bin}servos")
+Cell = int                          # index of the CVT cell
 
 
-def parse_cell_name(name: str) -> Cell:
-    try:
-        legs, wheels, servos = name.strip().lower().split("-")
-        servo_bin, rest = divmod(int(servos.removesuffix("servos")) - SERVO_MIN,
-                                 SERVO_STEP)
-        if rest or not 0 <= servo_bin < N_SERVO_BINS:
-            raise ValueError
-        return (int(legs.removesuffix("legs")) // 2,
-                int(wheels.removesuffix("wheels")) // 2, servo_bin)
-    except ValueError:
-        raise ValueError(f"bad robot type '{name}', expected e.g. 6legs-2wheels-14servos")
+def normalise(duty: float, height: float, servos: float) -> np.ndarray:
+    """Descriptor in [0, 1]^3, so that every axis weighs the same."""
+    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS], 0.0, 1.0)
+
+
+@lru_cache(maxsize=1)
+def _centroids() -> np.ndarray:
+    probe = CVTArchive(solution_dim=1, centroids=N_CELLS, ranges=[(0.0, 1.0)] * 3,
+                       seed=CVT_SEED, samples=20000)
+    return np.array(probe.centroids)
+
+
+def cell_of(behaviour) -> Cell:
+    """CVT cell of a behaviour vector (duty, height, servos, wheel share)."""
+    point = normalise(*np.asarray(behaviour, dtype=float)[:3])
+    return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
+
+
+def type_name(behaviour) -> str:
+    """Readable type from a behaviour vector, e.g. '8servos-low-crawl'."""
+    duty, height, servos, wheel_share = (float(v) for v in behaviour)
+    band = next(name for top, name in HEIGHT_BINS if height < top)
+    if wheel_share > ROLL_SHARE:
+        gait = "roll"
+    elif duty > CRAWL_DUTY:
+        gait = "crawl"
+    elif duty >= WALK_DUTY:
+        gait = "walk"
+    else:
+        gait = "trot"
+    return f"{int(round(servos))}servos-{band}-{gait}"
+
+
+_NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|roll)(?:-(\d+))?$")
+
+
+def parse_cell_name(name: str) -> Tuple[str, Optional[int]]:
+    """(type name, cell index or None) of a name printed by Archive.names()."""
+    m = _NAME.match(name.strip().lower())
+    if not m:
+        raise ValueError(f"bad robot type '{name}', expected e.g. 8servos-low-crawl")
+    base = f"{m.group(1)}servos-{m.group(2)}-{m.group(3)}"
+    return base, int(m.group(4)) if m.group(4) else None
 
 
 @dataclass
@@ -71,6 +104,14 @@ class Elite:
     fitness: float
     scores:  List[float]
     born:    int          # batch index
+    # (duty, height, servos, wheel share); None: a body never simulated
+    behaviour: Optional[np.ndarray] = None
+
+    def __post_init__(self):
+        if self.behaviour is None:
+            self.behaviour = np.array(
+                [0.0, 0.0, float(morpho.decode(self.morph).n_servos), 0.0])
+        self.behaviour = np.asarray(self.behaviour, dtype=float)
 
 
 @dataclass
@@ -82,76 +123,124 @@ class Archive:
     seconds:  float = 8.0      # simulated seconds per episode in this run
     variants: int = 0          # randomised models per terrain in this run
     body_model: int = BODY_MODEL
-    _grid:    Optional[GridArchive] = field(default=None, repr=False)
+    _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
-    def _ensure(self, n_scores: int) -> GridArchive:
+    def _ensure(self, n_scores: int) -> CVTArchive:
         """Build the ribs archive on first insert, when score count is known."""
         if self._grid is None:
-            self._grid = GridArchive(
+            self._grid = CVTArchive(
                 solution_dim=morpho.MORPH_LENGTH,
-                dims=(morpho.N_PAIRS, morpho.N_PAIRS + 1, N_SERVO_BINS),
-                ranges=((0.5, 3.5), (-0.5, 3.5), SERVO_RANGE),
+                centroids=_centroids(),
+                ranges=[(0.0, 1.0)] * 3,
                 extra_fields={
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
                     "scores": ((n_scores,), np.float64),
                     "born": ((), np.int64),
+                    "behaviour": ((4,), np.float64),
                 },
             )
         return self._grid
 
     @property
     def cells(self) -> Dict[Cell, Elite]:
-        """Read-only dict of the ribs archive, keyed by morphology cell."""
+        """Read-only dict of the ribs archive, keyed by CVT cell index."""
         if self._grid is None:
             return {}
         data = self._grid.data()
-        cells = {}
-        for i, genes in enumerate(data["solution"]):
-            cells[cell_of(morpho.decode(genes))] = Elite(
-                genes, data["ctrl"][i], float(data["objective"][i]),
-                data["scores"][i].tolist(), int(data["born"][i]))
-        return cells
+        return {int(data["index"][i]): Elite(
+                    data["solution"][i], data["ctrl"][i], float(data["objective"][i]),
+                    data["scores"][i].tolist(), int(data["born"][i]),
+                    data["behaviour"][i])
+                for i in range(len(data["solution"]))}
+
+    def names(self) -> Dict[Cell, str]:
+        """Unique readable name of every filled cell. Cells that share a type
+        name get their cell index appended."""
+        cells = self.cells
+        base = {c: type_name(e.behaviour) for c, e in cells.items()}
+        count: Dict[str, int] = {}
+        for n in base.values():
+            count[n] = count.get(n, 0) + 1
+        return {c: n if count[n] == 1 else f"{n}-{c}" for c, n in base.items()}
+
+    def cell_name(self, cell: Cell) -> str:
+        return self.names()[cell]
+
+    def find(self, name: str) -> Cell:
+        """Cell of a name printed by names(); ValueError when absent or ambiguous."""
+        base, index = parse_cell_name(name)
+        names = self.names()
+        if index is not None:
+            if names.get(index, "").rsplit("-", 1)[0] != base:
+                raise ValueError(f"no {name} robot in the archive")
+            return index
+        hits = [c for c, n in names.items() if n == base]
+        if hits:
+            return hits[0]
+        if any(n.startswith(base + "-") for n in names.values()):
+            raise ValueError(f"'{name}' is ambiguous, use one of: " + ", ".join(
+                sorted(n for n in names.values() if n.startswith(base + "-"))))
+        raise ValueError(f"no {name} robot in the archive")
 
     def insert(self, elite: Elite) -> bool:
         grid = self._ensure(len(elite.scores))
-        measures = morpho.descriptor(morpho.decode(elite.morph))
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
-                        measures=[measures], ctrl=[elite.ctrl],
-                        scores=[elite.scores], born=[elite.born])
+                        measures=[normalise(*elite.behaviour[:3])],
+                        ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
+                        behaviour=[elite.behaviour])
         return int(info["status"][0]) != 0
 
-    def sample_elites(self, n: int, rng: np.random.Generator) -> dict:
-        """Uniform over filled cells, drawing from the run's rng."""
+    def novelty(self) -> np.ndarray:
+        """Per elite (in data() order): mean distance to its K_NOVELTY nearest
+        elites in the normalised descriptor space."""
+        if self._grid is None:
+            return np.zeros(0)
+        pts = self._grid.data()["measures"]
+        n = len(pts)
+        if n < 2:
+            return np.zeros(n)
+        dist = np.linalg.norm(pts[:, None] - pts[None], axis=-1)
+        np.fill_diagonal(dist, np.inf)
+        k = min(K_NOVELTY, n - 1)
+        return np.sort(dist, axis=1)[:, :k].mean(axis=1)
+
+    def sample_elites(self, n: int, rng: np.random.Generator,
+                      selection: str = "novelty") -> dict:
+        """Parents drawn with the run's rng: probability proportional to novelty
+        (falls back to uniform when every elite has zero novelty)."""
         data = self._grid.data()
-        idx = rng.integers(len(data["solution"]), size=n)
+        size = len(data["solution"])
+        weights = self.novelty() if selection == "novelty" else np.zeros(size)
+        p = weights / weights.sum() if weights.sum() > 0 else None
+        idx = rng.choice(size, size=n, p=p)
         return {k: v[idx] for k, v in data.items()}
 
     def __setstate__(self, state):
-        # Archives pickled before the pyribs switch stored a plain `cells`
-        # dict; replay them into a grid so old checkpoints still load.
-        old_cells = state.pop("cells", None)
         grid = state.get("_grid")
-        stored = grid.solution_dim if grid is not None else morpho.MORPH_LENGTH
-        for elite in (old_cells or {}).values():
-            stored = len(elite.morph)
-        if stored != morpho.MORPH_LENGTH or state.get("body_model") != BODY_MODEL:
+        if (state.get("body_model") != BODY_MODEL or "cells" in state
+                or (grid is not None and not isinstance(grid, CVTArchive))):
             raise ValueError("archive from an older body model, retrain")
         self.__dict__.update(state)
         self.__dict__.setdefault("_grid", None)
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
         self.__dict__.setdefault("variants", 0)    # and no randomisation
-        for elite in (old_cells or {}).values():
-            self.insert(elite)
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
 
     def stats(self) -> dict:
         fits = [e.fitness for e in self.cells.values()]
+        nov = self.novelty()
         return {"batch": self.batch, "evals": self.evals, "cells": len(fits),
                 "best": max(fits), "mean": float(np.mean(fits)),
+                "novelty": float(nov.mean()) if len(nov) else 0.0,
                 # QD-score: sum of fitness shifted to be positive per cell
                 "qd_score": float(sum(f + 5.0 for f in fits))}
+
+
+def _ignore_sigint():
+    """Pool workers leave Ctrl+C to the main process, which stops them."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 def _work(task):
@@ -163,7 +252,7 @@ def _work(task):
                               budget=budget, sigma0=sigma0, seed=seed,
                               seconds=seconds, device=device, popsize=popsize,
                               variants=variants)
-    return morph_genes, res.ctrl, res.fitness, res.scores, res.evals
+    return morph_genes, res.ctrl, res.fitness, res.scores, res.evals, res.behaviour
 
 
 def run(
@@ -182,7 +271,10 @@ def run(
     device: str = "cpu",
     popsize: Optional[int] = None,
     variants: int = 2,
+    parent_selection: str = "novelty",
 ) -> Archive:
+    if parent_selection not in PARENT_SELECTIONS:
+        raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
     if device == "gpu" and variants > 0 and not resume:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     os.makedirs(out_dir, exist_ok=True)
@@ -213,7 +305,7 @@ def run(
             return [(morpho.random_morphology(rng), None, terrains,
                      budget_init, 0.25, new_seed(), archive.seconds,
                      device, popsize, archive.variants) for _ in range(n_init)]
-        parents = archive.sample_elites(batch_size, rng)
+        parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
             if rng.random() < random_frac:
@@ -229,24 +321,43 @@ def run(
 
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
           f"batches={n_batches} batch_size={batch_size}")
-    pool = None if device == "gpu" else multiprocessing.Pool(workers)
-    for _ in range(n_batches + (0 if archive.cells else 1)):
-        t0 = time.time()
-        added = 0
-        tasks = make_batch()
-        results = [_work(t) for t in tasks] if pool is None else pool.imap_unordered(_work, tasks)
-        for genes, ctrl, fit, scores, evals in results:
-            archive.evals += evals
-            added += archive.insert(Elite(genes, ctrl, fit, scores, archive.batch))
-        s = archive.stats()
-        s.update(added=added, seconds=round(time.time() - t0, 1))
-        archive.history.append(s)
-        print(f"batch {s['batch']:3d}  cells {s['cells']:3d}  +{added:2d}  "
-              f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "
-              f"evals {s['evals']}  {s['seconds']}s", flush=True)
-        archive.batch += 1
-        with open(os.path.join(out_dir, "archive.pkl"), "wb") as f:
-            pickle.dump(archive, f)
+    pool = None if device == "gpu" else multiprocessing.Pool(workers, _ignore_sigint)
+    path = os.path.join(out_dir, "archive.pkl")
+    saved = None                                  # batch count in the file on disk
+    try:
+        for _ in range(n_batches + (0 if archive.cells else 1)):
+            t0 = time.time()
+            added = 0
+            tasks = make_batch()
+            results = ([_work(t) for t in tasks] if pool is None
+                       else pool.imap_unordered(_work, tasks))
+            for genes, ctrl, fit, scores, evals, behaviour in results:
+                archive.evals += evals
+                added += archive.insert(Elite(genes, ctrl, fit, scores,
+                                              archive.batch, behaviour))
+            s = archive.stats()
+            s.update(added=added, seconds=round(time.time() - t0, 1))
+            archive.history.append(s)
+            print(f"batch {s['batch']:3d}  cells {s['cells']:3d}  +{added:2d}  "
+                  f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "
+                  f"nov {s['novelty']:.3f}  evals {s['evals']}  {s['seconds']}s",
+                  flush=True)
+            archive.batch += 1
+            with open(path + ".tmp", "wb") as f:
+                pickle.dump(archive, f)
+            os.replace(path + ".tmp", path)      # a Ctrl+C never leaves half a file
+            saved = archive.batch
+    except KeyboardInterrupt:
+        if pool is not None:
+            pool.terminate()
+            pool.join()
+            pool = None
+        # The file on disk is the archive saved after the last finished batch.
+        if saved is None:
+            print("stopped before the first batch finished, nothing saved")
+        else:
+            print(f"stopped, archive saved at batch {saved}")
+        return archive
     if pool is not None:
         pool.close()
         pool.join()

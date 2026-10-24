@@ -38,6 +38,9 @@ def main():
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain for every evaluation "
                         "(default: 2 on cpu, 0 on gpu; ignored on --resume)")
+    p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
+                   default="novelty",
+                   help="parents drawn by novelty (default) or uniformly")
     p.add_argument("--resume", default=None)
     a = p.parse_args()
 
@@ -56,7 +59,10 @@ def main():
         budget_child=a.budget_child, workers=a.workers, seed=a.seed,
         out_dir=a.out, resume=a.resume, episode_seconds=a.seconds,
         device=a.device, popsize=a.popsize, variants=variants,
+        parent_selection=a.parent_selection,
     )
+    if not archive.cells:
+        return
     best = archive.best()
     print(f"\nBest fitness {best.fitness:.3f}  scores {[round(s, 2) for s in best.scores]}")
     print(summary(decode(best.morph)))

@@ -13,8 +13,7 @@ import pickle
 
 import numpy as np
 
-from darwinbot import morphology as morpho
-from darwinbot.evolve import N_SERVO_BINS, SERVO_MIN, SERVO_STEP
+from darwinbot.sim import HEIGHT_MAX
 
 
 def load(path):
@@ -23,31 +22,24 @@ def load(path):
 
 
 def heatmap(archive):
+    """Elites in (duty, height), coloured by fitness and sized by servo count."""
     import matplotlib.pyplot as plt
-    from matplotlib.colors import Normalize
 
     if not archive.cells:
         raise SystemExit("archive has no elites to plot")
-    n_bins = N_SERVO_BINS
-    fits = [elite.fitness for elite in archive.cells.values()]
-    norm = Normalize(vmin=min(fits), vmax=max(fits))
+    elites = list(archive.cells.values())
+    duty, height, servos, _ = np.array([e.behaviour for e in elites]).T
+    fits = [e.fitness for e in elites]
 
-    fig, axes = plt.subplots(1, morpho.N_PAIRS, figsize=(4 * morpho.N_PAIRS, 3.4),
-                             squeeze=False)
-    image = None
-    for panel, ax in enumerate(axes[0], start=1):
-        grid = np.full((morpho.N_PAIRS + 1, n_bins), np.nan)
-        for (pairs, wheeled, leg_bin), elite in archive.cells.items():
-            if pairs == panel:
-                grid[wheeled, leg_bin] = elite.fitness
-        image = ax.imshow(grid, origin="lower", aspect="auto", cmap="viridis",
-                          norm=norm)
-        ax.set_title(f"{panel} leg pair(s)")
-        ax.set_xlabel("servos")
-        ax.set_ylabel("wheeled pairs")
-        ax.set_xticks(range(n_bins), [SERVO_MIN + SERVO_STEP * i for i in range(n_bins)])
-        ax.set_yticks(range(morpho.N_PAIRS + 1))
-    fig.colorbar(image, ax=axes[0].tolist(), label="fitness")
+    fig, ax = plt.subplots(figsize=(6.4, 4.6))
+    points = ax.scatter(duty, height, c=fits, s=20 + 14 * (servos - servos.min()),
+                        cmap="viridis", edgecolor="k", linewidth=0.4)
+    ax.set_xlim(-0.05, 1.05)
+    ax.set_ylim(-0.05, HEIGHT_MAX + 0.05)
+    ax.set_xlabel("duty (fraction of time on the ground)")
+    ax.set_ylabel("height (torso z / body reach)")
+    ax.set_title("archive: one dot per elite, size = servos")
+    fig.colorbar(points, ax=ax, label="fitness")
     return fig
 
 

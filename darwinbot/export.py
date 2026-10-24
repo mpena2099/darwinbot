@@ -5,8 +5,11 @@ Evolved robot -> build folder for the real DarwinBot (Phase 4 of
 docs/plano-hardware.md): control.json, STL parts, bill of materials, assembly
 notes and the MJCF used in simulation.
 
-Hip positions on the printed torso plate come from the same formulas as
-builder._leg_xml, converted to mm.
+The body is a module tree (darwinbot/morphology.py), so everything is read by
+walking the tree: one STL per distinct part (torso plate with a mount at each
+used core slot, a link per catalogue length, servo bracket, wheel per radius,
+foot), and one assembly row per servo in layout order. Mount positions on the
+plate are the core slot offsets of Morphology.slot_frame, in mm.
 """
 
 import csv
@@ -16,44 +19,50 @@ from collections import Counter
 from darwinbot import builder
 from darwinbot import morphology as morpho
 from darwinbot.control_file import make_control_file, write_control_file
-from darwinbot.controller import CPG
+from darwinbot.controller import Controller
 from darwinbot.terrain import get_terrains
 
-JOINT_WORDS = {"hip_yaw": "swing", "hip_pitch": "lift", "knee": "knee bend",
-               "wheel": "wheel drive"}
-JOINT_PLACE = {"hip_yaw": "hip", "hip_pitch": "hip", "knee": "knee", "wheel": "wheel"}
-
-
-def hip_positions_mm(morph):
-    """Hip (x, y) on the torso plate for every leg, both sides, in mm."""
-    out = []
-    for pair in morph.pairs:
-        x = pair.attach_x * morph.body_length / 2 * 0.9 * 1000
-        for sign in (1, -1):
-            out.append((x, sign * morph.body_width / 2 * 1000))
-    return out
+CORE_SLOTS = ("front", "back", "left-front", "left-middle", "left-rear",
+              "right-front", "right-middle", "right-rear")
+ELBOW_SLOTS = {1: "left elbow", 2: "right elbow"}
 
 
 def _mm(m):
     return int(round(m * 1000))
 
 
+def mount_positions_mm(morph):
+    """(x, y) on the torso plate of every used core slot, in mm."""
+    out = []
+    for slot in sorted(morph.child_map().get(0, {})):
+        off, _ = morph.slot_frame(morph.nodes[0], slot)
+        out.append((float(off[0]) * 1000, float(off[1]) * 1000))
+    return out
+
+
+def part_counts(morph):
+    """Printed parts needed: link lengths (mm), wheel radii (mm) and feet."""
+    cm = morph.child_map()
+    links, wheels, feet = Counter(), Counter(), 0
+    for i, n in morph.nodes.items():
+        if n.kind in ("joint", "link"):
+            links[_mm(n.length)] += 1
+            if i not in cm:
+                feet += 1            # a free tip ends in an implicit foot
+        elif n.kind == "wheel":
+            wheels[_mm(n.wheel_rad)] += 1
+        elif n.kind == "foot":
+            feet += 1
+    return links, wheels, feet
+
+
 def bom_rows(morph):
     """Bill of materials as (item, quantity, note) rows."""
     n = morph.n_servos
-    legs = Counter()      # link length mm -> count
-    n_feet = 0
-    wheels = Counter()    # wheel radius mm -> count
-    for pair in morph.pairs:
-        legs[_mm(pair.thigh_len)] += 2
-        legs[_mm(pair.shin_len)] += 2
-        if pair.has_wheel:
-            wheels[_mm(pair.wheel_rad)] += 2
-        else:
-            n_feet += 2
+    links, wheels, n_feet = part_counts(morph)
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n),
             ("torso_plate.stl", 1, "PLA")]
-    for length, q in sorted(legs.items()):
+    for length, q in sorted(links.items()):
         rows.append((f"link_{length}.stl", q, "PLA"))
     rows.append(("servo_bracket.stl", n, "PLA, one per servo"))
     if n_feet:
@@ -85,29 +94,65 @@ def _write_bom(rows, out_dir, title):
         f.write("\n".join(lines) + "\n")
 
 
-def _leg_place(pair, side, kind):
-    where = "front" if pair.attach_x > 0.33 else "rear" if pair.attach_x < -0.33 else "middle"
-    return f"{where} {'left' if side == 0 else 'right'} {JOINT_PLACE[kind]}, {JOINT_WORDS[kind]}"
+def parent_chain(morph, node_id):
+    """Path from the core to a node in words, e.g. 'core right-front > joint pitch'."""
+    path = []
+    i = node_id
+    while i != 0:
+        path.append(i)
+        i = morph.nodes[i].parent
+    words = []
+    for i in reversed(path):
+        n = morph.nodes[i]
+        w = n.kind if n.kind != "joint" else f"joint {n.axis}"
+        notes = []
+        if n.parent != 0 and n.slot:
+            notes.append(ELBOW_SLOTS[n.slot])
+        if n.rot:
+            notes.append(f"rolled {n.rot * 90} deg")
+        if notes:
+            w += f" ({', '.join(notes)})"
+        if n.parent == 0:
+            words.append(f"core {CORE_SLOTS[n.slot]}")
+        words.append(w)
+    return " > ".join(words)
+
+
+def servo_signs(morph, layout):
+    """Mounting sign of every servo: -1 for flipped joints and right side wheels."""
+    frames = morph.frames()
+    out = []
+    for act in layout:
+        n = morph.nodes[act.slot]
+        if act.kind == "joint":
+            out.append(-1 if n.flip else 1)
+        else:
+            out.append(1 if frames[act.slot][0][1] >= 0 else -1)
+    return out
 
 
 def _write_assembly(morph, ctl, layout, out_dir):
     lines = [f"# Assembly: {ctl['robot']}", "",
              "Set each servo ID on the bus before mounting (one servo at a time).", "",
-             "| Servo ID | Joint | Position | Sign |", "|---|---|---|---|"]
-    for s, (pi, side, kind) in zip(ctl["servos"], layout):
-        pair = next(p for p in morph.pairs if p.index == pi)
-        lines.append(f"| {s['id']} | {s['name']} | {_leg_place(pair, side, kind)} | {s['sign']} |")
+             "| Servo ID | Node slot | Position | Axis | Link | Sign |", "|---|---|---|---|---|---|"]
+    for s, act in zip(ctl["servos"], layout):
+        n = morph.nodes[act.slot]
+        link = f"{_mm(n.length)} mm" if act.kind == "joint" else "-"
+        lines.append(f"| {s['id']} | {act.slot} | {parent_chain(morph, act.slot)} | "
+                     f"{act.axis} | {link} | {s['sign']} |")
     lines += ["",
               "## Mount orientation", "",
-              "Left and right servos are mirrored. Sign 1 is the left side, sign -1 the right.",
-              "Mount the horn so that positive control values lift the thigh, bend the knee",
-              "outward, swing the hip yaw forward and roll the wheel forward.",
+              "Each joint turns about one axis of its own module: pitch about the module's",
+              "Z axis, yaw about its Y axis and roll about X, the direction of the link.",
+              "Sign 1 follows the axis, sign -1 reverses it (the mirrored copy of a limb",
+              "uses -1 where the original uses 1). A positive control value then turns the",
+              "joint by the right hand rule about that axis, and wheels roll forward.",
               "If a joint moves the wrong way, flip its sign in control.json.", "",
               "## Calibration", "",
-              "control.json ships with zero = 2048 for every position servo. With the leg",
-              "straight out (thigh horizontal, shin vertical, wheel axle along Y), read each",
-              "servo position in the firmware calibration mode and write it to `zero`.",
-              "See docs/formato-controle.md.", ""]
+              "control.json ships with zero = 2048 for every position servo. With the robot",
+              "in its straight rest pose (every link in line with the slot it hangs from),",
+              "read each servo position in the firmware calibration mode and write it to",
+              "`zero`. See docs/formato-controle.md.", ""]
     with open(os.path.join(out_dir, "assembly.md"), "w") as f:
         f.write("\n".join(lines))
 
@@ -117,15 +162,15 @@ def _write_stls(morph, out_dir):
     d = os.path.join(out_dir, "parts")
     os.makedirs(d, exist_ok=True)
     out = lambda name, part: parts.export_stl(part, os.path.join(d, name))
+    links, wheels, feet = part_counts(morph)
     out("torso_plate.stl", parts.torso_plate(morph.body_length * 1000, morph.body_width * 1000,
-                                             hip_positions_mm(morph)))
-    lengths = {_mm(p.thigh_len) for p in morph.pairs} | {_mm(p.shin_len) for p in morph.pairs}
-    for length in sorted(lengths):
+                                             mount_positions_mm(morph)))
+    for length in sorted(links):
         out(f"link_{length}.stl", parts.link(length))
     out("servo_bracket.stl", parts.servo_bracket())
-    if any(not p.has_wheel for p in morph.pairs):
+    if feet:
         out("foot.stl", parts.foot())
-    for r in sorted({_mm(p.wheel_rad) for p in morph.pairs if p.has_wheel}):
+    for r in sorted(wheels):
         out(f"wheel_{r}.stl", parts.wheel(r))
 
 
@@ -138,8 +183,8 @@ def export_robot(elite, out_dir, name, stl=True) -> dict:
     with open(os.path.join(out_dir, "robot.xml"), "w") as f:
         f.write(xml)
 
-    ctl = make_control_file(name, elite.fitness, layout, CPG(elite.ctrl, layout),
-                            builder.JOINT_RANGE)
+    ctl = make_control_file(name, elite.fitness, layout, Controller(elite.ctrl, layout).params,
+                            builder.JOINT_RANGE, signs=servo_signs(morph, layout))
     write_control_file(ctl, os.path.join(out_dir, "control.json"))
 
     rows = bom_rows(morph)

@@ -10,6 +10,10 @@ Here every body is judged by (roughly) the best gait it can learn.
 A body that is not buildable (legs overlap at spawn) gets UNSTABLE_SCORE
 without any simulation or CMA-ES run.
 
+The body's behaviour descriptor (duty, height, servo count, wheel share) comes
+from the nominal flat-terrain episode of its best controller, never from a
+randomised variant.
+
 Only the controller genes that affect this body are optimised; the rest are
 carried over unchanged from x0 so they stay available to descendants that
 grow the missing pair or wheel back.
@@ -27,7 +31,7 @@ from darwinbot.controller import CTRL_LENGTH, active_genes, random_controller
 from darwinbot.fitness import UNSTABLE_SCORE, aggregate, score
 from darwinbot.morphology import Morphology
 from darwinbot.sim import EPISODE_SECONDS, Episode, Metrics
-from darwinbot.terrain import Terrain
+from darwinbot.terrain import Terrain, flat
 
 
 @dataclass
@@ -37,6 +41,7 @@ class ControllerResult:
     scores:  List[float]     # per terrain, same order as the terrain list
     metrics: List[Metrics]
     evals:   int
+    behaviour: Optional[np.ndarray] = None   # (duty, height, servos, wheel share)
 
 
 def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None):
@@ -56,11 +61,19 @@ def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None):
     return aggregate(scores), scores, metrics
 
 
-def _unbuildable(ctrl, terrains, mass) -> ControllerResult:
+def behaviour_vector(morph: Morphology, m: Optional[Metrics]) -> np.ndarray:
+    """(duty, height, servos, wheel share) of a body from its nominal flat episode."""
+    if m is None:
+        return np.array([0.0, 0.0, float(morph.n_servos), 0.0])
+    return np.array([m.duty, m.height, float(morph.n_servos), m.wheel_share])
+
+
+def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:
     m = Metrics(0.0, 0.0, 0.0, False, True, 0.0, mass)
     return ControllerResult(ctrl.copy(), UNSTABLE_SCORE,
                             [UNSTABLE_SCORE] * len(terrains),
-                            [m] * len(terrains), evals=0)
+                            [m] * len(terrains), evals=0,
+                            behaviour=behaviour_vector(morph, None))
 
 
 def optimise_controller(
@@ -96,7 +109,7 @@ def optimise_controller(
         from darwinbot.sim_gpu import BatchEpisode
         batches = [BatchEpisode(morph, t, seconds) for t in terrains]
         if not batches[0].buildable:
-            return _unbuildable(base, terrains, batches[0].mass)
+            return _unbuildable(morph, base, terrains, batches[0].mass)
 
         def evaluate_batch(ctrls):
             per_terrain = [b.run_batch(ctrls) for b in batches]
@@ -118,7 +131,7 @@ def optimise_controller(
     else:
         episodes = [Episode(morph, t, seconds) for t in terrains]
         if not episodes[0].buildable:
-            return _unbuildable(base, terrains, episodes[0].mass)
+            return _unbuildable(morph, base, terrains, episodes[0].mass)
 
         var_sets = None
         if variants > 0:
@@ -152,4 +165,18 @@ def optimise_controller(
         es.tell(candidates, losses)
 
     best.evals = evals
+    best.behaviour = behaviour_vector(morph, _nominal_flat(
+        morph, terrains, best, variants, seconds, device))
     return best
+
+
+def _nominal_flat(morph, terrains, best, variants, seconds, device) -> Metrics:
+    """Metrics of the best controller on flat ground, no randomised variant."""
+    if variants == 0:
+        for t, m in zip(terrains, best.metrics):
+            if t.name == "flat":
+                return m
+    if device == "gpu":
+        from darwinbot.sim_gpu import BatchEpisode
+        return BatchEpisode(morph, flat(), seconds).run_batch(best.ctrl[None])[0]
+    return Episode(morph, flat(), seconds).run(best.ctrl)

@@ -1,7 +1,7 @@
 """
 test_controller.py
 ------------------
-CPG layout, active gene selection and signal shape.
+Per-slot gene layout, active gene selection and the load-coupled phase update.
 """
 
 import numpy as np
@@ -10,75 +10,120 @@ import pytest
 from darwinbot import controller as co
 from darwinbot import morphology as mo
 
+JOINT = mo.Actuator(1, "joint", "pitch")
+WHEEL = mo.Actuator(2, "wheel", "wheel")
+
+
+def _genes(slot, **kw):
+    """Controller vector at mid values with some genes of one slot overridden."""
+    ctrl = np.full(co.CTRL_LENGTH, 0.5)
+    for name, v in kw.items():
+        ctrl[co.node_base(slot) + getattr(co, name.upper())] = v
+    return ctrl
+
 
 def test_ctrl_length():
-    assert co.PAIR_CTRL == len(co.JOINTS) * 3 + 2
-    assert co.CTRL_LENGTH == 1 + mo.N_PAIRS * co.PAIR_CTRL
+    assert co.CTRL_LENGTH == 1 + mo.MAX_NODES * co.CTRL_PER_NODE
+    assert co.CTRL_PER_NODE == 6
 
 
-def test_active_genes_follow_pairs_and_wheels():
-    pairs = [
-        mo.LegPair(0, 0.0, 0.0, 0.10, 0.10, True, True, 0.05),
-        mo.LegPair(2, 0.0, 0.0, 0.10, 0.10, False, False, 0.05),
-    ]
-    m = mo.Morphology(body_length=0.4, body_width=0.2, pairs=pairs)
-    active = set(co.active_genes(m))
-
-    assert 0 in active
-    wheel_0 = 1 + co.PAIR_CTRL - 1
-    wheel_2 = 1 + 2 * co.PAIR_CTRL + co.PAIR_CTRL - 1
-    assert wheel_0 in active
-    assert wheel_2 not in active
-
-    yaw_0 = range(1, 1 + co.JOINT_CTRL)
-    yaw_2 = range(1 + 2 * co.PAIR_CTRL, 1 + 2 * co.PAIR_CTRL + co.JOINT_CTRL)
-    assert set(yaw_0) <= active
-    assert not active.intersection(yaw_2)
-
-    absent = range(1 + co.PAIR_CTRL, 1 + 2 * co.PAIR_CTRL)
-    assert not active.intersection(absent)
+def test_active_genes_follow_actuators():
+    plain = mo.template(1)
+    wheeled = mo.template(1, wheels=True)
+    ap, aw = set(co.active_genes(plain)), set(co.active_genes(wheeled))
+    assert 0 in ap and ap < set(range(co.CTRL_LENGTH))
+    for act in plain.layout():
+        b = co.node_base(act.slot)
+        assert set(range(b, b + co.CTRL_PER_NODE)) <= ap
+    for act in wheeled.layout():
+        if act.kind == "wheel":
+            b = co.node_base(act.slot)
+            assert b + co.OFFSET in aw
+            assert not {b + co.AMP1, b + co.SIGMA} & aw
+    # genes of slots the body does not use stay out
+    used = {a.slot for a in wheeled.layout()}
+    free = next(s for s in range(1, mo.MAX_NODES) if s not in used)
+    assert not set(range(co.node_base(free), co.node_base(free) + co.CTRL_PER_NODE)) & aw
 
 
-def test_cpg_starts_at_zero_and_is_bounded():
+def test_sigma_zero_is_an_open_loop_two_harmonic_cpg():
+    ctrl = _genes(1, amp1=0.4, phase1=0.3, offset=0.7, amp2=0.3, phase2=0.8, sigma=0.5)
+    c = co.Controller(ctrl, [JOINT])
+    p = c.params
+    assert p.sigma[0] == 0.0
+    dt = 0.002
     rng = np.random.default_rng(0)
-    ctrl = co.random_controller(rng)
-    layout = [(p, s, k) for p in range(mo.N_PAIRS) for s in (0, 1)
-              for k in co.JOINTS]
-    cpg = co.CPG(ctrl, layout)
-
-    assert np.allclose(cpg(0.0), 0.0)
-    for t in (co.RAMP_TIME, 1.3, 4.7):
-        out = cpg(t)
-        assert np.all(np.abs(out) <= np.abs(cpg.offset) + cpg.amp + 1e-12)
+    for k in range(2000):
+        t = k * dt
+        out = c.step(t, dt, rng.normal(size=1))        # the load must not matter
+        ref = min(1.0, t / co.RAMP_TIME) * (
+            p.offset[0] + p.amp1[0] * np.sin(p.omega * t + p.phase1[0])
+            + p.amp2[0] * np.sin(2 * p.omega * t + p.phase2[0]))
+        assert out[0] == pytest.approx(ref, abs=1e-9)
 
 
-def test_ramp_scales_the_signal():
-    ctrl = np.full(co.CTRL_LENGTH, 0.5)
-    ctrl[1 + co.JOINTS.index("knee") * 3] = 0.0   # zero amplitude, ramp only
-    cpg = co.CPG(ctrl, [(0, 0, "knee")])
+def test_constant_load_shifts_phase_as_the_ode_says():
+    sigma_gene = 1.0                                  # sigma = +SIGMA_MAX
+    c = co.Controller(_genes(1, sigma=sigma_gene), [JOINT])
+    force = 0.4 * co.SERVO_TORQUE                     # N = 0.4
+    dt = 0.001
+    theta = 0.0                                       # reference integration
+    omega, sigma, n = c.omega, co.SIGMA_MAX, 0.4
+    for k in range(3000):
+        c.step(k * dt, dt, np.array([force]))
+        theta += dt * (omega - sigma * n * np.cos(theta))
+    assert c.theta[0] == pytest.approx(theta, rel=1e-9)
+    assert abs(theta - omega * 3000 * dt) > 0.05      # and it really shifted
 
-    half = cpg(co.RAMP_TIME / 2)
-    full = cpg(co.RAMP_TIME)
+    c.reset()
+    assert c.theta[0] == 0.0
+
+
+def test_load_is_clipped_to_servo_torque():
+    c1 = co.Controller(_genes(1, sigma=1.0), [JOINT])
+    c2 = co.Controller(_genes(1, sigma=1.0), [JOINT])
+    c1.advance(0.01, np.array([co.SERVO_TORQUE]))
+    c2.advance(0.01, np.array([50 * co.SERVO_TORQUE]))
+    assert c1.theta[0] == c2.theta[0]
+
+
+def test_sigma_range_is_signed():
+    lo = co.Controller(_genes(1, sigma=0.0), [JOINT]).params.sigma[0]
+    hi = co.Controller(_genes(1, sigma=1.0), [JOINT]).params.sigma[0]
+    assert lo == -co.SIGMA_MAX and hi == co.SIGMA_MAX
+
+
+def test_amplitude_clip_keeps_peak_speed_and_proportion():
+    ctrl = _genes(1, amp1=1.0, amp2=0.5)
+    ctrl[0] = 1.0                                     # max frequency
+    c = co.Controller(ctrl, [JOINT])
+    p = c.params
+    assert (p.amp1[0] + 2 * p.amp2[0]) * p.omega == pytest.approx(co.SERVO_SPEED)
+    assert p.amp1[0] < co.AMP_RANGE[1]
+    assert p.amp2[0] / p.amp1[0] == pytest.approx(0.5)
+
+    ctrl[0] = 0.0                                     # slow: no clipping needed
+    p = co.Controller(ctrl, [JOINT]).params
+    assert p.amp1[0] == pytest.approx(co.AMP_RANGE[1])
+
+
+def test_wheel_is_ramped_signed_speed_and_ignores_the_rest():
+    fast = co.Controller(_genes(2, offset=1.0, amp1=1.0, sigma=1.0), [WHEEL])
+    back = co.Controller(_genes(2, offset=0.0), [WHEEL])
+    assert fast.params.sigma[0] == 0.0 and fast.params.amp1[0] == 0.0
+    assert fast.targets(co.RAMP_TIME)[0] == pytest.approx(co.SERVO_SPEED)
+    assert back.targets(co.RAMP_TIME)[0] == pytest.approx(-co.SERVO_SPEED)
+    assert fast.targets(co.RAMP_TIME / 2)[0] == pytest.approx(co.SERVO_SPEED / 2)
+    fast.advance(0.01, np.array([co.SERVO_TORQUE]))
+    assert fast.theta[0] == pytest.approx(0.01 * fast.omega)
+    assert fast.targets(co.RAMP_TIME)[0] == pytest.approx(co.SERVO_SPEED)
+
+
+def test_starts_at_zero_and_ramps():
+    rng = np.random.default_rng(0)
+    layout = mo.template(2, wheels=True, yaw=True).layout()
+    c = co.Controller(co.random_controller(rng), layout)
+    assert np.allclose(c.targets(0.0), 0.0)
+    half = c.targets(co.RAMP_TIME / 2)
+    full = c.targets(co.RAMP_TIME)
     assert np.allclose(half, 0.5 * full)
-
-
-def test_right_phase_is_left_plus_side_shift():
-    ctrl = np.full(co.CTRL_LENGTH, 0.5)
-    phase_gene = 1 + co.JOINTS.index("hip_yaw") * 3 + 2
-    shift_gene = 1 + len(co.JOINTS) * 3
-    ctrl[phase_gene] = 0.25
-    ctrl[shift_gene] = 0.4
-    cpg = co.CPG(ctrl, [(0, 0, "hip_yaw"), (0, 1, "hip_yaw")])
-
-    assert cpg.amp[0] == pytest.approx(cpg.amp[1])
-    assert cpg.offset[0] == pytest.approx(cpg.offset[1])
-    assert cpg.phase[1] - cpg.phase[0] == pytest.approx(0.4 * 2 * np.pi)
-
-
-def test_cpg_amplitude_respects_servo_speed():
-    ctrl = np.full(co.CTRL_LENGTH, 1.0)    # max frequency and amplitude
-    cpg = co.CPG(ctrl, [(0, 0, "knee"), (0, 0, "wheel")])
-
-    assert np.all(cpg.amp * cpg.omega <= co.SERVO_SPEED + 1e-12)
-    assert cpg.amp[0] < co.AMP_RANGE[1]
-    assert cpg.offset[1] == pytest.approx(co.WHEEL_RANGE[1])

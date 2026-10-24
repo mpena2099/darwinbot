@@ -17,8 +17,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from replay import load  # noqa: E402
 
-from darwinbot import morphology as morpho  # noqa: E402
-from darwinbot.evolve import cell_name, cell_of  # noqa: E402
+from darwinbot.evolve import cell_of  # noqa: E402
 from darwinbot.export import export_robot  # noqa: E402
 
 
@@ -30,8 +29,8 @@ def main():
     p.add_argument("--out", default=None, help="output folder (default: exports/<type>/)")
     a = p.parse_args()
 
-    _, elite = load(a.archive, a.cell)
-    name = cell_name(cell_of(morpho.decode(elite.morph)))
+    archive, elite = load(a.archive, a.cell)
+    name = archive.names()[cell_of(elite.behaviour)]
     out = a.out or os.path.join("exports", name)
     info = export_robot(elite, out, name)
     print(f"wrote {out}")

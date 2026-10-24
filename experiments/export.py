@@ -1,0 +1,42 @@
+"""
+experiments/export.py
+---------------------
+Write the build folder (control file, STL parts, BOM, assembly notes) for an
+evolved robot from an archive checkpoint.
+
+  python experiments/export.py                              # best elite
+  python experiments/export.py --type 6legs-2wheels-14servos --out my_robot
+"""
+
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))
+
+from replay import load  # noqa: E402
+
+from darwinbot import morphology as morpho  # noqa: E402
+from darwinbot.evolve import cell_name, cell_of  # noqa: E402
+from darwinbot.export import export_robot  # noqa: E402
+
+
+def main():
+    p = argparse.ArgumentParser(description="darwinbot: export an evolved robot")
+    p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--type", dest="cell", default=None,
+                   help="robot type from replay.py --list (default: best robot overall)")
+    p.add_argument("--out", default=None, help="output folder (default: exports/<type>/)")
+    a = p.parse_args()
+
+    _, elite = load(a.archive, a.cell)
+    name = cell_name(cell_of(morpho.decode(elite.morph)))
+    out = a.out or os.path.join("exports", name)
+    info = export_robot(elite, out, name)
+    print(f"wrote {out}")
+    print(f"{name}: {info['servos']} servos, {info['printed_parts']} printed parts")
+
+
+if __name__ == "__main__":
+    main()

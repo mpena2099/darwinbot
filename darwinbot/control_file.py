@@ -11,9 +11,10 @@ arrays and the joint limits as plain data.
 import json
 import math
 
+from darwinbot.controller import CONTROL_DT, RAMP_TIME
+
 FORMAT = 1
-CONTROL_HZ = 50     # same as the simulation
-RAMP_TIME = 0.5     # same as controller.RAMP_TIME
+CONTROL_HZ = round(1 / CONTROL_DT)   # same as the simulation
 ZERO = 2048
 
 _SERVO_KEYS = {

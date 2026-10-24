@@ -210,3 +210,14 @@ checkpoints/
 # Others
 *~
 MUJOCO_LOG.TXT
+
+# Recorded replays
+*.mp4
+venv-gpu/
+.scratch/
+exports/
+
+# Local plans and Claude Code settings
+docs/plano-*.md
+.claude/
+/venv

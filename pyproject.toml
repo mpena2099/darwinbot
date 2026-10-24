@@ -7,12 +7,19 @@ name = "darwinbot"
 version = "0.1.0"
 description = "Co-evolution of robot morphology and locomotion control using genetic algorithms."
 requires-python = ">=3.10"
+license = {text = "MIT"}
 dependencies = [
     "mujoco>=3.6.0",
-    "deap>=1.4.1",
     "numpy>=1.23.0",
+    "cma>=3.3",
+    "ribs>=0.12",
     "matplotlib>=3.6.0",
 ]
+
+[project.optional-dependencies]
+video = ["imageio[ffmpeg]"]
+gpu = ["jax[cuda12]", "mujoco-mjx"]
+cad = ["build123d>=0.12"]
 
 [tool.setuptools.packages.find]
 where = ["."]

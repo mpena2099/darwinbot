@@ -1,0 +1,235 @@
+"""
+test_morphology.py
+------------------
+Tree genome: decode/encode, limits, mutation, mirroring and templates.
+"""
+
+import numpy as np
+import pytest
+
+from darwinbot import morphology as mo
+
+
+def _same(a, b):
+    assert (a.body_length, a.body_width) == pytest.approx((b.body_length, b.body_width))
+    assert sorted(a.nodes) == sorted(b.nodes)
+    for i, n in a.nodes.items():
+        m = b.nodes[i]
+        assert (n.kind, n.parent, n.slot, n.rot, n.axis, n.flip) == \
+            (m.kind, m.parent, m.slot, m.rot, m.axis, m.flip)
+        assert n.length == pytest.approx(m.length)
+        assert n.wheel_rad == pytest.approx(m.wheel_rad)
+
+
+def _within_limits(m):
+    assert m.n_nodes <= mo.MAX_NODES
+    assert m.n_servos <= mo.MAX_SERVOS
+    assert m.max_depth <= mo.MAX_DEPTH
+    assert m.n_servos >= 1
+    slots = [(n.parent, n.slot) for n in m.nodes.values() if n.parent >= 0]
+    assert len(slots) == len(set(slots))
+    for n in m.nodes.values():
+        if n.parent >= 0:
+            assert n.slot < mo.N_SLOTS[m.nodes[n.parent].kind]
+
+
+@pytest.mark.parametrize("fill", [0.0, 0.3, 0.5, 0.7, 1.0])
+def test_decode_any_vector_is_valid(fill):
+    _within_limits(mo.decode(np.full(mo.MORPH_LENGTH, fill)))
+
+
+def test_decode_random_vectors_are_valid():
+    rng = np.random.default_rng(1)
+    for _ in range(200):
+        _within_limits(mo.decode(rng.uniform(0, 1, mo.MORPH_LENGTH)))
+
+
+def test_encode_decode_round_trip():
+    rng = np.random.default_rng(2)
+    for _ in range(100):
+        genes = mo.random_morphology(rng)
+        m = mo.decode(genes)
+        _same(m, mo.decode(mo.encode(m)))
+        assert np.array_equal(mo.encode(m), genes)     # already canonical
+
+
+def test_repair_is_canonical():
+    genes = np.random.default_rng(3).uniform(0, 1, mo.MORPH_LENGTH)
+    fixed = mo.repair(genes)
+    assert np.array_equal(mo.repair(fixed), fixed)
+    _same(mo.decode(genes), mo.decode(fixed))
+
+
+def test_slot_ids_are_stable_block_indices():
+    m = mo.template(1)
+    genes = mo.encode(m)
+    for i in m.nodes:
+        assert genes[i * mo.BLOCK_GENES + mo.ACTIVE] == 1.0
+    assert mo.decode(genes).nodes.keys() == m.nodes.keys()
+
+
+def test_limits_hold_after_500_mutations():
+    rng = np.random.default_rng(4)
+    genes = mo.random_morphology(rng)
+    for _ in range(500):
+        genes = mo.mutate(genes, rng)
+        assert genes.shape == (mo.MORPH_LENGTH,)
+        assert np.all(genes >= 0.0) and np.all(genes <= 1.0)
+        _within_limits(mo.decode(genes))
+
+
+def test_mutation_from_a_body_at_the_servo_cap_respects_limits():
+    rng = np.random.default_rng(5)
+    genes = mo.encode(mo.template(2, wheels=True, yaw=True))
+    assert mo.decode(genes).n_servos == mo.MAX_SERVOS
+    for _ in range(100):
+        _within_limits(mo.decode(mo.mutate(genes, rng, n_ops=3)))
+
+
+def _assert_mirrored(m, a, b):
+    """Subtree b is the reflection of subtree a across the XZ plane."""
+    na, nb = m.nodes[a], m.nodes[b]
+    assert (na.kind, na.axis, na.length, na.wheel_rad) == \
+        (nb.kind, nb.axis, nb.length, nb.wheel_rad)
+    assert nb.rot == (-na.rot) % 4
+    assert nb.flip == (na.flip if na.axis == "yaw" or na.kind != "joint" else not na.flip)
+    ca, cb = m.child_map().get(a, {}), m.child_map().get(b, {})
+    assert {mo.mirror_slot(na.kind, s) for s in ca} == set(cb)
+    for s, c in ca.items():
+        _assert_mirrored(m, c, cb[mo.mirror_slot(na.kind, s)])
+
+
+def test_mirrored_duplication_is_symmetric():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 2, 3, "pitch", 0.10, flip=True)
+    m.nodes[2] = mo.Node(2, "joint", 1, 1, 1, "roll", 0.08)
+    m.nodes[3] = mo.Node(3, "wheel", 2, 0, 1, wheel_rad=0.04)
+    m.nodes[4] = mo.Node(4, "foot", 1, 2, 2)
+    twin = mo.copy_subtree(m, 1, 0, mo.mirror_slot("core", 2), mirror=True)
+    assert m.nodes[twin].slot == 5
+    _assert_mirrored(m, 1, twin)
+
+    # geometry: every module of the copy is the reflection of its original
+    fr = m.frames()
+    left = [i for i in m.order if i in (1, 2, 3, 4)]
+    right = [i for i in m.order if i > 4]
+    assert len(right) == len(left) == 4
+    by_kind = lambda ids: sorted((m.nodes[i].kind, tuple(np.round(fr[i][0] * [1, -1, 1], 6)))
+                                 for i in ids)
+    assert by_kind(left) == sorted((m.nodes[i].kind, tuple(np.round(fr[i][0], 6)))
+                                   for i in right)
+
+
+def test_mutation_mirror_operator_makes_symmetric_pairs():
+    rng = np.random.default_rng(8)
+    m = mo.template(1)
+    cm = m.child_map()[0]
+    assert set(cm) == {3, 6}                      # left and right middle slots
+    _assert_mirrored(m, cm[3], cm[6])
+    # drop the right leg, let the operator rebuild it
+    keep = {i for i in m.nodes if i == 0 or _under(m, i, cm[3])}
+    m.nodes = {i: n for i, n in m.nodes.items() if i in keep}
+    for _ in range(100):          # the operator picks any mirrorable subtree
+        mo._op_mirror(m, rng)
+        if 6 in m.child_map()[0]:
+            break
+    cm = m.child_map()[0]
+    assert set(cm) == {3, 6}
+    _assert_mirrored(m, cm[3], cm[6])
+
+
+def _under(m, i, ancestor):
+    while i >= 0:
+        if i == ancestor:
+            return True
+        i = m.nodes[i].parent if i in m.nodes else -1
+    return False
+
+
+def test_template_right_leg_mirrors_left():
+    m = mo.template(2, wheels=True, yaw=True)
+    cm = m.child_map()[0]
+    for left, right in ((2, 5), (4, 7)):
+        _assert_mirrored(m, cm[left], cm[right])
+
+
+def test_template_counts():
+    # (pairs asked, yaw, wheels, pairs built, servos); a pair over the cap is left out
+    for asked, yaw, wheels, built, servos in [
+            (1, False, False, 1, 4), (1, True, False, 1, 6), (1, True, True, 1, 8),
+            (2, True, True, 2, 16), (3, False, False, 3, 12), (3, True, False, 2, 12)]:
+        m = mo.template(asked, wheels, yaw)
+        assert m.n_servos == servos
+        assert m.n_wheels == (2 * built if wheels else 0)
+        assert m.n_terminals == 2 * built
+        _within_limits(m)
+
+
+def test_template_layout_follows_model_order():
+    m = mo.template(2, wheels=True, yaw=True)
+    layout = m.layout()
+    assert len(layout) == m.n_servos == 16
+    assert [a.slot for a in layout] == [
+        i for i in m.order if m.nodes[i].kind in ("joint", "wheel")]
+    assert layout[0] == mo.Actuator(1, "joint", "yaw")
+    assert sum(a.kind == "wheel" for a in layout) == 4
+
+
+def test_random_population_mixes_seeds_and_trees():
+    rng = np.random.default_rng(6)
+    legs = other = 0
+    for _ in range(60):
+        m = mo.decode(mo.random_morphology(rng))
+        pure = all(n.kind in ("core", "joint", "wheel") and n.axis in ("pitch", "yaw")
+                   for n in m.nodes.values())
+        legs += pure
+        other += not pure
+    assert legs > 10 and other > 10
+
+
+def test_n_servos_counts_joints_and_wheels_only():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "link", 0, 0)
+    m.nodes[2] = mo.Node(2, "joint", 1, 0)
+    m.nodes[3] = mo.Node(3, "foot", 2, 0)
+    m.nodes[4] = mo.Node(4, "wheel", 1, 1)
+    assert (m.n_joints, m.n_wheels, m.n_servos) == (1, 1, 2)
+    assert m.n_nodes == 5
+
+
+def test_brick_gets_a_servo():
+    assert mo.decode(np.zeros(mo.MORPH_LENGTH)).n_servos == 1
+
+
+def test_terminal_points_and_reach():
+    m = mo.template(2, wheels=False)
+    pts = m.terminal_points()
+    assert len(pts) == 4
+    for _, p, rad in pts:
+        assert p[2] < 0 and rad == mo.LINK_RADIUS     # shins hang down
+    assert m.max_reach >= max(np.linalg.norm(p) for _, p, _ in pts)
+    assert m.lowest_z() == pytest.approx(min(p[2] - r for _, p, r in pts), abs=0.03)
+
+
+def test_prune_drops_deepest_first():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    for i in range(1, 8):
+        m.nodes[i] = mo.Node(i, "link", i - 1, 0)
+    m.nodes[8] = mo.Node(8, "joint", 0, 3)
+    mo.prune(m)
+    assert m.max_depth <= mo.MAX_DEPTH
+    assert 5 in m.nodes and 6 not in m.nodes
+
+
+def test_summary_mentions_every_module():
+    m = mo.template(1, wheels=True)
+    text = mo.summary(m)
+    assert text.count("#") == m.n_nodes
+    assert "wheel" in text and "\u2014" not in text
+
+
+def test_descriptor_stays_in_grid_range():
+    rng = np.random.default_rng(7)
+    for _ in range(50):
+        pairs, wheeled, servos = mo.descriptor(mo.decode(mo.random_morphology(rng)))
+        assert 1 <= pairs <= 3 and 0 <= wheeled <= 3 and 4 <= servos <= 24

@@ -314,7 +314,8 @@ the ESP32.
 Every simulated robot is built from parts you can buy or print: Feetech
 STS3215 servos at 7.4 V (1.91 N*m stall, 5.45 rad/s, run at 70% of the torque),
 60 g per servo, an ESP32 + 2S LiPo + regulator payload of 0.13 kg in the torso,
-printed links of 60, 80, 100 or 120 mm, and self-collision between limbs. The
+printed links of 60, 80, 100 or 120 mm, printed elbow plates that carry the
+modules mounted on the side of a link, and self-collision between limbs. The
 sources and the values still to be checked are in `docs/hardware-dados.md`.
 
 ## Terrains
@@ -368,7 +369,7 @@ Servo counts go from 1 to 16 and the bodies are often asymmetric: wheeled
 quadrupeds, a tilted body that rolls on one side wheel, long-legged spiders.
 25 types move forward (fitness above 0.05), 8 of them with legs carrying most
 of the ground contact. The best of those, `13servos-low-trot`, loses 1% on
-randomised physics in `validate.py` (PASS) and exports as 13 servos and 31
+randomised physics in `validate.py` (PASS) and exports as 13 servos and 41
 printed parts. Wheels still win on speed, by a factor of about 2.4. The
 filled-cell count was still rising linearly when the run stopped, so longer
 runs should find more.

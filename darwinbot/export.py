@@ -40,30 +40,34 @@ def mount_positions_mm(morph):
 
 
 def part_counts(morph):
-    """Printed parts needed: link lengths (mm), wheel radii (mm) and feet."""
+    """Printed parts needed: link lengths (mm), wheel radii (mm), feet and
+    elbow plates (one per module on a side slot of a link)."""
     cm = morph.child_map()
-    links, wheels, feet = Counter(), Counter(), 0
+    links, wheels, feet, elbows = Counter(), Counter(), 0, 0
     for i, n in morph.nodes.items():
         if n.kind in ("joint", "link"):
             links[_mm(n.length)] += 1
+            elbows += sum(1 for slot in cm.get(i, {}) if slot)
             if i not in cm:
                 feet += 1            # a free tip ends in an implicit foot
         elif n.kind == "wheel":
             wheels[_mm(n.wheel_rad)] += 1
         elif n.kind == "foot":
             feet += 1
-    return links, wheels, feet
+    return links, wheels, feet, elbows
 
 
 def bom_rows(morph):
     """Bill of materials as (item, quantity, note) rows."""
     n = morph.n_servos
-    links, wheels, n_feet = part_counts(morph)
+    links, wheels, n_feet, n_elbows = part_counts(morph)
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n),
             ("torso_plate.stl", 1, "PLA")]
     for length, q in sorted(links.items()):
         rows.append((f"link_{length}.stl", q, "PLA"))
     rows.append(("servo_bracket.stl", n, "PLA, one per servo"))
+    if n_elbows:
+        rows.append(("elbow_plate.stl", n_elbows, "PLA, one per side module"))
     if n_feet:
         rows.append(("foot.stl", n_feet, "TPU"))
     for r, q in sorted(wheels.items()):
@@ -72,7 +76,8 @@ def bom_rows(morph):
     rows += [("ESP32 servo driver board", 1, "see docs/hardware-dados.md"),
              ("2S LiPo battery 7.4 V", 1, "1000 to 1500 mAh"),
              ("Step-down regulator", 1, "from 7.4 V to the board supply"),
-             ("M3 screws", 4 * n + 4, "estimate: 4 per servo + 4 per board")]
+             ("M3 screws", 4 * n + 4 * n_elbows + 4,
+              "estimate: 4 per servo, 4 per elbow plate, 4 for the board")]
     return rows
 
 
@@ -161,12 +166,14 @@ def _write_stls(morph, out_dir):
     d = os.path.join(out_dir, "parts")
     os.makedirs(d, exist_ok=True)
     out = lambda name, part: parts.export_stl(part, os.path.join(d, name))
-    links, wheels, feet = part_counts(morph)
+    links, wheels, feet, elbows = part_counts(morph)
     out("torso_plate.stl", parts.torso_plate(morph.body_length * 1000, morph.body_width * 1000,
                                              mount_positions_mm(morph)))
     for length in sorted(links):
         out(f"link_{length}.stl", parts.link(length))
     out("servo_bracket.stl", parts.servo_bracket())
+    if elbows:
+        out("elbow_plate.stl", parts.elbow_plate())
     if feet:
         out("foot.stl", parts.foot())
     for r in sorted(wheels):

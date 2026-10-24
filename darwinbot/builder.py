@@ -16,7 +16,8 @@ The layout is a list of morphology.Actuator(slot, kind, axis) in model order
 Parts are real: every joint is a Feetech STS3215 (7.4 V) with the torque and
 speed limits of its data sheet, minus a safety margin. Each servo adds a 60 g
 box, the torso carries a payload (ESP32, 2S LiPo, regulator), and links are
-printed. See docs/hardware-dados.md.
+printed. A child on a side slot of a link hangs from a printed elbow plate that
+bridges the ELBOW offset, so no module floats. See docs/hardware-dados.md.
 
 Self-collision is ON: robot geoms (contype 2, conaffinity 3) touch each other
 and the terrain (1, 1). MuJoCo already skips parent/child pairs. A body whose
@@ -28,7 +29,7 @@ from typing import Tuple
 import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
-from darwinbot.morphology import (AXIS_LOCAL, FOOT_RADIUS, LINK_RADIUS,
+from darwinbot.morphology import (AXIS_LOCAL, ELBOW, FOOT_RADIUS, LINK_RADIUS,
                                   SERVO_BOX, TORSO_HEIGHT, Actuator,
                                   ActuatorLayout, Morphology)
 
@@ -76,6 +77,16 @@ def _link_geom(length: float) -> str:
             f'rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
 
 
+def _elbow_geom(length: float, slot: int, child: int) -> str:
+    """Printed elbow plate from the link tip to the side slot `slot` (1 left,
+    2 right), where the child module is mounted."""
+    side = 1.0 if slot == 1 else -1.0
+    return (f'<geom name="elbow{child}" type="box" '
+            f'pos="{_f(length, side * ELBOW / 2, 0)}" '
+            f'size="{_f(LINK_RADIUS, ELBOW / 2, LINK_RADIUS)}" '
+            f'density="{LIMB_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+
+
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
               layout: ActuatorLayout) -> str:
     """MJCF body of one module and, recursively, of everything below it."""
@@ -115,6 +126,9 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     elif node.kind == "foot":
         inner = (f'<geom type="sphere" size="{FOOT_RADIUS:.4f}" density="{LIMB_DENSITY}" '
                  f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+    if node.kind in ("joint", "link"):
+        inner += "".join(f"\n{_elbow_geom(node.length, slot, c)}"
+                         for slot, c in sorted(children.get(i, {}).items()) if slot)
     # Actuators follow the depth first order of Morphology.order.
     below = "".join(
         _node_xml(morph, morph.nodes[c], frames, children, actuators, layout)

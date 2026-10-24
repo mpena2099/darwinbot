@@ -27,6 +27,14 @@ def test_link_axis_distance(length):
     assert p.bounding_box().min.X == pytest.approx(-parts.LINK_W / 2, abs=0.2)
 
 
+def test_elbow_plate_matches_simulation():
+    from darwinbot.morphology import ELBOW
+    p = parts.elbow_plate()
+    _ok(p)
+    assert parts.ELBOW_MM == pytest.approx(ELBOW * 1000)
+    assert p.bounding_box().size.Y == pytest.approx(parts.ELBOW_MM + parts.LINK_W, abs=0.2)
+
+
 def test_foot():
     _ok(parts.foot())
 

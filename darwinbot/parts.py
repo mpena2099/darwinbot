@@ -2,7 +2,7 @@
 parts.py
 --------
 Parametric printable parts (build123d) for the real DarwinBot: servo bracket,
-link, TPU foot, wheel and torso plate (one mount per used core slot). All dimensions in mm.
+link, elbow plate, TPU foot, wheel and torso plate (one mount per used core slot). All dimensions in mm.
 
 Conventions: a link lies along +X with the horn axis at the origin and the
 next servo axis at x = length_mm; servo and wheel axes point along Z.
@@ -33,6 +33,7 @@ PLATE_T = 4.0           # link / plate thickness
 LINK_W = 20.0           # link width = end boss diameter
 M3 = 3.2                # M3 clearance hole
 LINK_LENGTHS = (60, 80, 100, 120)
+ELBOW_MM = 40.0          # side slot offset, morphology.ELBOW in mm
 WHEEL_T = 10.0          # wheel thickness
 FOOT_R = 9.0            # foot cap radius
 FOOT_SOCKET_D = 12.0    # PLACEHOLDER: shin tube/socket diameter
@@ -80,6 +81,23 @@ def link(length_mm: float) -> Part:
         part -= Pos(length_mm, dy, 0) * Cylinder(M3 / 2, PLATE_T * 3)
     part -= Pos(length_mm, 0, 0) * Cylinder(HORN_BORE_D / 2, PLATE_T * 3)
     return part
+
+
+def _link_end_holes(x: float, y: float) -> Part:
+    """Cutter: the bracket end pattern of a link (two M3 holes and the cable bore)."""
+    cut = Pos(x, y, 0) * Cylinder(HORN_BORE_D / 2, PLATE_T * 3)
+    for dy in (-6, 6):
+        cut += Pos(x, y + dy, 0) * Cylinder(M3 / 2, PLATE_T * 3)
+    return cut
+
+
+def elbow_plate() -> Part:
+    """Plate bolted on a link end (origin) that carries a side module ELBOW_MM
+    away along +Y, with the link end hole pattern repeated there."""
+    body = Pos(0, ELBOW_MM / 2, 0) * Box(
+        LINK_W, ELBOW_MM + LINK_W, PLATE_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part = fillet(body.edges().filter_by(lambda e: abs(e.length - PLATE_T) < 1e-6), LINK_W / 2 - 0.01)
+    return part - _link_end_holes(0, 0) - _link_end_holes(0, ELBOW_MM)
 
 
 def foot() -> Part:

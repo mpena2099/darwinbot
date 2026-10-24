@@ -56,6 +56,9 @@ def test_bom_counts_from_tree():
     wheels = sum(q for k, q in rows.items() if k.startswith("wheel_"))
     assert wheels == morph.n_wheels
     assert rows["servo_bracket.stl"] == morph.n_servos
+    side = sum(1 for n in morph.nodes.values()
+               if n.parent > 0 and n.slot and morph.nodes[n.parent].kind in ("joint", "link"))
+    assert side > 0 and rows["elbow_plate.stl"] == side
     # the explicit foot plus the free tip of every joint without a child
     assert rows["foot.stl"] >= 1
 

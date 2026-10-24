@@ -87,6 +87,18 @@ def test_overlapping_legs_are_not_buildable():
     assert Episode(spread, te.flat(), seconds=1.0).buildable
 
 
+def test_side_modules_hang_from_an_elbow_plate():
+    morph = mo.template(2, wheels=True)
+    side = [i for i, n in morph.nodes.items()
+            if n.parent > 0 and n.slot and morph.nodes[n.parent].kind in ("joint", "link")]
+    ep = Episode(morph, te.flat(), seconds=1.0)
+
+    assert side and ep.buildable
+    for i in side:
+        g = ep.model.geom(f"elbow{i}")
+        assert g.bodyid[0] == ep.model.body(f"n{morph.nodes[i].parent}").id
+
+
 def test_unbuildable_body_scores_unstable_without_simulating():
     from darwinbot.inner import optimise_controller
     morph = mo.template(2, wheels=True, wheel_rad=0.06, body_length=0.15)

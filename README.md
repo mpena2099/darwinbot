@@ -424,6 +424,10 @@ darwinbot/
   printable evolved robots, a design reference.
 - [build123d](https://github.com/gumyr/build123d): parametric CAD for the parts.
 
+## Contributing
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT, see [LICENSE](LICENSE). To cite this project, use the "Cite this

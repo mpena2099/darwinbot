@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 video = ["imageio[ffmpeg]"]
 gpu = ["jax[cuda12]", "mujoco-mjx"]
+cad = ["build123d>=0.12"]
 
 [tool.setuptools.packages.find]
 where = ["."]

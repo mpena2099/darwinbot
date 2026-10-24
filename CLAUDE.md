@@ -40,7 +40,7 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 
 ## Convenções e armadilhas
 
-- Mudou o genoma ou a física de forma incompatível: incrementar `Archive.body_model` em `evolve.py`; arquivos antigos passam a ser recusados com mensagem clara.
+- Mudou o genoma ou a física de forma incompatível: incrementar `BODY_MODEL` em `evolve.py`; arquivos antigos passam a ser recusados com mensagem clara.
 - Valores de hardware vêm de `docs/hardware-dados.md`. As medidas do servo em `parts.py` são provisórias ("measure a real STS3215 and update") até alguém medir um servo real.
 - `.scratch/` é área de rascunho fora do git; `checkpoints/`, `exports/` e `*.mp4` também ficam fora.
 - Commits sem menção ao Claude.

@@ -36,7 +36,8 @@ class BatchEpisode:
     def __init__(self, morph: Morphology, terrain: Terrain,
                  seconds: float = EPISODE_SECONDS, payload: float = 0.0):
         xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world,
-                                      payload=payload)
+                                      payload=payload,
+                                      terrain_friction=terrain.friction)
         model = mujoco.MjModel.from_xml_string(xml)
         self.dt = float(model.opt.timestep)
         self.buildable = is_buildable(model) and not violations(morph)

@@ -25,6 +25,7 @@ class Terrain:
     name:   str
     assets: str = ""
     world:  str = ""
+    friction: float = 1.0   # ground friction; skids and spikes scale with it
 
 
 def _plane(friction: float = 1.0) -> str:
@@ -74,8 +75,9 @@ def steps(rise: float = 0.03, run: float = 0.5, count: int = 6) -> Terrain:
     return Terrain("steps", world="".join(geoms))
 
 
-def step(height: float = 0.03, start: float = 0.30, depth: float = 1.0) -> Terrain:
-    """One box step across the path, `start` metres ahead of the spawn."""
+def step(height: float = 0.03, start: float = 0.50, depth: float = 1.0) -> Terrain:
+    """One box step across the path, `start` metres ahead of the spawn (far
+    enough that long front limbs do not start embedded in it)."""
     return Terrain("step", world=_plane() + (
         f'<geom type="box" pos="{start + depth / 2:.3f} 0 {height / 2:.3f}" '
         f'size="{depth / 2:.3f} 2 {height / 2:.3f}" '
@@ -96,7 +98,7 @@ def slope(degrees: float = 8.0, start: float = 0.5, length: float = 6.0) -> Terr
 
 def slippery(friction: float = 0.2) -> Terrain:
     """Low-friction floor everywhere: tests gaits that rely on grip."""
-    return Terrain("slippery", world=_plane(friction))
+    return Terrain("slippery", world=_plane(friction), friction=friction)
 
 
 TERRAINS = {

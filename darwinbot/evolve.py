@@ -41,10 +41,11 @@ from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 8                      # bump when the genome meaning changes
+BODY_MODEL = 9                      # bump when the genome meaning changes
 N_CELLS    = 500                    # CVT cells
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
+MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
 PARENT_SELECTIONS = ("novelty", "uniform")
 
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
@@ -215,7 +216,10 @@ class Archive:
                         behaviour=[elite.behaviour])
         added = int(info["status"][0]) != 0
         if added:
-            self.lineage[elite_id(elite.morph, elite.ctrl)] = (
+            uid = elite_id(elite.morph, elite.ctrl)
+            if parent == uid:       # no self-loops in the family tree
+                parent = None
+            self.lineage[uid] = (
                 parent, elite.born, float(elite.fitness), type_name(elite.behaviour))
         return added
 
@@ -376,7 +380,15 @@ def run(
     path = os.path.join(out_dir, "archive.pkl")
     saved = None                                  # batch count in the file on disk
     try:
-        for _ in range(n_batches + (0 if archive.cells else 1)):
+        left, seeding_tries = n_batches, 0
+        # Until the archive has a body, batches are random and do not count;
+        # that happens at start, or when every body of the first batch was
+        # unbuildable.
+        while left > 0 or (not archive.cells and seeding_tries < MAX_SEED_TRIES):
+            if archive.cells:
+                left -= 1
+            else:
+                seeding_tries += 1
             t0 = time.time()
             added = 0
             tasks = make_batch()
@@ -384,8 +396,14 @@ def run(
                        else pool.imap_unordered(_work, tasks))
             for genes, ctrl, fit, scores, evals, behaviour, parent in results:
                 archive.evals += evals
+                if evals == 0:      # unbuildable: it would only occupy a cell
+                    continue
                 added += archive.insert(Elite(genes, ctrl, fit, scores,
                                               archive.batch, behaviour), parent)
+            if not archive.cells:
+                print("batch with no buildable body, drawing a new random one",
+                      flush=True)
+                continue
             s = archive.stats()
             s.update(added=added, seconds=round(time.time() - t0, 1))
             archive.history.append(s)

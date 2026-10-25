@@ -53,7 +53,7 @@ def test_spring_is_a_passive_hinge():
     """A spring adds a joint and no actuator, with the flexure stiffness."""
     morph = mo.template(1)
     i = max(morph.nodes) + 1
-    morph.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, axis="pitch",
+    morph.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, axis="yaw",
                              length=0.09, width=0.020, thick=0.006)
     episode = Episode(morph, te.flat(), seconds=1.0)
     model = episode.model
@@ -83,7 +83,7 @@ def test_terminal_module_is_a_passive_buildable_body(kind):
     assert kind not in {a.kind for a in episode.layout}
 
 
-@pytest.mark.parametrize("kind,friction", (("skid", 0.15), ("spike", 1.6)))
+@pytest.mark.parametrize("kind,friction", (("skid", 0.15), ("spike", 1.5)))
 def test_terminal_friction_lives_on_its_own_geom(kind, friction):
     episode = Episode(_terminal_body(kind), te.flat(), seconds=1.0)
     gid = mujoco.mj_name2id(episode.model, mujoco.mjtObj.mjOBJ_GEOM, f"{kind}1")
@@ -416,7 +416,7 @@ def test_step_terrain_box_position_and_height():
                and m.geom_bodyid[g] == 0)
     x, _, z = m.geom_pos[box]
     hx, _, hz = m.geom_size[box]
-    assert x - hx == pytest.approx(0.30)       # starts 0.30 m ahead of the spawn
+    assert x - hx == pytest.approx(0.50)       # starts 0.50 m ahead of the spawn
     assert 2 * hx == pytest.approx(1.0)        # 1 m deep
     assert z + hz == pytest.approx(0.03)       # top at 3 cm
     assert m.geom_priority[box] == 1
@@ -427,3 +427,88 @@ def test_payload_adds_exactly_its_mass():
     base = Episode(morph, te.flat(), seconds=0.5)
     loaded = Episode(morph, te.flat(), seconds=0.5, payload=0.3)
     assert loaded.mass - base.mass == pytest.approx(0.3)
+
+
+# --- physics review fixes ---------------------------------------------------
+
+def test_nan_in_qvel_mid_episode_is_unstable(monkeypatch):
+    """MuJoCo auto-resets on NaN, so the state looks fine afterwards: the run
+    must notice through the warning counters."""
+    morph = mo.decode(LEGS)
+    ep = Episode(morph, te.flat(), seconds=1.0)
+    real = mujoco.mj_step
+    calls = {"n": 0}
+
+    def poisoned(model, data, *a):
+        calls["n"] += 1
+        if calls["n"] == 20:
+            data.qvel[:] = np.nan
+        real(model, data, *a)
+
+    monkeypatch.setattr(mujoco, "mj_step", poisoned)
+    m = ep.run(_ctrl(morph, amp=0.3))
+    assert m.unstable
+    assert fitness.score(m) == fitness.UNSTABLE_SCORE
+    assert m.dx == 0.0 and m.yaw == 0.0
+
+
+def test_healthy_episode_is_not_flagged_unstable():
+    morph = mo.decode(LEGS)
+    m = Episode(morph, te.flat(), seconds=1.0).run(_ctrl(morph, amp=0.3))
+    assert not m.unstable
+
+
+def test_cot_and_behaviour_are_never_nan():
+    from darwinbot.inner import behaviour_vector
+    from darwinbot.sim import COT_MAX
+    morph = mo.decode(LEGS)
+    bad = [Metrics(float("nan"), 0.0, float("nan"), False, False, 1.0, 1.0),
+           Metrics(1.0, 0.0, float("inf"), False, False, 1.0, 1.0),
+           Metrics(0.0, 0.0, 1.0, False, True, 1.0, 1.0)]
+    ref = behaviour_vector(morph, None)
+    nan_duty = Metrics(0.0, 0.0, 1.0, False, False, 1.0, 1.0, duty=float("nan"))
+    assert np.array_equal(behaviour_vector(morph, nan_duty), ref)
+    for m in bad:
+        assert cost_of_transport(m) == COT_MAX
+        assert cost_of_transport(m, "turn") == COT_MAX
+        vec = behaviour_vector(morph, m)
+        assert np.isfinite(vec).all()
+        assert np.array_equal(vec, ref)
+
+
+def test_cot_for_turn_uses_the_arc_not_dx():
+    from darwinbot.sim import COT_DX_MIN, TURN_RADIUS
+    m = Metrics(dx=0.0, dy=0.0, energy=9.81, fell=False, unstable=False,
+                duration=5.0, mass=1.0, yaw=-3.0)
+    assert cost_of_transport(m, "turn") == pytest.approx(1.0 / (3.0 * TURN_RADIUS))
+    still = Metrics(0.0, 0.0, 9.81 * COT_DX_MIN, False, False, 5.0, 1.0)
+    assert cost_of_transport(still, "turn") == pytest.approx(1.0)
+    assert cost_of_transport(m) == pytest.approx(1.0 / COT_DX_MIN)
+
+
+def test_spring_and_caster_joints_have_no_servo_friction():
+    morph = mo.template(1)
+    i = max(morph.nodes) + 1
+    morph.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, axis="yaw",
+                             length=0.09, width=0.020, thick=0.006)
+    j = i + 1
+    morph.nodes[j] = mo.Node(j, "caster", 0, 1, 0.0)
+    model = Episode(morph, te.flat(), seconds=0.2).model
+    for name in (f"s{i}", f"c{j}"):
+        jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        dof = model.jnt_dofadr[jid]
+        assert model.dof_frictionloss[dof] == 0.0
+        assert model.dof_armature[dof] == 0.0
+        assert model.dof_damping[dof] > 0.0
+    servo = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "j1")
+    assert model.dof_frictionloss[model.jnt_dofadr[servo]] > 0.0
+
+
+@pytest.mark.parametrize("terrain,ground", ((te.flat(), 1.0), (te.slippery(), 0.2)))
+def test_skid_and_spike_friction_follows_the_terrain(terrain, ground):
+    from darwinbot.builder import SKID_FACTOR, SPIKE_FACTOR
+    for kind, factor in (("skid", SKID_FACTOR), ("spike", SPIKE_FACTOR)):
+        episode = Episode(_terminal_body(kind), terrain, seconds=0.2)
+        gid = mujoco.mj_name2id(episode.model, mujoco.mjtObj.mjOBJ_GEOM, f"{kind}1")
+        assert episode.model.geom_friction[gid, 0] == pytest.approx(factor * ground)
+        assert episode.model.geom_priority[gid] == 2

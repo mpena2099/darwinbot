@@ -58,6 +58,7 @@ def record(episode, ctrl, path, seconds, fps=30):
     cpg = episode.reset(ctrl)
     dt = episode.model.opt.timestep
     every = max(1, int(round(1.0 / (fps * dt))))
+    fps = 1.0 / (every * dt)       # the rate the frame step really gives
     writer = imageio.get_writer(path, fps=fps)
     frames = 0
     try:

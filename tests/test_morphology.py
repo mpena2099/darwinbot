@@ -367,3 +367,37 @@ def test_tail_mass_comes_from_the_wheel_gene():
     assert light.nodes[1].tail_mass == pytest.approx(0.0)
     assert heavy.nodes[1].tail_mass == pytest.approx(0.10)
     assert light.nodes[1].length == heavy.nodes[1].length == pytest.approx(0.10)
+
+
+def test_springs_always_bend_about_local_y():
+    """Spring stiffness models the blade's thin axis, so the AXIS gene and the
+    axis mutation never apply to springs."""
+    rng = np.random.default_rng(3)
+    for _ in range(60):
+        m = mo.decode(mo.mutate(mo.random_morphology(rng), rng))
+        assert all(n.axis == "yaw" for n in m.nodes.values() if n.kind == "spring")
+    genes = mo.encode(_single_spring())
+    genes[mo.BLOCK_GENES + mo.AXIS] = 0.0          # would be pitch for a joint
+    assert mo.decode(genes).nodes[1].axis == "yaw"
+    n = mo._random_node(rng, "spring", 0, 3)
+    assert n.axis == "yaw"
+
+
+def test_ensure_servo_with_every_id_used():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    for i in range(1, mo.MAX_NODES):      # a chain of passive links
+        m.nodes[i] = mo.Node(i, "link", i - 1, 0 if i > 1 else 3, 0.0)
+    mo._ensure_servo(m)
+    assert m.n_servos == 1 and m.n_nodes <= mo.MAX_NODES
+
+
+def test_ensure_servo_with_every_core_slot_taken():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    for s in range(8):
+        m.nodes[s + 1] = mo.Node(s + 1, "link", 0, s, 0.0)
+    m.nodes[9] = mo.Node(9, "link", 1, 0, 0.0)    # a child under the dropped one
+    mo._ensure_servo(m)
+    assert m.n_servos == 1
+    slots = [(n.parent, n.slot) for n in m.nodes.values() if n.parent >= 0]
+    assert len(slots) == len(set(slots))
+    assert all(n.parent in m.nodes for n in m.nodes.values() if n.id)

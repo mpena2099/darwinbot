@@ -57,9 +57,16 @@ CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
 ROBOT_GEOM = f'contype="2" conaffinity="3" friction="{ROBOT_FRICTION}"'
 SERVO_GEOM = f'mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" {ROBOT_GEOM}'
-# priority 2 beats the terrain (priority 1), so these frictions win the contact
-SKID_GEOM = 'contype="2" conaffinity="3" priority="2" friction="0.15 0.02 0.001"'
-SPIKE_GEOM = 'contype="2" conaffinity="3" priority="2" friction="1.6 0.02 0.001"'
+# Priority 2 beats the terrain (priority 1), so these frictions win the
+# contact. They scale with the terrain's friction so a skid is still slippery
+# on ice and a spike still grips better than a plain foot.
+SKID_FACTOR  = 0.15
+SPIKE_FACTOR = 1.5
+
+
+def _special_geom(factor: float, terrain_friction: float) -> str:
+    return (f'contype="2" conaffinity="3" priority="2" '
+            f'friction="{factor * terrain_friction:.4f} 0.02 0.001"')
 LINK_RGBA  = "0.55 0.60 0.70 1"
 SPRING_RGBA = "0.95 0.50 0.10 1"   # orange: a passive flexure, no servo
 
@@ -126,7 +133,7 @@ def _elbow_geom(parent, child, slot: int) -> str:
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
-              layout: ActuatorLayout) -> str:
+              layout: ActuatorLayout, friction: float = 1.0) -> str:
     """MJCF body of one module and, recursively, of everything below it."""
     i = node.id
     inner = ""
@@ -149,7 +156,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         axis = sign * np.array(AXIS_LOCAL[node.axis])
         inner = (f'<joint name="s{i}" type="hinge" axis="{_f(*axis)}" '
                  f'stiffness="{spring_stiffness(node):.8g}" '
-                 f'damping="{SPRING_DAMPING}" '
+                 f'damping="{SPRING_DAMPING}" frictionloss="0" armature="0" '
                  f'range="{-SPRING_RANGE} {SPRING_RANGE}"/>\n'
                  f'{_link_geom(node, SPRING_RGBA)}')
     elif node.kind == "wheel":
@@ -179,7 +186,8 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         inner = f"""<geom name="fork{i}" type="box" size="{_f(*(np.array(CASTER_FORK_SIZE) / 2))}"
               density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>
           <body name="{name}" pos="{_f(*hub)}">
-            <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{CASTER_DAMPING}"/>
+            <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{CASTER_DAMPING}"
+                   frictionloss="0" armature="0"/>
             <geom type="cylinder" fromto="{_f(0, -half_t, 0, 0, half_t, 0)}"
                   size="{node.wheel_rad:.4f}" density="{LIMB_DENSITY}"
                   rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
@@ -198,18 +206,18 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     elif node.kind == "skid":
         inner = (f'<geom name="skid{i}" type="box" '
                  f'size="{_f(*(np.array(SKID_SIZE) / 2))}" '
-                 f'density="{LINK_DENSITY}" rgba="0.2 0.25 0.30 1" {SKID_GEOM}/>')
+                 f'density="{LINK_DENSITY}" rgba="0.2 0.25 0.30 1" {_special_geom(SKID_FACTOR, friction)}/>')
     elif node.kind == "spike":
         inner = (f'<geom name="spike{i}" type="capsule" '
                  f'fromto="{_f(0, 0, 0, SPIKE_LENGTH, 0, 0)}" '
                  f'size="{SPIKE_RADIUS:.4f}" density="{LINK_DENSITY}" '
-                 f'rgba="{SPRING_RGBA}" {SPIKE_GEOM}/>')
+                 f'rgba="{SPRING_RGBA}" {_special_geom(SPIKE_FACTOR, friction)}/>')
     if node.kind in ("joint", "link", "spring"):
         inner += "".join(f"\n{_elbow_geom(node, morph.nodes[c], slot)}"
                          for slot, c in sorted(children.get(i, {}).items()) if slot)
     # Actuators follow the depth first order of Morphology.order.
     below = "".join(
-        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout)
+        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction)
         for _, c in sorted(children.get(i, {}).items()))
     return f"""
       <body name="n{i}" {_frame_attrs(morph, node)}>
@@ -220,13 +228,15 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
 def build_mjcf(morph: Morphology, terrain_assets: str = "",
                terrain_world: str = "", spawn_x: float = 0.0,
                ground_z: float = 0.0,
-               payload: float = 0.0) -> Tuple[str, ActuatorLayout]:
+               payload: float = 0.0,
+               terrain_friction: float = 1.0) -> Tuple[str, ActuatorLayout]:
+    friction = terrain_friction
     actuators: list = []
     layout: ActuatorLayout = []
     frames = morph.frames()
     children = morph.child_map()
     legs = "".join(
-        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout)
+        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction)
         for _, c in sorted(children.get(0, {}).items())
     )
     assert layout == morph.layout()

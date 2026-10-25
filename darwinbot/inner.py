@@ -10,7 +10,8 @@ Here every body is judged by (roughly) the best gait it can learn.
 A body that is not buildable (legs overlap at spawn) gets UNSTABLE_SCORE
 without any simulation or CMA-ES run.
 
-The body's behaviour descriptor (duty, height, servo count, wheel share) comes
+The body's behaviour vector (duty, height, servo count, wheel share, cost of
+transport) comes
 from the nominal flat-terrain episode of its best controller, never from a
 randomised variant.
 
@@ -41,7 +42,7 @@ class ControllerResult:
     scores:  List[float]     # per terrain, same order as the terrain list
     metrics: List[Metrics]
     evals:   int
-    behaviour: Optional[np.ndarray] = None   # (duty, height, servos, wheel share)
+    behaviour: Optional[np.ndarray] = None   # (duty, height, servos, wheel share, cot)
 
 
 def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
@@ -62,13 +63,17 @@ def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
     return aggregate(scores), scores, metrics
 
 
-def behaviour_vector(morph: Morphology, m: Optional[Metrics]) -> np.ndarray:
+def behaviour_vector(morph: Morphology, m: Optional[Metrics],
+                     task: str = "forward") -> np.ndarray:
     """(duty, height, servos, wheel share, cost of transport) of a body from its
-    nominal flat episode."""
-    if m is None:
-        return np.array([0.0, 0.0, float(morph.n_servos), 0.0, COT_MAX])
-    return np.array([m.duty, m.height, float(morph.n_servos), m.wheel_share,
-                     cost_of_transport(m)])
+    nominal flat episode. A body never simulated, or whose episode blew up or
+    gave non-finite numbers, gets the same fallback vector (never NaN)."""
+    fallback = np.array([0.0, 0.0, float(morph.n_servos), 0.0, COT_MAX])
+    if m is None or m.unstable:
+        return fallback
+    vec = np.array([m.duty, m.height, float(morph.n_servos), m.wheel_share,
+                    cost_of_transport(m, task)])
+    return vec if np.isfinite(vec).all() else fallback
 
 
 def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:
@@ -132,6 +137,10 @@ def optimise_controller(
             # compile is reused by the whole loop.
             return evaluate_batch(np.repeat(c[None], n, axis=0))[0]
 
+        def run_many(cs):
+            # one generation = one batch on the device
+            return evaluate_batch(np.stack(cs))
+
         # The starting point counts: an inherited controller that already works
         # must not be lost just because CMA-ES never resamples it exactly.
         fit, scores, metrics = run_one(base, popsize or 1)
@@ -149,6 +158,9 @@ def optimise_controller(
         def run_one(c, n: int = 1):
             return evaluate(episodes, c, var_sets, task)
 
+        def run_many(cs):
+            return [run_one(c) for c in cs]
+
         fit, scores, metrics = run_one(base)
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)
 
@@ -162,9 +174,8 @@ def optimise_controller(
     while not es.stop():
         candidates = es.ask()
         losses = []
-        for z in candidates:
-            c = full(np.asarray(z))
-            fit, scores, metrics = run_one(c)
+        cs = [full(np.asarray(z)) for z in candidates]
+        for c, (fit, scores, metrics) in zip(cs, run_many(cs)):
             evals += 1
             losses.append(-fit)
             if fit > best.fitness:
@@ -173,7 +184,7 @@ def optimise_controller(
 
     best.evals = evals
     best.behaviour = behaviour_vector(morph, _nominal_flat(
-        morph, terrains, best, variants, seconds, device, payload))
+        morph, terrains, best, variants, seconds, device, payload), task)
     return best
 
 

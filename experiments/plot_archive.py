@@ -9,7 +9,6 @@ Plots from a MAP-Elites archive checkpoint.
 
 import argparse
 import os
-import pickle
 
 import numpy as np
 

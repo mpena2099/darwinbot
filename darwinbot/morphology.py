@@ -10,7 +10,8 @@ Modules
          (the side slots are an elbow at the end of the link)
   link   passive printed link, same slots as the joint
   spring passive TPU flexure: a passive hinge plus a printed link, same slots
-         as a link
+         as a link. It bends only about its blade's thin axis (local Y), so the
+         AXIS gene is ignored and the slot roll sets the bending direction
   wheel  servo in wheel mode + wheel, terminal
   foot   TPU tip, terminal. A joint or link with no child ends in an implicit foot.
   tail   printed bar with a counterweight at the tip, terminal
@@ -520,7 +521,8 @@ def _node_from_block(i, kind, parent, slot, b) -> Node:
              offset=round(_scale(b[OFFSET], 0.0, 1.0), 6),
              angle=round(_scale(b[ANGLE], 0.0, 1.0), 6))
     if kind in ("joint", "spring"):
-        n.axis = AXES[_pick(b[AXIS], 3)]
+        # a spring always bends about its blade's thin axis (local Y)
+        n.axis = AXES[_pick(b[AXIS], 3)] if kind == "joint" else "yaw"
         n.flip = bool(b[FLIP] > 0.5)
     if kind in ("joint", "link", "spring", "tail"):
         n.length = round(_scale(b[LENGTH], *LENGTH_RANGE), 6)
@@ -581,12 +583,29 @@ def _free_id(morph: Morphology) -> Optional[int]:
     return None
 
 
+def _drop_subtree(morph: Morphology, root: int):
+    stack = [root]
+    while stack:
+        k = stack.pop()
+        stack += [c for c, n in morph.nodes.items() if n.parent == k]
+        del morph.nodes[k]
+
+
 def _ensure_servo(morph: Morphology):
-    """A body without servos is a brick: hang a default joint on the core."""
+    """A body without servos is a brick: hang a default joint on the core. If
+    every core slot is taken, the first core child (and what hangs from it) is
+    dropped; if every node id is used, one passive leaf is."""
     if morph.n_servos:
         return
-    i = _free_id(morph)
     taken = morph.child_map().get(0, {})
+    if len(taken) == 8:
+        _drop_subtree(morph, taken[min(taken)])
+        taken = morph.child_map().get(0, {})
+    if _free_id(morph) is None:
+        parents = {n.parent for n in morph.nodes.values()}
+        _drop_subtree(morph, max(k for k in morph.nodes if k != 0 and k not in parents))
+        taken = morph.child_map().get(0, {})
+    i = _free_id(morph)
     slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1) if s not in taken)
     morph.nodes[i] = Node(i, "joint", 0, slot, 3 * np.pi / 2)
 
@@ -715,7 +734,8 @@ def _random_seed(rng: np.random.Generator) -> Morphology:
 def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
     n = Node(0, kind, parent, slot, float(rng.uniform(0, 2 * np.pi)))
     if kind in ("joint", "spring"):
-        n.axis = str(rng.choice(AXES, p=[0.6, 0.25, 0.15]))
+        n.axis = (str(rng.choice(AXES, p=[0.6, 0.25, 0.15]))
+                  if kind == "joint" else "yaw")
         n.flip = bool(rng.random() < 0.5)
     if kind in ("joint", "link", "spring", "tail"):
         n.length = round(float(rng.uniform(0.06, 0.12)), 6)
@@ -805,8 +825,10 @@ def _op_param(morph, rng):
         choices += ["length"] * 2 + ["width", "thick"]
     if n.kind == "tail":
         choices += ["length"] * 2 + ["tail_mass"]
-    if n.kind in ("joint", "spring"):
+    if n.kind == "joint":
         choices += ["axis", "flip"]
+    if n.kind == "spring":
+        choices += ["flip"]       # the axis is fixed: see _node_from_block
     if n.kind in ("wheel", "caster"):
         choices += ["wheel_rad"] * 2
     if n.kind == "foot":

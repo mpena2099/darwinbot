@@ -299,3 +299,40 @@ def test_train_presets_run_in_sequence_and_resume(tmp_path):
             assert pickle.load(f).task == task
     again = subprocess.run(cmd[:4] + cmd[6:], capture_output=True, text=True)
     assert "resuming" in again.stdout
+
+
+def test_insert_records_no_self_loop_in_lineage():
+    a = evolve.Archive(terrains="flat")
+    e = _elite(1.0, [0.6, 0.3, 8.0, 0.0, 1.0])
+    uid = evolve.elite_id(e.morph, e.ctrl)
+    assert a.insert(e, parent=uid)
+    assert a.lineage[uid][0] is None
+    assert len(a.ancestors(e)) == 1
+
+
+def test_unbuildable_results_never_enter_the_archive(monkeypatch, tmp_path):
+    """Every body of the first batch is unbuildable: the run draws new random
+    bodies until one works, and no evals == 0 result is inserted."""
+    calls = {"n": 0}
+
+    def fake_work(job):
+        calls["n"] += 1
+        genes = job[0]
+        if calls["n"] <= 3:                       # the whole first batch
+            return (genes, CTRL, -5.0, [-5.0], 0, np.zeros(5), job[10])
+        return (genes, CTRL, 1.0, [1.0], 3,
+                np.array([0.6, 0.3, 8.0, 0.0, 1.0]), job[10])
+
+    class FakePool:
+        def __init__(self, *a): pass
+        def imap_unordered(self, f, tasks): return map(f, tasks)
+        def close(self): pass
+        def join(self): pass
+
+    monkeypatch.setattr(evolve, "_work", fake_work)
+    monkeypatch.setattr(evolve.multiprocessing, "Pool", FakePool)
+    archive = evolve.run(terrains="flat", n_init=3, n_batches=1, batch_size=2,
+                         workers=1, variants=0, out_dir=str(tmp_path))
+    assert archive.cells
+    assert all(e.fitness == 1.0 for e in archive.cells.values())
+    assert all(rec[2] == 1.0 for rec in archive.lineage.values())

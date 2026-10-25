@@ -99,6 +99,9 @@ def main():
         path = os.path.join(a.out, f"lineage_{a.type}.png")
     else:
         rows = overview(archive)
+        if len(rows) == 0:
+            print("no elite has a lineage chain yet; train more batches")
+            return
         if len(rows) > 2:
             r = np.corrcoef(rows[:, 1], rows[:, 0])[0, 1]
             print(f"{len(rows)} elites; correlation between ancestor variety "

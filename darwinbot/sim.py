@@ -27,6 +27,12 @@ UPRIGHT_MIN     = 0.5     # torso z-axis . world z below this (60 deg) is a fall
 HEIGHT_MAX      = 1.5     # clip of the height descriptor (torso z / body reach)
 COT_MIN, COT_MAX = 0.1, 100.0   # range of the cost of transport descriptor (log scale)
 COT_DX_MIN      = 0.05    # m: a robot that barely moves gets the cost of this distance
+TURN_RADIUS     = 0.1     # m: a turn in place counts as an arc of this radius
+# MuJoCo resets the simulation on NaN or huge values, so a blow up shows up
+# only in these warning counters (and in time jumping back), not in the state.
+BLOWUP_WARNINGS = (mujoco.mjtWarning.mjWARN_BADQACC,
+                   mujoco.mjtWarning.mjWARN_BADQVEL,
+                   mujoco.mjtWarning.mjWARN_BADQPOS)
 
 
 @dataclass
@@ -44,11 +50,19 @@ class Metrics:
     yaw:      float = 0.0   # net change of the torso heading (rad, unwrapped)
 
 
-def cost_of_transport(m: "Metrics") -> float:
+def cost_of_transport(m: "Metrics", task: str = "forward") -> float:
     """Mechanical work per weight and distance (no unit), clipped to the
     descriptor range: low is efficient. Robots that go backwards or stay put
-    are charged as if they had moved COT_DX_MIN."""
-    cot = m.energy / (m.mass * 9.81 * max(m.dx, COT_DX_MIN))
+    are charged as if they had moved COT_DX_MIN. For the "turn" task the
+    distance is the arc swept at TURN_RADIUS. Unstable or non-finite metrics
+    give COT_MAX, never NaN."""
+    if task == "turn":
+        distance = max(abs(m.yaw) * TURN_RADIUS, COT_DX_MIN)
+    else:
+        distance = max(m.dx, COT_DX_MIN)
+    cot = m.energy / (m.mass * 9.81 * distance)
+    if m.unstable or not np.isfinite(cot):
+        return COT_MAX
     return float(np.clip(cot, COT_MIN, COT_MAX))
 
 
@@ -114,7 +128,8 @@ class Episode:
     def __init__(self, morph: Morphology, terrain: Terrain,
                  seconds: float = EPISODE_SECONDS, payload: float = 0.0):
         xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world,
-                                      payload=payload)
+                                      payload=payload,
+                                      terrain_friction=terrain.friction)
         self.model = mujoco.MjModel.from_xml_string(xml)
         self.data  = mujoco.MjData(self.model)
         self.xml   = xml
@@ -137,7 +152,18 @@ class Episode:
         mujoco.mj_resetData(model, self.data)
         mujoco.mj_forward(model, self.data)
         self._k = 0
+        for w in BLOWUP_WARNINGS:
+            self.data.warning[w].number = 0
         return Controller(ctrl, self.layout)
+
+    def _blew_up(self, t_prev: float) -> bool:
+        """True when the last mj_step diverged: a MuJoCo warning fired (it has
+        already reset the state), time went backwards, or the state is bad."""
+        d = self.data
+        return (any(d.warning[w].number > 0 for w in BLOWUP_WARNINGS)
+                or d.time < t_prev
+                or not np.isfinite(d.qacc).all()
+                or bool(np.abs(d.qvel).max() > 1e3))
 
     def step(self, controller: Controller):
         if self._k % self.hold == 0:
@@ -171,6 +197,7 @@ class Episode:
         energy = 0.0
         yaw, prev = 0.0, heading(d.xmat[self.torso])
         fell = unstable = False
+        t_prev = 0.0
         touch = np.zeros(len(self._tgeoms))
         zsum, ticks = 0.0, 0
 
@@ -192,9 +219,10 @@ class Episode:
             now = heading(d.xmat[self.torso])
             yaw += float(wrap_angle(now - prev))
             prev = now
-            if not np.isfinite(d.qacc).all() or np.abs(d.qvel).max() > 1e3:
+            if self._blew_up(t_prev):
                 unstable = True
                 break
+            t_prev = d.time
             if d.xmat[self.torso][8] < UPRIGHT_MIN:
                 fell = True
                 break

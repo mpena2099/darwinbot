@@ -133,22 +133,38 @@ def wheel(radius_mm: float) -> Part:
 
 def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
     """Base plate; each used core slot, given as an (x, y) mm position in `mounts`,
-    gets a bracket mount (4 M3 holes) around it."""
+    gets a tab under its servo bracket and 4 M3 holes. A mount on a side edge
+    holds a servo pointing along Y, any other one a servo along X. The bracket
+    is centred on the slot as in the simulation, so half of it overhangs the
+    edge and the tab carries it."""
     t = PLATE_T
     part = Box(length_mm, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
     part = fillet(part.edges().filter_by(lambda e: abs(e.length - t) < 1e-6), 5)
     ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
     ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
+    feet = []                                   # bracket footprints (x, y, size x, size y)
     for x, y in mounts:
+        side = abs(abs(y) - width_mm / 2) < 1e-3
+        fx, fy = (ow, ol) if side else (ol, ow)
+        feet.append((x, y, fx, fy))
+        part += Pos(x, y, 0) * Box(fx, fy, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    for x, y, fx, fy in feet:
         for sx in (-1, 1):
             for sy in (-1, 1):
-                part -= Pos(x + sx * (ol / 2 - 3), y + sy * (ow / 2 - 3), 0) * Cylinder(M3 / 2, t * 3)
+                part -= Pos(x + sx * (fx / 2 - 3), y + sy * (fy / 2 - 3), 0) * Cylinder(M3 / 2, t * 3)
     # ESP32 board: 58 x 23 mm hole pattern, centred behind the origin
     for sx in (-29, 29):
         for sy in (-11.5, 11.5):
             part -= Pos(sx, sy, 0) * Cylinder(1.6, t * 3)
-    # battery strap slot across the plate, near the rear edge
-    part -= Pos(-length_mm / 2 + 12, 0, 0) * Box(4, min(width_mm - 20, 30), t * 3)
+    # battery strap slot across the plate, as far back as the brackets allow
+    strap_w = min(width_mm - 20, 30)
+    def free(sx):
+        return all(abs(sx - x) > fx / 2 + 4 or abs(y) > fy / 2 + strap_w / 2 + 2
+                   for x, y, fx, fy in feet)
+    xs = [-length_mm / 2 + 12 + i for i in range(int(length_mm / 2 - 12 - 35))]
+    strap = next((sx for sx in xs if free(sx)), None)
+    if strap is not None:
+        part -= Pos(strap, 0, 0) * Box(4, strap_w, t * 3)
     return part
 
 

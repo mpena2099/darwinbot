@@ -57,6 +57,15 @@ def test_torso_plate():
     assert p.bounding_box().size.X == pytest.approx(200, abs=0.1)
 
 
+def test_torso_plate_tabs_carry_edge_brackets():
+    # rear and side mounts on the edges: tabs grow the plate by half a bracket
+    p = parts.torso_plate(200, 100, [(-100, 0), (70, 50), (70, -50)])
+    _ok(p)
+    ol = parts.SERVO_L + 2 * parts.SERVO_CLEARANCE + 2 * parts.WALL
+    assert p.bounding_box().min.X == pytest.approx(-100 - ol / 2, abs=0.1)
+    assert p.bounding_box().size.Y == pytest.approx(100 + ol, abs=0.1)
+
+
 def test_export_stl(tmp_path):
     f = tmp_path / "x.stl"
     parts.export_stl(parts.foot(), f)

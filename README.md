@@ -457,6 +457,21 @@ darwinbot/
 └── requirements.txt
 ```
 
+## Related work
+
+| Project | What it does | Difference from DarwinBot |
+|---|---|---|
+| [RoboGen](https://github.com/lis-epfl/robogen) (EPFL) | Co-evolves bodies and controllers, outputs printable parts and Arduino code | Own ODE-based simulator, hobby micro servos, one winner per run |
+| [Revolve2](https://github.com/ci-group/revolve2) (VU Amsterdam) | Research framework for modular robots, CPG brains, a runtime for physical robots | A library for researchers built around its lab's own modules; no part or BOM export |
+| [DyRET](https://arxiv.org/abs/2003.13254) (Univ. of Oslo) | Open-hardware legged robot that evolves its leg lengths and gait in the real world | One fixed robot design, Dynamixel servos; does not invent bodies |
+| [Nordmoen et al. 2021](https://arxiv.org/abs/2012.04375) | MAP-Elites on modular robots, stepping-stone analysis | A study, not a tool |
+| [RoboMorph](https://arxiv.org/abs/2407.08626) | LLM-generated morphologies evaluated in simulation | Simulation only |
+
+DarwinBot sits between them: a quality-diversity catalogue instead of a single
+winner, and every robot in it exports as a kit of current, affordable parts
+(STS3215 bus servos, printed links, ESP32) with a control file, from one
+command.
+
 ## References and credits
 
 - J.-B. Mouret and J. Clune, "Illuminating search spaces by mapping elites",

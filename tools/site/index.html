@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DarwinBot gallery</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --fg: #1c2230; --muted: #667085; --line: #d9dde5;
+  --accent: #2a6df4; --grid: #b8bfcc; --sky: #eef1f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #12151c; --panel: #1b202b; --fg: #e6e9f0; --muted: #98a2b3; --line: #2e3544;
+          --accent: #6b9bff; --grid: #3a4254; --sky: #161a23; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+       font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { padding: 16px; max-width: 1200px; margin: 0 auto; }
+h1 { margin: 0 0 6px; font-size: 1.4rem; }
+header p { margin: 0; color: var(--muted); max-width: 70ch; }
+a { color: var(--accent); }
+main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px;
+       padding: 0 16px 24px; max-width: 1200px; margin: 0 auto; }
+@media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+h2 { margin: 0 0 8px; font-size: 0.95rem; color: var(--muted); font-weight: 600; }
+#map { width: 100%; height: auto; display: block; touch-action: manipulation; }
+#map text { fill: var(--muted); font-size: 11px; }
+#map .axis { stroke: var(--line); }
+#map circle { stroke: var(--panel); stroke-width: 1; cursor: pointer; }
+#map circle.sel { stroke: var(--fg); stroke-width: 2.5; }
+#tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg);
+       padding: 2px 8px; border-radius: 6px; font-size: 12px; display: none; z-index: 5; }
+#legend { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+#bar { height: 8px; flex: 1; border-radius: 4px; background: linear-gradient(90deg, #440154, #3b528b, #21908d, #5dc863, #fde725); }
+#view { position: relative; width: 100%; aspect-ratio: 4 / 3; border-radius: 8px; overflow: hidden;
+        background: var(--sky); }
+#view canvas { display: block; width: 100%; height: 100%; }
+#msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+       color: var(--muted); text-align: center; padding: 16px; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+button { font: inherit; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px;
+         background: var(--panel); color: var(--fg); cursor: pointer; }
+button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+h3 { margin: 12px 0 6px; font-size: 1.05rem; overflow-wrap: anywhere; }
+dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px 12px; margin: 0; }
+dt { color: var(--muted); font-size: 12px; }
+dd { margin: 0; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DarwinBot</h1>
+  <p>DarwinBot evolves buildable robots: MAP-Elites searches over bodies made of real parts
+  (Feetech STS3215 servos, printed links, ESP32 and LiPo), and CMA-ES tunes a rhythmic gait with servo-load feedback for each
+  body in MuJoCo. Pick a robot on the map to watch its gait.
+  <a href="https://github.com/mpena2099/darwinbot">Source on GitHub</a>.</p>
+</header>
+<main>
+  <section class="panel">
+    <h2>Archive map: duty (x), torso height (y), colour = fitness, size = servos</h2>
+    <svg id="map" viewBox="0 0 400 320" role="img" aria-label="Scatter of the robots in the archive"></svg>
+    <div id="legend"><span id="fmin"></span><div id="bar"></div><span id="fmax"></span></div>
+  </section>
+  <section class="panel">
+    <h2>Replay</h2>
+    <div id="view"><div id="msg">Loading...</div></div>
+    <div class="controls">
+      <button id="play">Pause</button>
+      <button class="spd" data-s="0.25">0.25x</button>
+      <button class="spd" data-s="0.5">0.5x</button>
+      <button class="spd on" data-s="1">1x</button>
+    </div>
+    <h3 id="name">-</h3>
+    <dl>
+      <div><dt>Fitness</dt><dd id="d-fit">-</dd></div>
+      <div><dt>Duty</dt><dd id="d-duty">-</dd></div>
+      <div><dt>Torso height</dt><dd id="d-height">-</dd></div>
+      <div><dt>Servos</dt><dd id="d-servos">-</dd></div>
+      <div><dt>Cost of transport</dt><dd id="d-cot">-</dd></div>
+    </dl>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const $ = (id) => document.getElementById(id);
+const view = $("view"), msg = $("msg");
+
+// ---------------------------------------------------------------- 3D scene
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 4 / 3, 0.01, 50);
+camera.position.set(0.5, 0.35, 0.6);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x667788, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+sun.position.set(2, 4, 3);
+scene.add(sun);
+
+const dark = matchMedia("(prefers-color-scheme: dark)");
+let grid = null, floor = null;
+function makeGrid() {
+  if (grid) { scene.remove(grid); grid.geometry.dispose(); }
+  if (floor) { scene.remove(floor); floor.geometry.dispose(); }
+  // solid floor plus a 0.25 m grid: a dense grid alone aliases into a far band
+  floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40),
+    new THREE.MeshBasicMaterial({ color: dark.matches ? 0x1d2230 : 0xdfe4ec }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.001;
+  scene.add(floor);
+  const c = dark.matches ? 0x3a4254 : 0xb8bfcc;
+  grid = new THREE.GridHelper(40, 160, c, c);
+  scene.add(grid);
+  scene.background = new THREE.Color(dark.matches ? 0x161a23 : 0xeef1f6);
+}
+makeGrid();
+dark.addEventListener("change", makeGrid);
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view);
+resize();
+
+// ---------------------------------------------------------------- robot
+// MuJoCo is Z-up: everything lives in a group rotated -90 deg about X.
+const world = new THREE.Group();
+world.rotation.x = -Math.PI / 2;
+scene.add(world);
+let bodies = [];        // one Group per MuJoCo body
+let robot = null;       // current JSON
+let t = 0;              // seconds into the loop
+let playing = true, speed = 1;
+const follow = new THREE.Vector3();
+let followReady = false;
+
+const lieAlongY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+
+function geometryOf(g) {
+  const s = g.size;
+  if (g.type === "box") return new THREE.BoxGeometry(2 * s[0], 2 * s[1], 2 * s[2]);
+  if (g.type === "sphere") return new THREE.SphereGeometry(s[0], 24, 16);
+  // MuJoCo capsule/cylinder: radius s[0], half length s[1], along local Z.
+  const geo = g.type === "capsule"
+    ? new THREE.CapsuleGeometry(s[0], 2 * s[1], 6, 16)
+    : new THREE.CylinderGeometry(s[0], s[0], 2 * s[1], 24);
+  geo.applyQuaternion(lieAlongY);   // three builds along Y, MuJoCo along Z
+  return geo;
+}
+
+function clearRobot() {
+  for (const b of bodies) {
+    b.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+    world.remove(b);
+  }
+  bodies = [];
+}
+
+function buildRobot(data) {
+  clearRobot();
+  for (let i = 0; i < data.nbody; i++) {
+    const b = new THREE.Group();
+    b.matrixAutoUpdate = true;
+    world.add(b);
+    bodies.push(b);
+  }
+  for (const g of data.geoms) {
+    const [r, gr, bl, a] = g.rgba;
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(r, gr, bl), transparent: a < 1, opacity: a, roughness: 0.6, metalness: 0.1 });
+    const mesh = new THREE.Mesh(geometryOf(g), mat);
+    mesh.position.set(g.pos[0], g.pos[1], g.pos[2]);
+    mesh.quaternion.set(g.quat[1], g.quat[2], g.quat[3], g.quat[0]);   // w,x,y,z -> x,y,z,w
+    bodies[g.body].add(mesh);
+  }
+  robot = data;
+  t = 0;
+  followReady = false;
+  pose(0, 0, 0);
+}
+
+function pose(i, j, f) {
+  // Interpolate frames i and j with weight f.
+  const n = robot.nbody, F = robot.frames, a = F[i], b = F[j];
+  const q0 = new THREE.Quaternion(), q1 = new THREE.Quaternion();
+  const stride = 7;
+  for (let k = 0; k < n; k++) {
+    const o = k * stride, body = bodies[k];
+    body.position.set(
+      a[o] + (b[o] - a[o]) * f, a[o + 1] + (b[o + 1] - a[o + 1]) * f, a[o + 2] + (b[o + 2] - a[o + 2]) * f);
+    q0.set(a[o + 4], a[o + 5], a[o + 6], a[o + 3]);
+    q1.set(b[o + 4], b[o + 5], b[o + 6], b[o + 3]);
+    body.quaternion.copy(q0).slerp(q1, f);
+  }
+}
+
+function torsoWorld(out) {
+  bodies[1].getWorldPosition(out);
+  return out;
+}
+
+// ---------------------------------------------------------------- loop
+let last = performance.now();
+const tmp = new THREE.Vector3();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (robot) {
+    const n = robot.frames.length;
+    if (playing && n > 1) {
+      t += dt * speed;
+      const dur = n / robot.fps;
+      if (t >= dur) t -= dur;
+    }
+    const x = t * robot.fps, i = Math.floor(x) % n, j = (i + 1) % n;
+    pose(i, j, j === 0 ? 0 : x - Math.floor(x));
+    world.updateMatrixWorld(true);
+    torsoWorld(tmp);
+    if (!followReady) {
+      followReady = true;
+      follow.copy(tmp);
+      orbit.target.copy(tmp);
+    } else {
+      // The camera moves with the torso; the user's orbit offset is kept.
+      const d = tmp.clone().sub(follow);
+      camera.position.add(d);
+      orbit.target.add(d);
+      follow.copy(tmp);
+    }
+  }
+  orbit.update();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+$("play").onclick = () => {
+  playing = !playing;
+  $("play").textContent = playing ? "Pause" : "Play";
+};
+document.querySelectorAll(".spd").forEach((b) => {
+  b.onclick = () => {
+    speed = parseFloat(b.dataset.s);
+    document.querySelectorAll(".spd").forEach((x) => x.classList.toggle("on", x === b));
+  };
+});
+
+// ---------------------------------------------------------------- map
+const W = 400, H = 320, M = { l: 38, r: 12, t: 12, b: 34 };
+const svg = $("map"), tip = $("tip");
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, text) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const viridis = ["#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"];
+function colour(u) {
+  const p = Math.min(0.9999, Math.max(0, u)) * (viridis.length - 1), i = Math.floor(p), f = p - i;
+  const a = viridis[i], b = viridis[i + 1], c = (s, k) => parseInt(s.slice(1 + 2 * k, 3 + 2 * k), 16);
+  const m = (k) => Math.round(c(a, k) + (c(b, k) - c(a, k)) * f);
+  return `rgb(${m(0)},${m(1)},${m(2)})`;
+}
+
+let robots = [], dots = [], current = -1;
+function drawMap() {
+  svg.replaceChildren();
+  const xs = robots.map((r) => r.duty), ys = robots.map((r) => r.height);
+  const pad = (lo, hi) => { const p = (hi - lo || 0.1) * 0.08; return [lo - p, hi + p]; };
+  const [x0, x1] = pad(Math.min(...xs), Math.max(...xs));
+  const [y0, y1] = pad(Math.min(...ys), Math.max(...ys));
+  const X = (v) => M.l + ((v - x0) / (x1 - x0)) * (W - M.l - M.r);
+  const Y = (v) => H - M.b - ((v - y0) / (y1 - y0)) * (H - M.t - M.b);
+  svg.append(el("line", { class: "axis", x1: M.l, y1: H - M.b, x2: W - M.r, y2: H - M.b }),
+             el("line", { class: "axis", x1: M.l, y1: M.t, x2: M.l, y2: H - M.b }));
+  for (let k = 0; k <= 4; k++) {
+    const vx = x0 + ((x1 - x0) * k) / 4, vy = y0 + ((y1 - y0) * k) / 4;
+    svg.append(el("text", { x: X(vx), y: H - M.b + 14, "text-anchor": "middle" }, vx.toFixed(2)),
+               el("text", { x: M.l - 5, y: Y(vy) + 4, "text-anchor": "end" }, vy.toFixed(2)));
+  }
+  svg.append(el("text", { x: (M.l + W - M.r) / 2, y: H - 6, "text-anchor": "middle" }, "duty"),
+             el("text", { x: 10, y: (M.t + H - M.b) / 2, "text-anchor": "middle",
+                          transform: `rotate(-90 10 ${(M.t + H - M.b) / 2})` }, "torso height"));
+  const fs = robots.map((r) => r.fitness), f0 = Math.min(...fs), f1 = Math.max(...fs);
+  const sv = robots.map((r) => r.servos), s0 = Math.min(...sv), s1 = Math.max(...sv);
+  $("fmin").textContent = f0.toFixed(2);
+  $("fmax").textContent = f1.toFixed(2);
+  dots = robots.map((r, idx) => {
+    const rad = 5 + (s1 > s0 ? ((r.servos - s0) / (s1 - s0)) * 7 : 3);
+    const c = el("circle", { cx: X(r.duty), cy: Y(r.height), r: rad,
+                             fill: colour(f1 > f0 ? (r.fitness - f0) / (f1 - f0) : 1),
+                             tabindex: 0, "aria-label": r.name });
+    c.addEventListener("pointerenter", (e) => showTip(e, r.name));
+    c.addEventListener("pointermove", (e) => showTip(e, r.name));
+    c.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+    c.addEventListener("click", () => load(idx));
+    c.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") load(idx); });
+    svg.append(c);
+    return c;
+  });
+  dots.forEach((d, i) => d.classList.toggle("sel", i === current));
+}
+function showTip(e, text) {
+  tip.textContent = text;
+  tip.style.display = "block";
+  tip.style.left = e.clientX + 12 + "px";
+  tip.style.top = e.clientY + 12 + "px";
+}
+
+// ---------------------------------------------------------------- loading
+let token = 0;
+async function load(idx) {
+  const r = robots[idx], mine = ++token;
+  current = idx;
+  dots.forEach((d, i) => d.classList.toggle("sel", i === idx));
+  msg.style.display = "flex";
+  msg.textContent = "Loading...";
+  $("name").textContent = r.name;
+  $("d-fit").textContent = r.fitness.toFixed(3);
+  $("d-duty").textContent = r.duty.toFixed(2);
+  $("d-height").textContent = r.height.toFixed(2);
+  $("d-servos").textContent = r.servos;
+  $("d-cot").textContent = r.cot.toFixed(2);
+  try {
+    const res = await fetch("data/" + encodeURIComponent(r.file));
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    if (mine !== token) return;
+    buildRobot(data);
+    msg.style.display = "none";
+  } catch (err) {
+    if (mine === token) msg.textContent = "Could not load this robot.";
+  }
+}
+
+try {
+  const res = await fetch("data/index.json");
+  robots = await res.json();
+  if (!robots.length) throw new Error("empty");
+  drawMap();
+  load(0);
+} catch (err) {
+  msg.textContent = "Could not load the gallery data (" + err + "). Serve this folder over HTTP (python -m http.server).";
+}
+</script>
+</body>
+</html>

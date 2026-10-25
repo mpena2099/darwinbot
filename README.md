@@ -166,6 +166,16 @@ python experiments/lineage.py --type 8servos-mid-trot
 python experiments/lineage.py
 ```
 
+### Gallery
+
+```bash
+# Static site with an interactive map of the archive and a 3D replay of each robot
+python tools/make_site.py            # all buildable elites; --max 12 for a small one
+python -m http.server -d docs/site   # preview at http://localhost:8000
+```
+
+GitHub Pages can serve `docs/site` once the repository is public.
+
 Training writes `checkpoints/archive.pkl` after every batch. `replay.py` reads
 that file by default (`--archive` changes it). `plot_archive.py` saves
 `archive_heatmap.png` (the behaviour scatter plot: one dot per elite at its duty

@@ -373,42 +373,41 @@ fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 ## Results
 
 A short run on a 4-core laptop (`--terrains terrain --batches 5 --workers 3`,
-about 20,000 episodes in 2 hours) filled 50 of the ~300 cells:
+about 20,000 episodes in 2 h 20 min) filled 51 of the ~500 cells:
 
 | Gait | Types | Best fitness |
 |------|-------|--------------|
-| `roll` | 18 | 0.95 |
-| `trot` | 20 | 0.39 |
-| `belly` | 6 | 0.09 |
-| `walk` | 3 | 0.01 |
-| `crawl` | 3 | 0.02 |
+| `roll` | 13 | 0.91 |
+| `trot` | 17 | 0.25 |
+| `walk` | 7 | 0.23 |
+| `belly` | 10 | 0.01 |
+| `crawl` | 4 | 0.04 |
 
-Servo counts go from 1 to 16 and the bodies are often asymmetric: wheeled
-quadrupeds, a tilted body that rolls on one side wheel, long-legged spiders.
-25 types move forward (fitness above 0.05), 8 of them with legs carrying most
-of the ground contact. The best of those, `13servos-low-trot`, loses 1% on
-randomised physics in `validate.py` (PASS) and exports as 13 servos and 41
-printed parts. Wheels still win on speed, by a factor of about 2.4. The
-filled-cell count was still rising linearly when the run stopped, so longer
-runs should find more.
+Servo counts go from 1 to 16 and the bodies are often asymmetric. 21 types move
+forward (fitness above 0.05), 8 of them with legs carrying most of the ground
+contact. The best of those, `14servos-low-trot`, keeps its distance on
+randomised physics in `validate.py` (PASS) and exports as 14 servos and 40
+printed parts. Wheels win on speed by a factor of about 3.6 and on efficiency
+too: the most efficient roller has a cost of transport of 0.5, the most
+efficient walker 4.1. The cost-of-transport axis keeps walkers that are slow
+but cheap in the archive next to fast rollers (right panel of the map below).
 
-Compared with the earlier version (bodies built from 1 to 3 mirrored leg pairs,
-archive laid out by body shape, single-sine open-loop controller), trained on
-the same terrains for a similar number of batches:
+How the versions compare, each trained on the same terrains for 6 batches:
 
-| | Earlier version | Current version |
-|---|---|---|
-| Robot types in the archive | 20 | 50 |
-| Types that move forward (fitness above 0.05) | 14 | 25 |
-| Unbuildable elites (overlapping parts) | 5 | 1 |
-| Body plans | symmetric, 2 to 6 legs | trees, often asymmetric |
-| Servo counts | 4 to 22 | 1 to 16 |
-| Best rolling robot | 1.27 | 0.95 |
-| Best legged robot | 0.40 | 0.39 |
-| Wheels / legs ratio | 3.2 | 2.4 |
+| | Leg pairs | Tree bodies | Tree bodies + cost of transport (current) |
+|---|---|---|---|
+| Archive | body shape grid | ~300 cells, 3 descriptors | ~500 cells, 4 descriptors |
+| Robot types | 20 | 50 | 51 |
+| Types that move forward | 14 | 25 | 21 |
+| Unbuildable elites | 5 | 1 | 3 |
+| Servo counts | 4 to 22 | 1 to 16 | 1 to 16 |
+| Best rolling robot | 1.27 | 0.95 | 0.91 |
+| Best legged robot | 0.40 | 0.39 | 0.25 |
 
-The new version trades a little top speed for variety: two and a half times
-as many robot types, with legs closer to wheels.
+Tree bodies brought two and a half times as many robot types. The fourth
+descriptor spreads the same number of evaluations over more cells, so in a
+short run each cell gets fewer improvements and the best legged robot is
+slower; longer runs should close that gap.
 
 ![Evolved body plans](docs/img/robots.png)
 

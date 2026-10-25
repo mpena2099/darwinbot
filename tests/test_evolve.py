@@ -283,3 +283,19 @@ def test_run_with_turn_task(tmp_path):
     assert (archive.task, archive.payload) == ("turn", 0.1)
     with pytest.raises(ValueError):
         evolve.run(task="fly", out_dir=str(tmp_path))
+
+
+def test_train_presets_run_in_sequence_and_resume(tmp_path):
+    import subprocess
+    import sys
+    cmd = [sys.executable, "experiments/train.py", "--preset", "turn,step",
+           "--init", "2", "--batches", "1", "--batch-size", "2",
+           "--budget-init", "4", "--budget-child", "4", "--workers", "1",
+           "--variants", "0", "--seconds", "1", "--out", str(tmp_path)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    for name, task in (("turn", "turn"), ("step", "forward")):
+        with open(tmp_path / name / "archive.pkl", "rb") as f:
+            assert pickle.load(f).task == task
+    again = subprocess.run(cmd[:4] + cmd[6:], capture_output=True, text=True)
+    assert "resuming" in again.stdout

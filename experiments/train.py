@@ -8,13 +8,27 @@ Run MAP-Elites over body plans, with CMA-ES learning each body's gait.
   python experiments/train.py --batches 60 --workers 8
   python experiments/train.py --task turn --terrains step --payload 0.3
   python experiments/train.py --resume checkpoints/archive.pkl --batches 20
+  python experiments/train.py --preset turn,step,payload --batches 5
+
+A preset is a ready task (see PRESETS); several run one after the other, each
+in its own folder (checkpoints/<preset>), and a preset whose folder already
+holds an archive is resumed, so the same command run again trains further.
 """
+
+import os
 
 import argparse
 
 from darwinbot import evolve
 from darwinbot.fitness import TASKS
 from darwinbot.morphology import decode, summary
+
+PRESETS = {
+    "forward": dict(task="forward", terrains="terrain", payload=0.0),
+    "turn":    dict(task="turn", terrains="flat", payload=0.0),
+    "step":    dict(task="forward", terrains="step", payload=0.0),
+    "payload": dict(task="forward", terrains="terrain", payload=0.3),
+}
 
 
 def main():
@@ -49,6 +63,9 @@ def main():
     p.add_argument("--payload", type=float, default=0.0, metavar="KG",
                    help="extra mass carried on the torso (ignored on --resume)")
     p.add_argument("--resume", default=None)
+    p.add_argument("--preset", default=None,
+                   help="comma list of ready tasks run in sequence: "
+                        + ", ".join(PRESETS) + " (each in checkpoints/<preset>)")
     a = p.parse_args()
 
     if a.device == "gpu":
@@ -60,15 +77,35 @@ def main():
                              "pip install -e '.[gpu]'")
 
     variants = a.variants if a.variants is not None else (2 if a.device == "cpu" else 0)
-    archive = evolve.run(
-        terrains=a.terrains, n_init=a.init, n_batches=a.batches,
-        batch_size=a.batch_size, budget_init=a.budget_init,
-        budget_child=a.budget_child, workers=a.workers, seed=a.seed,
-        out_dir=a.out, resume=a.resume, episode_seconds=a.seconds,
-        device=a.device, popsize=a.popsize, variants=variants,
-        parent_selection=a.parent_selection,
-        task=a.task, payload=a.payload,
-    )
+    common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
+                  budget_init=a.budget_init, budget_child=a.budget_child,
+                  workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
+                  device=a.device, popsize=a.popsize, variants=variants,
+                  parent_selection=a.parent_selection)
+
+    if not a.preset:
+        report(evolve.run(terrains=a.terrains, out_dir=a.out, resume=a.resume,
+                          task=a.task, payload=a.payload, **common))
+        return
+
+    names = [n.strip() for n in a.preset.split(",") if n.strip()]
+    unknown = [n for n in names if n not in PRESETS]
+    if unknown:
+        raise SystemExit(f"unknown preset {unknown}, expected some of {list(PRESETS)}")
+    for name in names:
+        out = os.path.join(a.out, name)
+        path = os.path.join(out, "archive.pkl")
+        resume = path if os.path.exists(path) else None
+        print(f"\n=== preset {name}: {PRESETS[name]} -> {out}"
+              f"{' (resuming)' if resume else ''}")
+        archive = evolve.run(out_dir=out, resume=resume, **PRESETS[name], **common)
+        report(archive)
+        if getattr(archive, "interrupted", False):
+            print("Ctrl+C: the remaining presets were not run")
+            return
+
+
+def report(archive):
     if not archive.cells:
         return
     best = archive.best()

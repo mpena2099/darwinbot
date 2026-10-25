@@ -408,6 +408,7 @@ def run(
             print("stopped before the first batch finished, nothing saved")
         else:
             print(f"stopped, archive saved at batch {saved}")
+        archive.interrupted = True     # lets a caller running several presets stop too
         return archive
     if pool is not None:
         pool.close()

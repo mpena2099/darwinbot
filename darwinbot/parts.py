@@ -29,7 +29,7 @@ EAR_HOLE_DX = 40.0      # PLACEHOLDER: ear hole spacing along the body
 # ---------------------------------------------------------------------------
 
 WALL = 2.5              # wall thickness (>= 2)
-PLATE_T = 4.0           # link / plate thickness
+PLATE_T = 6.0           # link / plate thickness: 4 mm bends at ~36 MPa under the stall torque, 6 mm at ~16
 LINK_W = 20.0           # link width = end boss diameter
 M3 = 3.2                # M3 clearance hole
 LINK_LENGTHS = (60, 80, 100, 120)

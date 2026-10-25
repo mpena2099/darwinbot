@@ -11,7 +11,7 @@ from darwinbot import morphology as mo
 from darwinbot.control_file import read_control_file
 from darwinbot.evolve import Elite
 from darwinbot.export import (bom_rows, export_robot, mount_positions_mm,
-                              parent_chain, part_counts)
+                              parent_chain, part_counts, servo_signs)
 
 
 def _tree():
@@ -127,7 +127,9 @@ def test_mount_positions_follow_used_slots():
     m = mo.template(2)
     pos = mount_positions_mm(m)
     assert len(pos) == len(m.child_map()[0]) == 4
-    assert all(abs(abs(y) - m.body_width * 500) < 1e-6 for _, y in pos)
+    assert all(abs(abs(y) - m.body_width * 500) < 1e-6 for _, y, _ in pos)
+    # side slots face outward: yaw +-90 degrees
+    assert all(abs(abs(yaw) - 90) < 1e-6 for _, _, yaw in pos)
 
 
 def test_random_trees_export(tmp_path):
@@ -178,3 +180,54 @@ def test_bom_lists_caster_parts():
     m.nodes[i] = mo.Node(i, "caster", 0, 1, 0.0, wheel_rad=0.025)
     rows = {item: q for item, q, _ in bom_rows(m)}
     assert rows["caster_wheel_25.stl"] == 1 and rows["caster_fork.stl"] == 1
+
+
+def test_spring_stl_and_bom_use_the_same_key():
+    m = _tree()
+    first = max(m.nodes) + 1
+    m.nodes[first] = mo.Node(first, "spring", 0, 4, 0, axis="pitch",
+                             length=0.14, width=0.020, thick=0.004)
+    rows = {item: q for item, q, _ in bom_rows(m)}
+    assert rows["spring_20x4.stl"] == 2          # two lengths, one printed part
+    assert not any(k.startswith("spring_") and k != "spring_20x4.stl" for k in rows)
+
+
+def test_bom_lists_screw_lengths_nuts_and_the_placeholder_board():
+    rows = {item: (q, note) for item, q, note in bom_rows(_tree())}
+    screws = {k: q for k, (q, _) in rows.items() if k.startswith("M3 x ") and k.endswith("screw")}
+    assert screws and all(k.split()[2].isdigit() for k in screws)
+    assert rows["M3 nut"][0] == sum(screws.values())
+    assert "PLACEHOLDER" in rows["ESP32 servo driver board"][1]
+
+
+@pytest.mark.parametrize("slot", [0, 1, 2, 3, 4, 5, 7])
+@pytest.mark.parametrize("rolled", [0.0, np.pi])
+def test_wheel_sign_follows_the_simulation_axle(slot, rolled):
+    """Positive servo turn is about the hub direction; the simulation turns the
+    wheel about its local axle. The sign is +1 exactly when they agree."""
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "wheel", 0, slot, rolled, wheel_rad=0.05)
+    layout = m.layout()
+    sign = servo_signs(m, layout)[0]
+    pos, rot = m.frames()[1]
+    hub = m.wheel_hub(m.nodes[1], pos, rot)
+    world_axle = rot @ np.array([0.0, m.wheel_axis_sign(rot), 0.0])
+    world_hub = rot @ np.array([0.0, np.sign(hub[1]), 0.0])
+    assert sign == int(round(np.dot(world_axle, world_hub)))
+    assert sign in (-1, 1)
+
+
+def test_rolled_wheel_keeps_its_sign():
+    """Rolling the slot 180 degrees flips the axle and the hub side together."""
+    for slot in (0, 2, 5):
+        signs = []
+        for rolled in (0.0, np.pi):
+            m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+            m.nodes[1] = mo.Node(1, "wheel", 0, slot, rolled, wheel_rad=0.05)
+            signs.append(servo_signs(m, m.layout())[0])
+        assert signs[0] == signs[1]
+
+
+def test_load_full_scale_is_written(tmp_path):
+    export_robot(_elite(), tmp_path, "t", stl=False)
+    assert read_control_file(tmp_path / "control.json")["load_full_scale"] == 0.7

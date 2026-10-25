@@ -208,7 +208,7 @@ machine is about 12x slower.
 ### Viewing the different robot types
 
 The archive keeps one robot per **cell** of the behaviour map: the best one found
-with that duty, height and number of servos. A new robot only replaces the one in
+with that duty, height, number of servos and cost of transport (four descriptors). A new robot only replaces the one in
 its own cell, and only if it scores higher, so slow crawlers survive next to
 fast rollers.
 

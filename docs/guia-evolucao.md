@@ -214,7 +214,8 @@ README). Treinos pequenos levam minutos.
    python experiments/train.py --terrains flat --init 6 --batches 3 --batch-size 4 --budget-init 20 --budget-child 10 --workers 1 --variants 0 --out /tmp/exp1
    python experiments/replay.py --archive /tmp/exp1/archive.pkl --list
    ```
-   Observe a coluna `cells` crescer a cada lote: são os tipos novos achados.
+   Observe a coluna `cells` do log do `train.py` crescer a cada lote: são os
+   tipos novos achados (o `replay.py --list` mostra os tipos em si).
 2. **Novidade contra sorteio:** repita com `--parent-selection uniform`
    e o mesmo `--seed`. Quantos tipos cada um achou?
 3. **Mude a nota:** em `darwinbot/fitness.py`, zere `ENERGY_W` (energia

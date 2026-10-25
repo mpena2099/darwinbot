@@ -221,8 +221,8 @@ the README). Small trainings take minutes.
    python experiments/train.py --terrains flat --init 6 --batches 3 --batch-size 4 --budget-init 20 --budget-child 10 --workers 1 --variants 0 --out /tmp/exp1
    python experiments/replay.py --archive /tmp/exp1/archive.pkl --list
    ```
-   Watch the `cells` column grow with each batch: those are the new kinds
-   found.
+   Watch the `cells` column of the `train.py` log grow with each batch: those
+   are the new kinds found (`replay.py --list` prints the types themselves).
 2. **Novelty versus random draw:** repeat with `--parent-selection uniform`
    and the same `--seed`. How many kinds did each one find?
 3. **Change the score:** in `darwinbot/fitness.py`, set `ENERGY_W` to zero

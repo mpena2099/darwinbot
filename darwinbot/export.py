@@ -33,12 +33,29 @@ def _mm(m):
     return int(round(m * 1000))
 
 
+# Stack-up constants, equal to parts.WALL, parts.PLATE_T (parts needs build123d,
+# the bill of materials does not).
+FLOOR_T = 2.5            # servo bracket floor
+PLATE_T = 6.0            # torso plate and splice strip
+NUT_T = 2.4              # M3 nut
+M3_LENGTHS = (6, 8, 10, 12, 16, 20, 25, 30)
+
+
+def screw_length(stack_mm):
+    """Shortest stock M3 screw that crosses the stack and reaches a nut."""
+    need = stack_mm + NUT_T
+    return next((L for L in M3_LENGTHS if L >= need), M3_LENGTHS[-1])
+
+
 def mount_positions_mm(morph):
-    """(x, y) on the torso plate of every used core slot, in mm."""
+    """(x, y, yaw in degrees) on the torso plate of every used core slot, in
+    mm. The yaw is the attachment angle of the child on the core, in the
+    frame of the slot; it turns the tab footprint and the mounting pattern."""
     out = []
     for slot, child in sorted(morph.child_map().get(0, {}).items()):
-        off, _ = morph.slot_frame(morph.nodes[0], slot, morph.nodes[child])
-        out.append((float(off[0]) * 1000, float(off[1]) * 1000))
+        off, rot = morph.slot_frame(morph.nodes[0], slot, morph.nodes[child])
+        out.append((float(off[0]) * 1000, float(off[1]) * 1000,
+                    float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))))
     return out
 
 
@@ -46,7 +63,7 @@ def part_counts(morph):
     """Printed parts needed, keyed by whole millimetres: links by
     (length, width, thick), elbow plates by (distance, angle deg, width,
     thick) of the parent link, feet by radius, wheels by radius, springs
-    by (length, width, blade), tails by length and caster wheels by radius;
+    by (width, blade), tails by length and caster wheels by radius;
     skids and spikes as plain counts."""
     cm = morph.child_map()
     links, wheels = Counter(), Counter()
@@ -57,7 +74,7 @@ def part_counts(morph):
         if n.kind in ("joint", "link", "spring"):
             links[(_mm(n.length), _mm(n.width), _mm(morpho.plate_thick(n)))] += 1
             if n.kind == "spring":
-                springs[(_mm(n.length), _mm(n.width), _mm(n.thick))] += 1
+                springs[(_mm(n.width), _mm(n.thick))] += 1
             for slot, child in cm.get(i, {}).items():
                 if slot:
                     c = morph.nodes[child]
@@ -108,7 +125,7 @@ def bom_rows(morph):
     rows += [(name, 1, "PLA") for name in torso]
     for (length, width, thick), q in sorted(links.items()):
         rows.append((f"link_{length}x{width}x{thick}.stl", q, "PLA"))
-    for (length, width, blade), q in sorted(springs.items()):
+    for (width, blade), q in sorted(springs.items()):
         rows.append((f"spring_{width}x{blade}.stl", q, "TPU, flexure"))
     rows.append(("servo_bracket.stl", n, "PLA, one per servo"))
     for (dist, angle, width, thick), q in sorted(elbows.items()):
@@ -140,13 +157,45 @@ def bom_rows(morph):
         rows.append(("spike.stl", spikes, "TPU, high-friction tip"))
     for span, q in sorted(splices.items()):
         rows.append((f"splice_plate_{span}.stl", q, "PLA, across a torso cut"))
-    rows += [("ESP32 servo driver board", 1, "see docs/hardware-dados.md"),
-             ("2S LiPo battery 7.4 V", 1, "1000 to 1500 mAh"),
-             ("Step-down regulator", 1, "from 7.4 V to the board supply"),
-             ("M3 screws",
-              4 * n + 4 * sum(elbows.values()) + 4 * sum(splices.values()) + 4,
-              "estimate: 4 per servo, 4 per elbow or splice plate, 4 for the board")]
+    screws = screw_counts(morph, elbows, springs, splices)
+    rows.append(("ESP32 servo driver board", 1,
+                 "see docs/hardware-dados.md; the torso hole pattern is a "
+                 "PLACEHOLDER, check it against your board before printing"))
+    rows += [("2S LiPo battery 7.4 V", 1, "1000 to 1500 mAh"),
+             ("Step-down regulator", 1, "from 7.4 V to the board supply")]
+    for length, (q, what) in sorted(screws.items()):
+        rows.append((f"M3 x {length} screw", q, what))
+    rows.append(("M3 nut", sum(q for q, _ in screws.values()),
+                 "one per screw"))
     return rows
+
+
+def screw_counts(morph, elbows, springs, splices):
+    """{M3 screw length: (count, where used)}, from the stack-up at each joint:
+    every servo bracket floor bolts to a torso tab or a link end (or elbow
+    plate), each elbow plate bolts on a link end, each spring has two blocks
+    bolted to their neighbours, splices join two tiles, and the board sits on
+    the torso. Four screws per interface."""
+    use = {}
+    def add(stack, n, what):
+        L = screw_length(stack)
+        q, w = use.get(L, (0, []))
+        use[L] = (q + n, w + [what] if what not in w else w)
+    for n in morph.nodes.values():
+        if n.kind in ("joint", "wheel"):
+            if n.parent == 0:
+                add(PLATE_T + FLOOR_T, 4, "bracket on torso")
+            else:
+                add(_mm(morpho.plate_thick(morph.nodes[n.parent])) + FLOOR_T,
+                    4, "bracket on link")
+    for (dist, angle, width, thick), q in elbows.items():
+        add(2 * thick, 4 * q, "elbow on link")
+    for (width, blade), q in springs.items():
+        add(2 * max(6, blade), 8 * q, "spring blocks")
+    for span, q in splices.items():
+        add(2 * PLATE_T, 4 * q, "torso splice")
+    add(PLATE_T, 4, "ESP32 board")
+    return {L: (q, ", ".join(w)) for L, (q, w) in use.items()}
 
 
 def printed_parts(rows):
@@ -191,7 +240,11 @@ def parent_chain(morph, node_id):
 
 
 def servo_signs(morph, layout):
-    """Mounting sign of every servo: -1 for flipped joints and right side wheels."""
+    """Mounting sign of every servo: -1 for flipped joints. A wheel servo turns
+    its horn, which sits on the hub side of the servo; positive then means
+    about the hub direction. The simulation spins the wheel about the local
+    axle sign morph.wheel_axis_sign, so the mounting sign is the product of
+    that axle sign and the side of the hub."""
     frames = morph.frames()
     out = []
     for act in layout:
@@ -199,7 +252,10 @@ def servo_signs(morph, layout):
         if act.kind == "joint":
             out.append(-1 if n.flip else 1)
         else:
-            out.append(1 if frames[act.slot][0][1] >= 0 else -1)
+            pos, rot = frames[act.slot]
+            hub = morph.wheel_hub(n, pos, rot)
+            side = 1 if hub[1] >= 0 else -1
+            out.append(int(morph.wheel_axis_sign(rot)) * side)
     return out
 
 
@@ -245,8 +301,8 @@ def _write_stls(morph, out_dir):
         out(f"splice_plate_{span}.stl", parts.splice_plate(span))
     for length, width, thick in sorted(links):
         out(f"link_{length}x{width}x{thick}.stl", parts.link(length, width, thick))
-    for length, width, blade in sorted(springs):
-        out(f"spring_{width}x{blade}.stl", parts.spring(length, width, blade))
+    for width, blade in sorted(springs):
+        out(f"spring_{width}x{blade}.stl", parts.spring(width, blade))
     out("servo_bracket.stl", parts.servo_bracket())
     for dist, angle, width, thick in sorted(elbows):
         out(f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl",

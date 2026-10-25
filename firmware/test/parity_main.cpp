@@ -4,19 +4,24 @@
 // Case file (plain text, one record per line, blank lines and lines starting
 // with '#' are ignored):
 //
-//   frequency ramp_time control_hz n_servos
+//   frequency ramp_time control_hz n_servos [load_full_scale]
 //   <servo line>                                (n_servos times)
-//   loads (n_servos) expected targets (n_servos)   (one line per tick)
+//   loads (n_servos) expected targets (n_servos) expected wheel speeds (n_servos)
+//                                                    (one line per tick)
 //
 // A servo line is always eleven numbers after the mode:
 //   position amp1 phase1 offset amp2 phase2 sigma sign zero min max speed
 //   wheel    0    0      0      0    0      0     1    0    0   0   speed
 //
-// Loads are normalised bus loads (load / max torque, signed, in [-1, 1]).
-// Expected targets are radians for position servos and rad/s for wheels.
+// Loads are bus loads over the servo maximum torque (signed, in [-1, 1]); the
+// core divides them by load_full_scale (default 0.7).
+// Expected targets are radians for position servos and rad/s for wheels
+// (unsigned). Expected wheel speeds are the signed rad/s a wheel servo is
+// commanded, 0 for position servos.
 //
 // Usage: parity_main case.txt
-// Prints the maximum absolute error and exits 1 if it exceeds 1e-3 rad.
+// Prints the maximum absolute error (targets and wheel speeds) and exits 1 if it
+// exceeds 1e-3.
 
 #include <cmath>
 #include <cstdio>
@@ -59,6 +64,7 @@ int main(int argc, char** argv) {
     }
 
     float frequency = 0.0f, ramp_time = 0.0f, control_hz = 0.0f;
+    float load_full_scale = darwinbot::Controller::kLoadFullScale;
     int n_servos = 0;
     {
         std::istringstream header(lines.empty() ? "" : lines[0]);
@@ -67,6 +73,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "bad header\n");
             return 2;
         }
+        header >> load_full_scale;      // optional, keeps the default if absent
     }
 
     if (lines.size() < static_cast<size_t>(n_servos) + 1) {
@@ -92,15 +99,17 @@ int main(int argc, char** argv) {
     }
 
     darwinbot::Controller controller(frequency, ramp_time, control_hz,
-                                     std::move(servos));
+                                     std::move(servos), load_full_scale);
     std::vector<float> loads(static_cast<size_t>(n_servos));
     std::vector<float> expected(static_cast<size_t>(n_servos));
+    std::vector<float> expected_speed(static_cast<size_t>(n_servos));
     float max_error = 0.0f;
     int ticks = 0;
 
     for (size_t i = static_cast<size_t>(n_servos) + 1; i < lines.size(); ++i) {
         std::istringstream in(lines[i]);
-        if (!read_record(in, loads) || !read_record(in, expected)) {
+        if (!read_record(in, loads) || !read_record(in, expected) ||
+            !read_record(in, expected_speed)) {
             std::fprintf(stderr, "bad tick line %zu\n", i + 1);
             return 2;
         }
@@ -110,11 +119,15 @@ int main(int argc, char** argv) {
                 controller.targets[static_cast<size_t>(s)] -
                 expected[static_cast<size_t>(s)]);
             if (error > max_error) max_error = error;
+            const float speed_error = std::fabs(
+                controller.wheel_speeds[static_cast<size_t>(s)] -
+                expected_speed[static_cast<size_t>(s)]);
+            if (speed_error > max_error) max_error = speed_error;
         }
         ++ticks;
     }
 
-    std::printf("ticks: %d, max abs error: %.9g rad\n", ticks,
+    std::printf("ticks: %d, max abs error: %.9g\n", ticks,
                 static_cast<double>(max_error));
     return max_error <= 1e-3f ? 0 : 1;
 }

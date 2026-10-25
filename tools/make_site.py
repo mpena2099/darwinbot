@@ -104,7 +104,8 @@ def main():
     os.makedirs(os.path.join(args.out, "data"), exist_ok=True)
     index = []
     for name, elite in items:
-        ep = Episode(morpho.decode(elite.morph), flat, SECONDS)
+        ep = Episode(morpho.decode(elite.morph), flat, SECONDS,
+                     payload=archive.payload)
         if not ep.buildable:
             print(f"skip {name}: not buildable")
             continue

@@ -84,3 +84,14 @@ def test_rejects_missing_fields(tmp_path):
     del d["frequency"]
     with pytest.raises(ValueError, match="frequency"):
         write_control_file(d, tmp_path / "c.json")
+
+
+def test_load_full_scale_field(tmp_path):
+    d = _make()
+    assert d["format"] == 2 and d["load_full_scale"] == 0.7
+    del d["load_full_scale"]                 # optional: older files lack it
+    write_control_file(d, tmp_path / "c.json")
+    assert read_control_file(tmp_path / "c.json")["load_full_scale"] == 0.7
+    d["load_full_scale"] = 1.5
+    with pytest.raises(ValueError, match="load_full_scale"):
+        write_control_file(d, tmp_path / "c.json")

@@ -11,7 +11,7 @@ controller parameters and the joint limits as plain data.
 import json
 import math
 
-from darwinbot.controller import CONTROL_DT, RAMP_TIME
+from darwinbot.controller import CONTROL_DT, LOAD_FULL_SCALE, RAMP_TIME
 
 FORMAT = 2
 CONTROL_HZ = round(1 / CONTROL_DT)   # same as the simulation
@@ -26,11 +26,13 @@ _TOP_KEYS = ("format", "robot", "fitness", "control_hz", "ramp_time", "frequency
 
 
 def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=None,
-                      control_hz=CONTROL_HZ, ramp_time=RAMP_TIME) -> dict:
+                      control_hz=CONTROL_HZ, ramp_time=RAMP_TIME,
+                      load_full_scale=LOAD_FULL_SCALE) -> dict:
     """
     Build the control dict. layout items are (slot, kind, axis) in servo order
     (morphology.Actuator), params is controller.Params and signs the mounting
-    sign of every servo (default 1).
+    sign of every servo (default 1). load_full_scale is the fraction of the
+    servo maximum torque that the simulation treats as N = 1.
     """
     servos = []
     for i, (slot, kind, axis) in enumerate(layout):
@@ -49,6 +51,7 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
                            "sign": sign, "zero": ZERO, "min": -lim, "max": lim})
     return {"format": FORMAT, "robot": robot_name, "fitness": float(fitness),
             "control_hz": control_hz, "ramp_time": ramp_time,
+            "load_full_scale": float(load_full_scale),
             "frequency": float(params.omega) / (2 * math.pi), "servos": servos}
 
 
@@ -65,6 +68,7 @@ def read_control_file(path) -> dict:
     with open(path) as f:
         d = json.load(f)
     _validate(d)
+    d.setdefault("load_full_scale", LOAD_FULL_SCALE)    # optional field
     return d
 
 
@@ -77,6 +81,9 @@ def _validate(d) -> None:
     for k in _TOP_KEYS:
         if k not in d:
             raise ValueError(f"control file missing field '{k}'")
+    scale = d.get("load_full_scale", LOAD_FULL_SCALE)
+    if not isinstance(scale, (int, float)) or not 0 < scale <= 1:
+        raise ValueError(f"load_full_scale must be in (0, 1], got {scale!r}")
     ids = set()
     for s in d["servos"]:
         mode = s.get("mode")

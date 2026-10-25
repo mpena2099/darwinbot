@@ -6,6 +6,8 @@
 Quality-diversity evolution of robot bodies and locomotion controllers, built
 from real parts so the result can be printed and assembled.
 
+![An evolved legged robot walking](docs/img/gait.gif)
+
 Every robot is a tree of real modules (Karl Sims and Revolve2 style): a core
 (torso plate, ESP32, LiPo) with servo joints, passive links, TPU springs, tails,
 skids, spikes, caster wheels, wheels and feet hanging from its slots, driven by
@@ -410,45 +412,52 @@ fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 ## Results
 
 A short run on a 4-core laptop (`--terrains terrain --batches 5 --workers 3`,
-about 20,000 episodes in 2 h 20 min) filled 51 of the ~500 cells:
+about 22,000 episodes in 2 h 20 min) filled 46 of the ~500 cells:
 
 | Gait | Types | Best fitness |
 |------|-------|--------------|
-| `roll` | 13 | 0.91 |
-| `trot` | 17 | 0.25 |
-| `walk` | 7 | 0.23 |
-| `belly` | 10 | 0.01 |
-| `crawl` | 4 | 0.04 |
+| `roll` | 14 | 1.01 |
+| `trot` | 12 | 0.15 |
+| `crawl` | 7 | 0.15 |
+| `walk` | 3 | 0.08 |
+| `belly` | 10 | 0.12 |
 
-Servo counts go from 1 to 16 and the bodies are often asymmetric. 21 types move
-forward (fitness above 0.05), 8 of them with legs carrying most of the ground
-contact. The best of those, `14servos-low-trot`, keeps its distance on
-randomised physics in `validate.py` (PASS) and exports as 14 servos and 40
-printed parts. Wheels win on speed by a factor of about 3.6 and on efficiency
-too: the most efficient roller has a cost of transport of 0.5, the most
-efficient walker 4.1. The cost-of-transport axis keeps walkers that are slow
-but cheap in the archive next to fast rollers (right panel of the map below).
+28 types move forward (fitness above 0.05), 15 of them with legs carrying most
+of the ground contact. 8 of the 43 buildable elites use a TPU spring, 2 a
+spike, 1 a skid and 1 a caster; no tail survived. The most efficient legged
+robot has a cost of transport of 1.8, slightly better than the most efficient
+roller (1.9).
 
-How the versions compare, each trained on the same terrains for 6 batches:
+The free-form body against the fixed catalogue, same terrains, same 6 batches:
 
-| | Leg pairs | Tree bodies | Tree bodies + cost of transport (current) |
-|---|---|---|---|
-| Archive | body shape grid | ~300 cells, 3 descriptors | ~500 cells, 4 descriptors |
-| Robot types | 20 | 50 | 51 |
-| Types that move forward | 14 | 25 | 21 |
-| Unbuildable elites | 5 | 1 | 3 |
-| Servo counts | 4 to 22 | 1 to 16 | 1 to 16 |
-| Best rolling robot | 1.27 | 0.95 | 0.91 |
-| Best legged robot | 0.40 | 0.39 | 0.25 |
+| | Catalogue (links of 60 to 120 mm, fixed elbow) | Free form |
+|---|---|---|
+| Robot types | 51 | 46 |
+| Types that move forward | 21 | 28 |
+| ... of them legged | 8 | 15 |
+| Unbuildable elites | 3 | 3 |
+| Best rolling robot | 0.91 | 1.01 |
+| Best legged robot | 0.25 | 0.15 |
+| Best cost of transport, rolling | 0.5 | 1.9 |
+| Best cost of transport, legged | 4.1 | 1.8 |
 
-Tree bodies brought two and a half times as many robot types. The fourth
-descriptor spreads the same number of evaluations over more cells, so in a
-short run each cell gets fewer improvements and the best legged robot is
-slower; longer runs should close that gap.
+Free form found fewer cells but far more robots that actually move, nearly
+twice as many legged ones, and legged gaits more than twice as efficient.
+The fastest robots are still wheeled. Link lengths stayed between 60 and
+124 mm, close to the catalogue the initial bodies start from: six batches
+are too few for the continuous genes to drift far, so longer runs are the
+next step.
+
+Earlier versions, same terrains and batches:
+
+| | Leg pairs | Tree bodies | Tree + cost of transport | Free form (current) |
+|---|---|---|---|---|
+| Robot types | 20 | 50 | 51 | 46 |
+| Types that move forward | 14 | 25 | 21 | 28 |
+| Best rolling robot | 1.27 | 0.95 | 0.91 | 1.01 |
+| Best legged robot | 0.40 | 0.39 | 0.25 | 0.15 |
 
 ![Evolved body plans](docs/img/robots.png)
-
-![Best wheel-less gait](docs/img/gait.gif)
 
 ![MAP-Elites archive](docs/img/archive_map.png)
 
@@ -469,8 +478,9 @@ list, not in any single robot.
 
 ## Known limitations
 
-- Wheels still lead: the best rolling robot covers about 2.4 times the
-  distance of the best legged one, and the top of the archive is mostly `roll`.
+- Wheels still lead on speed: the best rolling robot covers about 6 times the
+  distance of the best legged one in a short run, and the top of the archive
+  is mostly `roll`. Legged gaits match wheels on efficiency.
 - The firmware is half done: `firmware/core/` runs the controller math in portable C++ and a test proves it matches the Python controller tick by tick (`tests/test_firmware_parity.py`). The ESP32 layer (servo bus, load reading, calibration) waits for real hardware.
 - Randomised training (`--variants`) is CPU only.
 - The only feedback is the servo load. The controller never sees the world, so
@@ -480,7 +490,8 @@ list, not in any single robot.
   or whose links bend beyond 25 MPa under the servo stall torque is not
   buildable and scores `UNSTABLE_SCORE` without being simulated (common among
   random trees).
-- The free-form body has not had a long run yet. Spring stiffness comes from a
+- Results so far come from short runs (6 batches); the continuous genes need
+  longer runs to drift away from the starting sizes. Spring stiffness comes from a
   TPU modulus that is not verified, and the printability stress check is a
   cantilever estimate, not a finite-element analysis.
 

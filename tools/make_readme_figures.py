@@ -4,7 +4,7 @@ tools/make_readme_figures.py
 Regenerate the README figures in docs/img/ from a MAP-Elites archive.
 
   robots.png        grid of elites with different body plans, mid-gait
-  gait.gif          best wheel-less elite walking, camera following the torso
+  gait.gif          2 x 2 grid of four different robots moving, cameras following them
   archive_map.png   archive heatmap (plot_archive.heatmap)
   progress.png      fitness and filled cells over time (plot_archive.history)
   parts.png         printable parts of the best elite (needs build123d)

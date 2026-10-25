@@ -54,6 +54,26 @@ tabela.
 | LiPo 2S 1000 a 1500 mAh | pendente |
 | Regulador step-down | pendente |
 
+## Mola de TPU
+
+Flexão passiva: lâmina de TPU com 12 mm de comprimento livre, presa entre dois
+blocos de fixação. A rigidez à rotação usada na simulação é a de uma viga em
+balanço:
+
+k = E_TPU · (W · B³ / 12) / L
+
+com W a largura da lâmina, B a espessura, L = 12 mm e
+E_TPU = 26 MPa (não verificado). Amortecimento: 0,02 N·m·s/rad.
+
+| Espessura B (mm) | Rigidez a W = 20 mm (N·m/rad) |
+|---|---|
+| 2 | 0,029 |
+| 4 | 0,23 |
+| 6 | 0,78 |
+| 8 | 1,85 |
+
+A rigidez cresce com o cubo da espessura: dobrar B multiplica k por oito.
+
 ## Open Duck Mini (referência de construção)
 
 - Impressão em PLA com 15% de preenchimento; pés em TPU com 40%.

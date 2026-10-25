@@ -29,8 +29,10 @@ from typing import Tuple
 import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
-from darwinbot.morphology import (AXIS_LOCAL, SERVO_BOX, TORSO_HEIGHT, Actuator,
-                                  ActuatorLayout, Morphology, elbow_distance)
+from darwinbot.morphology import (AXIS_LOCAL, SERVO_BOX, SPRING_DAMPING,
+                                  TORSO_HEIGHT, Actuator, ActuatorLayout,
+                                  Morphology, elbow_distance, plate_thick,
+                                  spring_stiffness)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
@@ -45,11 +47,14 @@ JOINT_DAMPING  = 0.56
 JOINT_FRICTION = 0.068
 JOINT_ARMATURE = 0.027
 JOINT_KP       = 13.37
+SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
 WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
 WHEEL_DAMPING  = 0.05         # wheel spins freely, unlike a position servo
 
 ROBOT_GEOM = f'contype="2" conaffinity="3" friction="{ROBOT_FRICTION}"'
 SERVO_GEOM = f'mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" {ROBOT_GEOM}'
+LINK_RGBA  = "0.55 0.60 0.70 1"
+SPRING_RGBA = "0.95 0.50 0.10 1"   # orange: a passive flexure, no servo
 
 
 def _f(*values) -> str:
@@ -71,10 +76,10 @@ def _servo_box() -> str:
     return f'<geom type="box" size="{half}" {SERVO_GEOM}/>'
 
 
-def _link_geom(node) -> str:
+def _link_geom(node, rgba: str = LINK_RGBA) -> str:
     return (f'<geom type="box" pos="{_f(node.length / 2, 0, 0)}" '
-            f'size="{_f(node.length / 2, node.width / 2, node.thick / 2)}" '
-            f'density="{LINK_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+            f'size="{_f(node.length / 2, node.width / 2, plate_thick(node) / 2)}" '
+            f'density="{LINK_DENSITY}" rgba="{rgba}" {ROBOT_GEOM}/>')
 
 
 def _elbow_geom(parent, child, slot: int) -> str:
@@ -84,8 +89,8 @@ def _elbow_geom(parent, child, slot: int) -> str:
     d = elbow_distance(child)
     return (f'<geom name="elbow{child.id}" type="box" '
             f'pos="{_f(parent.length, side * d / 2, 0)}" '
-            f'size="{_f(parent.width / 2, d / 2, parent.thick / 2)}" '
-            f'density="{LINK_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+            f'size="{_f(parent.width / 2, d / 2, plate_thick(parent) / 2)}" '
+            f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>')
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
@@ -106,6 +111,14 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                  f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_link_geom(node)}')
     elif node.kind == "link":
         inner = _link_geom(node)
+    elif node.kind == "spring":
+        sign = -1.0 if node.flip else 1.0
+        axis = sign * np.array(AXIS_LOCAL[node.axis])
+        inner = (f'<joint name="s{i}" type="hinge" axis="{_f(*axis)}" '
+                 f'stiffness="{spring_stiffness(node):.8g}" '
+                 f'damping="{SPRING_DAMPING}" '
+                 f'range="{-SPRING_RANGE} {SPRING_RANGE}"/>\n'
+                 f'{_link_geom(node, SPRING_RGBA)}')
     elif node.kind == "wheel":
         pos, rot = frames[i]
         name = f"w{i}"
@@ -127,7 +140,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     elif node.kind == "foot":
         inner = (f'<geom type="sphere" size="{node.foot_rad:.4f}" density="{LIMB_DENSITY}" '
                  f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
-    if node.kind in ("joint", "link"):
+    if node.kind in ("joint", "link", "spring"):
         inner += "".join(f"\n{_elbow_geom(node, morph.nodes[c], slot)}"
                          for slot, c in sorted(children.get(i, {}).items()) if slot)
     # Actuators follow the depth first order of Morphology.order.

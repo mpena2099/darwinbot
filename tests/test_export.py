@@ -15,11 +15,13 @@ from darwinbot.export import (bom_rows, export_robot, mount_positions_mm,
 
 
 def _tree():
-    """Two wheeled legs with a yaw joint, one plain leg, plus an explicit foot."""
+    """Two wheeled legs with a yaw joint, one plain leg, a foot and a spring."""
     m = mo.template(2, wheels=True, yaw=True)
     first = max(m.nodes) + 1
     m.nodes[first] = mo.Node(first, "joint", 0, 0, 0, axis="roll", length=0.10)
     m.nodes[first + 1] = mo.Node(first + 1, "foot", first, 0)
+    m.nodes[first + 2] = mo.Node(first + 2, "spring", 0, 1, 0, axis="pitch",
+                                 length=0.10, width=0.020, thick=0.004)
     return m
 
 
@@ -53,7 +55,8 @@ def test_bom_counts_from_tree():
     morph = _tree()
     rows = {item: q for item, q, _ in bom_rows(morph)}
     links = sum(q for k, q in rows.items() if k.startswith("link_"))
-    assert links == sum(n.kind in ("joint", "link") for n in morph.nodes.values())
+    assert links == sum(n.kind in ("joint", "link", "spring")
+                        for n in morph.nodes.values())
     wheels = sum(q for k, q in rows.items() if k.startswith("wheel_"))
     assert wheels == morph.n_wheels
     assert rows["servo_bracket.stl"] == morph.n_servos
@@ -71,11 +74,19 @@ def test_bom_links_match_distinct_sizes():
     joint.width, joint.thick = 0.017, 0.005
     rows = {item: q for item, q, _ in bom_rows(morph)}
     expected = {f"link_{int(round(n.length * 1000))}x{int(round(n.width * 1000))}"
-                f"x{int(round(n.thick * 1000))}.stl"
-                for n in morph.nodes.values() if n.kind in ("joint", "link")}
+                f"x{int(round(mo.plate_thick(n) * 1000))}.stl"
+                for n in morph.nodes.values()
+                if n.kind in ("joint", "link", "spring")}
     assert len(expected) > 1
     assert {k for k in rows if k.startswith("link_")} == expected
     assert all(rows[name] >= 1 for name in expected)
+
+
+def test_bom_counts_springs_as_tpu_and_pla():
+    morph = _tree()
+    rows = {item: (q, note) for item, q, note in bom_rows(morph)}
+    assert rows["spring_20x4.stl"] == (1, "TPU, flexure")
+    assert rows["link_100x20x6.stl"][0] >= 1      # its PLA segment, 6 mm thick
 
 
 def test_assembly_has_one_row_per_servo(tmp_path):
@@ -125,6 +136,7 @@ def test_export_stls(tmp_path):
     assert any(s.startswith("foot_") for s in stls)
     assert any(s.startswith("link_") for s in stls)
     assert any(s.startswith("elbow_") for s in stls)
+    assert any(s.startswith("spring_") for s in stls)
     assert any(s.startswith("wheel_") for s in stls)
     with open(out / "bom.csv") as f:
         listed = {r["item"] for r in csv.DictReader(f) if r["item"].endswith(".stl")}

@@ -49,6 +49,23 @@ def test_no_yaw_leg_has_one_fewer_actuator():
     assert no_yaw.model.nu == len(no_yaw.layout)
 
 
+def test_spring_is_a_passive_hinge():
+    """A spring adds a joint and no actuator, with the flexure stiffness."""
+    morph = mo.template(1)
+    i = max(morph.nodes) + 1
+    morph.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, axis="pitch",
+                             length=0.09, width=0.020, thick=0.006)
+    episode = Episode(morph, te.flat(), seconds=1.0)
+    model = episode.model
+    assert len(episode.layout) == morph.n_servos
+    assert morph.n_joints + morph.n_springs == len(episode.layout) + 1
+    assert not any(a.slot == i for a in episode.layout)
+    assert episode.buildable
+    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"s{i}")
+    assert model.jnt_stiffness[jid] == pytest.approx(
+        mo.spring_stiffness(morph.nodes[i]))
+
+
 def test_layout_matches_model_order():
     morph = mo.template(2, wheels=True, yaw=True)
     episode = Episode(morph, te.flat(), seconds=1.0)

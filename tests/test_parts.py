@@ -67,6 +67,23 @@ def test_wheel_rejects_bad_radius():
         parts.wheel(20)
 
 
+@pytest.mark.parametrize("length,width,blade", [(40, 20, 2), (80, 20, 4),
+                                                (100, 30, 8)])
+def test_spring_flexure(length, width, blade):
+    p = parts.spring(length, width, blade)
+    _ok(p)
+    bb = p.bounding_box()
+    assert bb.size.X == pytest.approx(parts.SPRING_FLEX + 2 * parts.SPRING_BLOCK,
+                                      abs=0.1)
+    assert bb.size.Y == pytest.approx(width, abs=0.2)
+    assert bb.size.Z == pytest.approx(parts.LINK_T, abs=0.1)
+
+
+def test_spring_rejects_short_link():
+    with pytest.raises(ValueError):
+        parts.spring(10, 20, 4)
+
+
 def test_torso_plate():
     p = parts.torso_plate(200, 100, HIPS)
     _ok(p)

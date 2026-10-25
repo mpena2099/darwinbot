@@ -34,9 +34,12 @@ def _within_limits(m):
             assert n.slot < mo.N_SLOTS[m.nodes[n.parent].kind]
         assert 0.0 <= n.rot < 2 * np.pi
         assert 0.0 <= n.offset <= 1.0 and 0.0 <= n.angle <= 1.0
-        if n.kind in ("joint", "link"):
+        if n.kind in ("joint", "link", "spring"):
             assert mo.LENGTH_RANGE[0] <= n.length <= mo.LENGTH_RANGE[1]
             assert mo.LINK_WIDTH_RANGE[0] <= n.width <= mo.LINK_WIDTH_RANGE[1]
+        if n.kind == "spring":
+            assert mo.SPRING_BLADE_RANGE[0] <= n.thick <= mo.SPRING_BLADE_RANGE[1]
+        elif n.kind in ("joint", "link"):
             assert mo.LINK_THICK_RANGE[0] <= n.thick <= mo.LINK_THICK_RANGE[1]
         if n.kind == "wheel":
             assert mo.WHEEL_RANGE_M[0] <= n.wheel_rad <= mo.WHEEL_RANGE_M[1]
@@ -289,3 +292,41 @@ def test_wide_link_passes_printability():
 
 def test_link_longer_than_the_bed_is_a_violation():
     assert mo.violations(_single_link(0.030, 0.006, length=0.20))
+
+
+def _single_spring(blade=0.004):
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "spring", 0, 3, 0.0, axis="yaw", length=0.10,
+                         width=0.020, thick=blade)
+    return m
+
+
+def test_spring_round_trip():
+    m = _single_spring()
+    m.nodes[2] = mo.Node(2, "joint", 1, 0, 0.0, "pitch", 0.08)
+    genes = mo.encode(m)
+    _same(m, mo.decode(genes))
+    assert np.allclose(mo.encode(mo.decode(genes)), genes)
+
+
+def test_spring_is_a_passive_link():
+    m = _single_spring()
+    assert (m.n_springs, m.n_servos, m.n_terminals) == (1, 0, 1)
+    assert mo.N_SLOTS["spring"] == 3
+    assert mo.spring_stiffness(m.nodes[1]) > 0
+    assert not mo.violations(_single_spring(0.002))   # the PLA segment keeps its own thickness
+
+
+def test_spring_stiffness_grows_with_the_cube_of_the_blade():
+    k = lambda blade: mo.spring_stiffness(_single_spring(blade).nodes[1])
+    assert k(0.004) == pytest.approx(8 * k(0.002))
+    assert k(0.006) == pytest.approx(27 * k(0.002))
+    assert k(0.008) == pytest.approx(64 * k(0.002))
+
+
+def test_soft_spring_blade_does_not_fail_the_strength_check():
+    m = mo.template(2)
+    i = max(m.nodes) + 1
+    m.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, length=0.08, width=0.02, thick=0.002)
+    assert not mo.violations(m)
+    assert mo.plate_thick(m.nodes[i]) == mo.SPRING_SEGMENT_THICK

@@ -9,6 +9,8 @@ Modules
   joint  one STS3215 servo + a printed link. Slots: 0 tip, 1 left, 2 right
          (the side slots are an elbow at the end of the link)
   link   passive printed link, same slots as the joint
+  spring passive TPU flexure: a passive hinge plus a printed link, same slots
+         as a link
   wheel  servo in wheel mode + wheel, terminal
   foot   TPU tip, terminal. A joint or link with no child ends in an implicit foot.
 
@@ -25,7 +27,8 @@ by it). Block 0 is always the core. A block is
    WIDTH, THICK, OFFSET, ANGLE]
 (for the core, LENGTH and WHEEL hold body length and width). LENGTH is the
 link length (40..200 mm); WIDTH and THICK are the link section (12..30 mm by
-3..10 mm); WHEEL is the wheel radius or, for a foot, the foot radius; ROT is
+3..10 mm, and for a spring THICK is the TPU blade, 2..8 mm); WHEEL is the wheel
+radius or, for a foot, the foot radius; ROT is
 the slot roll in [0, 2*pi). OFFSET and ANGLE are attachment fractions in
 [0, 1] whose meaning depends on the parent:
   * core front/back: OFFSET slides the mount across the edge (y) and ANGLE
@@ -56,6 +59,7 @@ MAX_DEPTH  = 5      # core is depth 0
 LENGTH_RANGE = (0.04, 0.20)               # m, joint / link length
 LINK_WIDTH_RANGE = (0.012, 0.030)         # m, link width
 LINK_THICK_RANGE = (0.003, 0.010)         # m, link thickness
+SPRING_BLADE_RANGE = (0.002, 0.008)       # m, TPU blade thickness of a spring
 FOOT_RANGE = (0.008, 0.03)                # m, TPU foot radius
 ELBOW_RANGE = (0.025, 0.08)               # m, side slot offset from the link axis
 WHEEL_RANGE_M = (0.03, 0.06)              # m, wheel radius
@@ -74,7 +78,13 @@ PLA_STRENGTH = 50e6      # Pa, printed PLA
 STRENGTH_SAFETY = 0.5    # link bending stress must stay below half of PLA
 BED = 0.22               # m, largest part that fits a common print bed
 
-TYPE_KINDS = ("joint", "link", "wheel", "foot")     # decoded from the TYPE gene
+# Spring (see docs/hardware-dados.md, "Mola de TPU"): a TPU blade bending at
+# one end. E is not verified yet.
+E_TPU = 26e6             # Pa, printed TPU
+SPRING_FLEX_LEN = 0.012  # m, free blade length
+SPRING_DAMPING = 0.02    # N*m*s/rad
+
+TYPE_KINDS = ("joint", "link", "wheel", "foot", "spring")   # from the TYPE gene
 AXES = ("pitch", "yaw", "roll")
 AXIS_LOCAL = {"pitch": (0.0, 0.0, 1.0), "yaw": (0.0, 1.0, 0.0),
               "roll": (1.0, 0.0, 0.0)}
@@ -84,7 +94,8 @@ AXIS_LOCAL = {"pitch": (0.0, 0.0, 1.0), "yaw": (0.0, 1.0, 0.0),
 BLOCK_GENES  = 13
 MORPH_LENGTH = MAX_NODES * BLOCK_GENES
 
-N_SLOTS = {"core": 8, "joint": 3, "link": 3, "wheel": 0, "foot": 0}
+N_SLOTS = {"core": 8, "joint": 3, "link": 3, "wheel": 0, "foot": 0,
+           "spring": 3}
 
 
 class Actuator(NamedTuple):
@@ -104,12 +115,12 @@ class Node:
     parent:   int = -1
     slot:     int = 0              # slot used on the parent
     rot:      float = 0.0          # roll of the slot, radians
-    axis:     str = "pitch"        # joint only
-    length:   float = 0.08         # joint and link
+    axis:     str = "pitch"        # joint and spring only
+    length:   float = 0.08         # joint, link and spring
     wheel_rad: float = 0.045       # wheel only
-    flip:     bool = False         # joint only
-    width:    float = 0.020        # joint and link
-    thick:    float = 0.006        # joint and link
+    flip:     bool = False         # joint and spring only
+    width:    float = 0.020        # joint, link and spring
+    thick:    float = 0.006        # joint and link; spring: blade thickness
     foot_rad: float = 0.02         # foot only
     offset:   float = 0.5          # attachment fraction along the parent slot
     angle:    float = 0.5          # attachment yaw / elbow angle fraction
@@ -127,7 +138,7 @@ def _rx(a: float) -> np.ndarray:
 
 def section_radius(node: Node) -> float:
     """Radius of a link cross-section (width x thickness), for contact and reach."""
-    return float(np.hypot(node.width, node.thick) / 2.0)
+    return float(np.hypot(node.width, plate_thick(node)) / 2.0)
 
 
 def elbow_distance(node: Node) -> float:
@@ -138,6 +149,22 @@ def elbow_distance(node: Node) -> float:
 def elbow_angle(node: Node) -> float:
     """Angle of the side slot in the link plane, radians."""
     return _scale(node.angle, np.radians(30.0), np.radians(150.0))
+
+
+SPRING_SEGMENT_THICK = 0.006   # m, the PLA link printed after a spring's TPU blade
+
+
+def plate_thick(node: Node) -> float:
+    """Thickness of the printed PLA plate of a limb segment. A spring's THICK
+    gene is its TPU blade, so its PLA segment uses a fixed thickness."""
+    return SPRING_SEGMENT_THICK if node.kind == "spring" else node.thick
+
+
+def spring_stiffness(node: Node) -> float:
+    """Rotational stiffness of a spring, N*m/rad: a TPU blade bending at its
+    base, k = E * (width * blade^3 / 12) / free length. THICK is the blade."""
+    inertia = node.width * node.thick ** 3 / 12.0
+    return E_TPU * inertia / SPRING_FLEX_LEN
 
 
 @dataclass
@@ -199,6 +226,10 @@ class Morphology:
     @property
     def n_wheels(self) -> int:
         return sum(n.kind == "wheel" for n in self.nodes.values())
+
+    @property
+    def n_springs(self) -> int:
+        return sum(n.kind == "spring" for n in self.nodes.values())
 
     @property
     def n_servos(self) -> int:
@@ -284,7 +315,7 @@ class Morphology:
                 out.append((i, pos + rot @ self.wheel_hub(n, pos, rot), n.wheel_rad))
             elif n.kind == "foot":
                 out.append((i, pos.copy(), n.foot_rad))
-            elif n.kind in ("joint", "link") and i not in cm:
+            elif n.kind in ("joint", "link", "spring") and i not in cm:
                 out.append((i, pos + rot @ np.array([n.length, 0, 0]),
                             section_radius(n)))
         return out
@@ -301,7 +332,7 @@ class Morphology:
         for i, (pos, rot) in self.frames().items():
             n = self.nodes[i]
             r = max(r, float(np.linalg.norm(pos)))
-            if n.kind in ("joint", "link"):
+            if n.kind in ("joint", "link", "spring"):
                 tip = pos + rot @ np.array([n.length, 0, 0])
                 r = max(r, float(np.linalg.norm(tip)) + section_radius(n))
         for _, p, rad in self.terminal_points():
@@ -317,7 +348,7 @@ class Morphology:
             n = self.nodes[i]
             if n.kind in ("joint", "wheel"):
                 low = min(low, float((pos + corners @ rot.T)[:, 2].min()))
-            if n.kind in ("joint", "link"):
+            if n.kind in ("joint", "link", "spring"):
                 tip = pos + rot @ np.array([n.length, 0, 0])
                 r = section_radius(n)
                 low = min(low, pos[2] - r, tip[2] - r)
@@ -359,9 +390,9 @@ def violations(morph: Morphology) -> List[str]:
     """
     out: List[str] = []
     for i, n in morph.nodes.items():
-        if n.kind not in ("joint", "link"):
+        if n.kind not in ("joint", "link", "spring"):
             continue
-        modulus = n.width * n.thick ** 2 / 6.0
+        modulus = n.width * plate_thick(n) ** 2 / 6.0
         stress = SERVO_STALL / modulus if modulus > 0 else np.inf
         limit = PLA_STRENGTH * STRENGTH_SAFETY
         if stress > limit:
@@ -371,7 +402,8 @@ def violations(morph: Morphology) -> List[str]:
             out.append(f"#{i} {n.kind}: {n.length * 1000:.0f} + "
                        f"{n.width * 1000:.0f} mm does not fit the "
                        f"{BED * 1000:.0f} mm bed")
-        if n.slot in (1, 2) and morph.nodes[n.parent].kind in ("joint", "link"):
+        if n.slot in (1, 2) and morph.nodes[n.parent].kind in (
+                "joint", "link", "spring"):
             parent_width = morph.nodes[n.parent].width
             if elbow_distance(n) + parent_width > BED + 1e-9:
                 out.append(f"#{i} {n.kind}: elbow {elbow_distance(n) * 1000:.0f} + "
@@ -426,16 +458,17 @@ def decode(genes: np.ndarray) -> Morphology:
 
 
 def _node_from_block(i, kind, parent, slot, b) -> Node:
+    thick_range = SPRING_BLADE_RANGE if kind == "spring" else LINK_THICK_RANGE
     n = Node(i, kind, parent, slot,
              rot=float((np.clip(b[ROT], 0.0, 1.0) % 1.0) * 2 * np.pi),
              width=round(_scale(b[WIDTH], *LINK_WIDTH_RANGE), 6),
-             thick=round(_scale(b[THICK], *LINK_THICK_RANGE), 6),
+             thick=round(_scale(b[THICK], *thick_range), 6),
              offset=round(_scale(b[OFFSET], 0.0, 1.0), 6),
              angle=round(_scale(b[ANGLE], 0.0, 1.0), 6))
-    if kind == "joint":
+    if kind in ("joint", "spring"):
         n.axis = AXES[_pick(b[AXIS], 3)]
         n.flip = bool(b[FLIP] > 0.5)
-    if kind in ("joint", "link"):
+    if kind in ("joint", "link", "spring"):
         n.length = round(_scale(b[LENGTH], *LENGTH_RANGE), 6)
     if kind == "wheel":
         n.wheel_rad = round(_scale(b[WHEEL], *WHEEL_RANGE_M), 6)
@@ -465,7 +498,8 @@ def encode(morph: Morphology) -> np.ndarray:
                             *(FOOT_RANGE if n.kind == "foot" else WHEEL_RANGE_M))
         b[FLIP] = 0.75 if n.flip else 0.25
         b[WIDTH] = _unscale(n.width, *LINK_WIDTH_RANGE)
-        b[THICK] = _unscale(n.thick, *LINK_THICK_RANGE)
+        b[THICK] = _unscale(n.thick, *(SPRING_BLADE_RANGE if n.kind == "spring"
+                                       else LINK_THICK_RANGE))
         b[OFFSET] = _unscale(n.offset, 0.0, 1.0)
         b[ANGLE] = _unscale(n.angle, 0.0, 1.0)
     return blocks.reshape(-1)
@@ -551,7 +585,7 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
             new.rot = (-node.rot) % (2 * np.pi)
             if par == 0:
                 new.angle = 1.0 - node.angle      # yaw mirrors around the torso
-            if node.kind == "joint" and node.axis != "yaw":
+            if node.kind in ("joint", "spring") and node.axis != "yaw":
                 new.flip = not node.flip
         morph.nodes[i] = new
         new_root = i if new_root is None else new_root
@@ -616,11 +650,13 @@ def _random_seed(rng: np.random.Generator) -> Morphology:
 
 def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
     n = Node(0, kind, parent, slot, float(rng.uniform(0, 2 * np.pi)))
-    if kind == "joint":
+    if kind in ("joint", "spring"):
         n.axis = str(rng.choice(AXES, p=[0.6, 0.25, 0.15]))
         n.flip = bool(rng.random() < 0.5)
-    if kind in ("joint", "link"):
+    if kind in ("joint", "link", "spring"):
         n.length = round(float(rng.uniform(0.06, 0.12)), 6)
+    if kind == "spring":
+        n.thick = round(float(rng.uniform(*SPRING_BLADE_RANGE)), 6)
     if kind == "wheel":
         n.wheel_rad = round(float(rng.uniform(*WHEEL_RANGE_M)), 6)
     if kind == "foot":
@@ -632,7 +668,7 @@ def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     i = _free_id(morph)
     if i is None or morph.depth(p) + 1 > MAX_DEPTH:
         return None
-    kind = str(rng.choice(TYPE_KINDS, p=[0.55, 0.15, 0.1, 0.2]))
+    kind = str(rng.choice(TYPE_KINDS, p=[0.50, 0.15, 0.10, 0.20, 0.05]))
     if kind in ("joint", "wheel") and morph.n_servos >= MAX_SERVOS:
         kind = "link" if rng.random() < 0.5 else "foot"
     node = _random_node(rng, kind, p, s)
@@ -695,9 +731,9 @@ def _op_param(morph, rng):
             morph.body_width = _jitter(morph.body_width, *BODY_BOUNDS[1], rng)
         return
     choices = ["rot", "offset", "angle"]
-    if n.kind in ("joint", "link"):
+    if n.kind in ("joint", "link", "spring"):
         choices += ["length"] * 2 + ["width", "thick"]
-    if n.kind == "joint":
+    if n.kind in ("joint", "spring"):
         choices += ["axis", "flip"]
     if n.kind == "wheel":
         choices += ["wheel_rad"] * 2
@@ -711,7 +747,8 @@ def _op_param(morph, rng):
     elif what == "width":
         n.width = _jitter(n.width, *LINK_WIDTH_RANGE, rng)
     elif what == "thick":
-        n.thick = _jitter(n.thick, *LINK_THICK_RANGE, rng)
+        n.thick = _jitter(n.thick, *(SPRING_BLADE_RANGE if n.kind == "spring"
+                                     else LINK_THICK_RANGE), rng)
     elif what == "offset":
         n.offset = _jitter(n.offset, 0.0, 1.0, rng)
     elif what == "angle":
@@ -727,15 +764,16 @@ def _op_param(morph, rng):
 
 
 def _op_type(morph, rng):
-    """Swap the type of a joint/link, or of a leaf (also wheel and foot)."""
+    """Swap the type of a limb segment, or of a leaf (also wheel and foot)."""
     parents = {n.parent for n in morph.nodes.values()}
     cand = [i for i, n in morph.nodes.items() if i != 0
-            and (n.kind in ("joint", "link") or i not in parents)]
+            and (n.kind in ("joint", "link", "spring") or i not in parents)]
     if not cand:
         return
     i = int(rng.choice(cand))
     n = morph.nodes[i]
-    kinds = ["joint", "link"] + (["wheel", "foot"] if i not in parents else [])
+    kinds = ["joint", "link", "spring"] + (
+        ["wheel", "foot"] if i not in parents else [])
     kind = str(rng.choice([k for k in kinds if k != n.kind]))
     if kind in ("joint", "wheel") and n.kind not in ("joint", "wheel") \
             and morph.n_servos >= MAX_SERVOS:
@@ -743,8 +781,11 @@ def _op_type(morph, rng):
     new = _random_node(rng, kind, n.parent, n.slot)
     new.id, new.rot = i, n.rot
     new.offset, new.angle = n.offset, n.angle
-    if kind in ("joint", "link") and n.kind in ("joint", "link"):
-        new.length, new.width, new.thick = n.length, n.width, n.thick
+    if kind in ("joint", "link", "spring") \
+            and n.kind in ("joint", "link", "spring"):
+        new.length, new.width = n.length, n.width
+        range_ = SPRING_BLADE_RANGE if kind == "spring" else LINK_THICK_RANGE
+        new.thick = round(float(np.clip(n.thick, *range_)), 6)
     morph.nodes[i] = new
 
 
@@ -755,7 +796,8 @@ def _op_add(morph, rng):
         return
     p, s = free[int(rng.integers(len(free)))]
     i = _add_random(morph, rng, p, s)
-    if i is not None and morph.nodes[i].kind in ("joint", "link") and rng.random() < 0.4:
+    if i is not None and morph.nodes[i].kind in ("joint", "link", "spring") \
+            and rng.random() < 0.4:
         slots = [(p2, s2) for p2, s2 in morph.free_slots() if p2 == i]
         if slots:
             _add_random(morph, rng, *slots[int(rng.integers(len(slots)))])
@@ -844,7 +886,7 @@ def summary(m: Morphology) -> str:
         desc = "core"
         if n.kind != "core":
             desc = n.kind
-            if n.kind == "joint":
+            if n.kind in ("joint", "spring"):
                 desc += f" {n.axis}{'-' if n.flip else ''} {n.length * 1000:.0f}mm"
             elif n.kind == "link":
                 desc += f" {n.length * 1000:.0f}mm"

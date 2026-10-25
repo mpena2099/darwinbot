@@ -6,9 +6,9 @@ notes and the MJCF used in simulation.
 
 The body is a module tree (darwinbot/morphology.py), so everything is read by
 walking the tree: one STL per distinct part (torso plate or its tiles, one per
-link size, elbow size, wheel radius and foot radius, servo bracket, splice
-plates), and one assembly row per servo in layout order. Mount positions on the
-plate are the core slot offsets of Morphology.slot_frame, in mm.
+link size, elbow size, wheel radius, foot radius and spring flexure, servo
+bracket, splice plates), and one assembly row per servo in layout order. Mount
+positions on the plate are the core slot offsets of Morphology.slot_frame, in mm.
 """
 
 import csv
@@ -44,26 +44,29 @@ def mount_positions_mm(morph):
 def part_counts(morph):
     """Printed parts needed, keyed by whole millimetres: links by
     (length, width, thick), elbow plates by (distance, angle deg, width,
-    thick) of the parent link, feet by radius, wheels by radius."""
+    thick) of the parent link, feet by radius, wheels by radius and springs
+    by (length, width, blade)."""
     cm = morph.child_map()
     links, wheels = Counter(), Counter()
-    feet, elbows = Counter(), Counter()
+    feet, elbows, springs = Counter(), Counter(), Counter()
     for i, n in morph.nodes.items():
-        if n.kind in ("joint", "link"):
-            links[(_mm(n.length), _mm(n.width), _mm(n.thick))] += 1
+        if n.kind in ("joint", "link", "spring"):
+            links[(_mm(n.length), _mm(n.width), _mm(morpho.plate_thick(n)))] += 1
+            if n.kind == "spring":
+                springs[(_mm(n.length), _mm(n.width), _mm(n.thick))] += 1
             for slot, child in cm.get(i, {}).items():
                 if slot:
                     c = morph.nodes[child]
                     elbows[(_mm(morpho.elbow_distance(c)),
                             int(round(np.degrees(morpho.elbow_angle(c)))),
-                            _mm(n.width), _mm(n.thick))] += 1
+                            _mm(n.width), _mm(morpho.plate_thick(n)))] += 1
             if i not in cm:
                 feet[_mm(morpho.section_radius(n))] += 1   # implicit tip foot
         elif n.kind == "wheel":
             wheels[_mm(n.wheel_rad)] += 1
         elif n.kind == "foot":
             feet[_mm(n.foot_rad)] += 1
-    return links, wheels, feet, elbows
+    return links, wheels, feet, elbows, springs
 
 
 def _torso_names(morph):
@@ -85,12 +88,14 @@ def _torso_names(morph):
 def bom_rows(morph):
     """Bill of materials as (item, quantity, note) rows."""
     n = morph.n_servos
-    links, wheels, feet, elbows = part_counts(morph)
+    links, wheels, feet, elbows, springs = part_counts(morph)
     torso, splices = _torso_names(morph)
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
     rows += [(name, 1, "PLA") for name in torso]
     for (length, width, thick), q in sorted(links.items()):
         rows.append((f"link_{length}x{width}x{thick}.stl", q, "PLA"))
+    for (length, width, blade), q in sorted(springs.items()):
+        rows.append((f"spring_{width}x{blade}.stl", q, "TPU, flexure"))
     rows.append(("servo_bracket.stl", n, "PLA, one per servo"))
     for (dist, angle, width, thick), q in sorted(elbows.items()):
         rows.append((f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl", q,
@@ -138,7 +143,7 @@ def parent_chain(morph, node_id):
     words = []
     for i in reversed(path):
         n = morph.nodes[i]
-        w = n.kind if n.kind != "joint" else f"joint {n.axis}"
+        w = f"{n.kind} {n.axis}" if n.kind in ("joint", "spring") else n.kind
         notes = []
         if n.parent != 0 and n.slot:
             notes.append(ELBOW_SLOTS[n.slot])
@@ -196,7 +201,7 @@ def _write_stls(morph, out_dir):
     d = os.path.join(out_dir, "parts")
     os.makedirs(d, exist_ok=True)
     out = lambda name, part: parts.export_stl(part, os.path.join(d, name))
-    links, wheels, feet, elbows = part_counts(morph)
+    links, wheels, feet, elbows, springs = part_counts(morph)
     torso, splices = _torso_names(morph)
     tiles = parts.torso_tiles(morph.body_length * 1000, morph.body_width * 1000,
                               mount_positions_mm(morph))
@@ -206,6 +211,8 @@ def _write_stls(morph, out_dir):
         out(f"splice_plate_{span}.stl", parts.splice_plate(span))
     for length, width, thick in sorted(links):
         out(f"link_{length}x{width}x{thick}.stl", parts.link(length, width, thick))
+    for length, width, blade in sorted(springs):
+        out(f"spring_{width}x{blade}.stl", parts.spring(length, width, blade))
     out("servo_bracket.stl", parts.servo_bracket())
     for dist, angle, width, thick in sorted(elbows):
         out(f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl",

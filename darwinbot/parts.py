@@ -41,6 +41,8 @@ WHEEL_T = 10.0          # wheel thickness
 FOOT_R = 9.0            # default foot cap radius
 FOOT_SOCKET_D = 12.0    # PLACEHOLDER: shin tube/socket diameter
 FOOT_MIN_R = 8.6        # keeps the wall around the socket >= 2 mm
+SPRING_FLEX = 12.0      # TPU blade length, matches morphology.SPRING_FLEX_LEN
+SPRING_BLOCK = 10.0     # mounting block length at each end of the blade
 
 
 def _horn_holes(thickness: float) -> Part:
@@ -117,6 +119,28 @@ def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
                   width_mm / 2 - 0.01)
     part -= _link_end_holes(0, 0, 0.0, thick_mm)
     part -= _link_end_holes(0, distance_mm, angle_deg - 90.0, thick_mm)
+    return part
+
+
+def spring(length_mm: float, width_mm: float = LINK_W,
+           blade_mm: float = 4.0) -> Part:
+    """TPU flexure (print in TPU): two mounting blocks with the link end
+    pattern, joined by a blade of blade_mm thickness and SPRING_FLEX length.
+    The blade lies flat, so it bends about Y; turn the part to get the axis of
+    the spring. length_mm is the link it sits under; the module link is a
+    separate PLA plate on the far block, so only block, blade and block are
+    printed here."""
+    if length_mm < SPRING_FLEX + 2 * SPRING_BLOCK:
+        raise ValueError("spring too short")
+    t = LINK_T
+    total = SPRING_FLEX + 2 * SPRING_BLOCK
+    part = Box(total, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    if blade_mm < t:                   # thin the middle down to the blade
+        part -= (Pos(SPRING_BLOCK, 0, t / 2)
+                 * Box(SPRING_FLEX, width_mm, t - blade_mm,
+                       align=(Align.CENTER, Align.CENTER, Align.CENTER)))
+    for x in (SPRING_BLOCK / 2, total - SPRING_BLOCK / 2):
+        part -= _link_end_holes(x, 0, 0.0, t)
     return part
 
 

@@ -44,11 +44,13 @@ def mount_positions_mm(morph):
 def part_counts(morph):
     """Printed parts needed, keyed by whole millimetres: links by
     (length, width, thick), elbow plates by (distance, angle deg, width,
-    thick) of the parent link, feet by radius, wheels by radius and springs
-    by (length, width, blade)."""
+    thick) of the parent link, feet by radius, wheels by radius, springs
+    by (length, width, blade) and tails by length; skids and spikes as
+    plain counts."""
     cm = morph.child_map()
     links, wheels = Counter(), Counter()
-    feet, elbows, springs = Counter(), Counter(), Counter()
+    feet, elbows, springs, tails = Counter(), Counter(), Counter(), Counter()
+    skids = spikes = 0
     for i, n in morph.nodes.items():
         if n.kind in ("joint", "link", "spring"):
             links[(_mm(n.length), _mm(n.width), _mm(morpho.plate_thick(n)))] += 1
@@ -66,7 +68,13 @@ def part_counts(morph):
             wheels[_mm(n.wheel_rad)] += 1
         elif n.kind == "foot":
             feet[_mm(n.foot_rad)] += 1
-    return links, wheels, feet, elbows, springs
+        elif n.kind == "tail":
+            tails[_mm(n.length)] += 1
+        elif n.kind == "skid":
+            skids += 1
+        elif n.kind == "spike":
+            spikes += 1
+    return links, wheels, feet, elbows, springs, tails, skids, spikes
 
 
 def _torso_names(morph):
@@ -88,7 +96,7 @@ def _torso_names(morph):
 def bom_rows(morph):
     """Bill of materials as (item, quantity, note) rows."""
     n = morph.n_servos
-    links, wheels, feet, elbows, springs = part_counts(morph)
+    links, wheels, feet, elbows, springs, tails, skids, spikes = part_counts(morph)
     torso, splices = _torso_names(morph)
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
     rows += [(name, 1, "PLA") for name in torso]
@@ -105,6 +113,17 @@ def bom_rows(morph):
     for r, q in sorted(wheels.items()):
         rows.append((f"wheel_{r}.stl", q, "PLA"))
         rows.append((f"Rubber O-ring tyre, wheel_{r}", q, f"fits rim of radius {r} mm"))
+    for length, q in sorted(tails.items()):
+        rows.append((f"tail_{length}.stl", q, "PLA"))
+    if tails:
+        grams = 1000.0 * sum(n.tail_mass for n in morph.nodes.values()
+                              if n.kind == "tail")
+        rows.append(("M3 nuts as counterweight", sum(tails.values()),
+                     f"{grams:.1f} g total, one set per tail"))
+    if skids:
+        rows.append(("skid.stl", skids, "PLA, low-friction pad"))
+    if spikes:
+        rows.append(("spike.stl", spikes, "TPU, high-friction tip"))
     for span, q in sorted(splices.items()):
         rows.append((f"splice_plate_{span}.stl", q, "PLA, across a torso cut"))
     rows += [("ESP32 servo driver board", 1, "see docs/hardware-dados.md"),
@@ -201,7 +220,7 @@ def _write_stls(morph, out_dir):
     d = os.path.join(out_dir, "parts")
     os.makedirs(d, exist_ok=True)
     out = lambda name, part: parts.export_stl(part, os.path.join(d, name))
-    links, wheels, feet, elbows, springs = part_counts(morph)
+    links, wheels, feet, elbows, springs, tails, skids, spikes = part_counts(morph)
     torso, splices = _torso_names(morph)
     tiles = parts.torso_tiles(morph.body_length * 1000, morph.body_width * 1000,
                               mount_positions_mm(morph))
@@ -221,6 +240,12 @@ def _write_stls(morph, out_dir):
         out(f"foot_{radius}.stl", parts.foot(radius))
     for r in sorted(wheels):
         out(f"wheel_{r}.stl", parts.wheel(r))
+    for length in sorted(tails):
+        out(f"tail_{length}.stl", parts.tail_bar(length))
+    if skids:
+        out("skid.stl", parts.skid())
+    if spikes:
+        out("spike.stl", parts.spike())
 
 
 def export_robot(elite, out_dir, name, stl=True) -> dict:

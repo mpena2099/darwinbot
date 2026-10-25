@@ -11,9 +11,9 @@ Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 
 import math
 
-from build123d import (Align, Box, BuildPart, Circle, Cylinder, Locations, Part,
-                       Pos, Rot, Sphere, SlotOverall, extrude, export_stl as _export_stl,
-                       fillet)
+from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Locations,
+                       Part, Pos, Rot, Sphere, SlotOverall, extrude,
+                       export_stl as _export_stl, fillet)
 
 # --- measure a real STS3215 and update ------------------------------------
 SERVO_L = 45.2          # body length (along the output axis offset direction)
@@ -43,6 +43,11 @@ FOOT_SOCKET_D = 12.0    # PLACEHOLDER: shin tube/socket diameter
 FOOT_MIN_R = 8.6        # keeps the wall around the socket >= 2 mm
 SPRING_FLEX = 12.0      # TPU blade length, matches morphology.SPRING_FLEX_LEN
 SPRING_BLOCK = 10.0     # mounting block length at each end of the blade
+TAIL_W = 15.0           # tail bar width, matches morphology.TAIL_BAR_SIZE
+TAIL_T = 6.0            # tail bar thickness
+SKID_L, SKID_W, SKID_T = 60.0, 30.0, 6.0   # low-friction pad
+SPIKE_L, SPIKE_R = 30.0, 5.0               # TPU tip, tapered to SPIKE_TIP_R
+SPIKE_TIP_R = 1.5
 
 
 def _horn_holes(thickness: float) -> Part:
@@ -158,6 +163,32 @@ def foot(radius_mm: float = FOOT_R) -> Part:
     part -= Pos(0, 0, 3) * Cylinder(FOOT_SOCKET_D / 2, 20,
                                     align=(Align.CENTER, Align.CENTER, Align.MIN))
     return part
+
+
+def tail_bar(length_mm: float) -> Part:
+    """PLA bar along +X with an M3 hole near the tip for the counterweight."""
+    if length_mm < TAIL_W or length_mm > BED_MM:
+        raise ValueError("tail bar must fit the print bed")
+    part = Pos(length_mm / 2, 0, 0) * Box(
+        length_mm, TAIL_W, TAIL_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= Pos(length_mm - TAIL_W / 2, 0, 0) * Cylinder(M3 / 2, TAIL_T * 3)
+    return part
+
+
+def skid() -> Part:
+    """Flat PLA pad (print in PLA): a low-friction contact surface."""
+    return Box(SKID_L, SKID_W, SKID_T,
+               align=(Align.CENTER, Align.CENTER, Align.MIN))
+
+
+def spike() -> Part:
+    """Tapered TPU tip (print in TPU) with grip grooves."""
+    part = Cone(SPIKE_R, SPIKE_TIP_R, SPIKE_L,
+                align=(Align.CENTER, Align.CENTER, Align.MIN))
+    for z in (8.0, 16.0, 24.0):
+        r = SPIKE_R + (SPIKE_TIP_R - SPIKE_R) * z / SPIKE_L
+        part -= Pos(0, 0, z) * (Cylinder(r + 0.8, 1.0) - Cylinder(r - 0.8, 1.0))
+    return Rot(Y=90) * part                        # tip along +X, as the module
 
 
 def wheel(radius_mm: float) -> Part:

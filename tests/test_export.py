@@ -15,13 +15,18 @@ from darwinbot.export import (bom_rows, export_robot, mount_positions_mm,
 
 
 def _tree():
-    """Two wheeled legs with a yaw joint, one plain leg, a foot and a spring."""
-    m = mo.template(2, wheels=True, yaw=True)
+    """Wheeled legs, a plain leg, a foot, a spring and one module of every
+    new passive terminal kind."""
+    m = mo.template(2, wheels=True)
     first = max(m.nodes) + 1
-    m.nodes[first] = mo.Node(first, "joint", 0, 0, 0, axis="roll", length=0.10)
+    m.nodes[first] = mo.Node(first, "joint", 0, 6, 0, axis="roll", length=0.10)
     m.nodes[first + 1] = mo.Node(first + 1, "foot", first, 0)
     m.nodes[first + 2] = mo.Node(first + 2, "spring", 0, 1, 0, axis="pitch",
                                  length=0.10, width=0.020, thick=0.004)
+    m.nodes[first + 3] = mo.Node(first + 3, "tail", 0, 0, 0, length=0.12,
+                                 tail_mass=0.06)
+    m.nodes[first + 4] = mo.Node(first + 4, "skid", first, 1)
+    m.nodes[first + 5] = mo.Node(first + 5, "spike", 0, 3, 0)
     return m
 
 
@@ -89,6 +94,16 @@ def test_bom_counts_springs_as_tpu_and_pla():
     assert rows["link_100x20x6.stl"][0] >= 1      # its PLA segment, 6 mm thick
 
 
+def test_bom_counts_terminal_modules():
+    morph = _tree()
+    rows = {item: (q, note) for item, q, note in bom_rows(morph)}
+    assert rows["tail_120.stl"] == (1, "PLA")
+    assert rows["skid.stl"] == (1, "PLA, low-friction pad")
+    assert rows["spike.stl"] == (1, "TPU, high-friction tip")
+    qty, note = rows["M3 nuts as counterweight"]
+    assert qty == 1 and "60.0 g" in note
+
+
 def test_assembly_has_one_row_per_servo(tmp_path):
     elite = _elite()
     morph = mo.decode(elite.morph)
@@ -138,6 +153,7 @@ def test_export_stls(tmp_path):
     assert any(s.startswith("elbow_") for s in stls)
     assert any(s.startswith("spring_") for s in stls)
     assert any(s.startswith("wheel_") for s in stls)
+    assert "tail_120.stl" in stls and "skid.stl" in stls and "spike.stl" in stls
     with open(out / "bom.csv") as f:
         listed = {r["item"] for r in csv.DictReader(f) if r["item"].endswith(".stl")}
     assert listed == set(stls)

@@ -29,10 +29,11 @@ from typing import Tuple
 import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
-from darwinbot.morphology import (AXIS_LOCAL, SERVO_BOX, SPRING_DAMPING,
-                                  TORSO_HEIGHT, Actuator, ActuatorLayout,
-                                  Morphology, elbow_distance, plate_thick,
-                                  spring_stiffness)
+from darwinbot.morphology import (AXIS_LOCAL, SERVO_BOX, SKID_SIZE, SPIKE_LENGTH,
+                                  SPIKE_RADIUS, SPRING_DAMPING, TAIL_BAR_SIZE,
+                                  TAIL_TIP_RADIUS, TORSO_HEIGHT, Actuator,
+                                  ActuatorLayout, Morphology, elbow_distance,
+                                  plate_thick, spring_stiffness)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
@@ -53,6 +54,9 @@ WHEEL_DAMPING  = 0.05         # wheel spins freely, unlike a position servo
 
 ROBOT_GEOM = f'contype="2" conaffinity="3" friction="{ROBOT_FRICTION}"'
 SERVO_GEOM = f'mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" {ROBOT_GEOM}'
+# priority 2 beats the terrain (priority 1), so these frictions win the contact
+SKID_GEOM = 'contype="2" conaffinity="3" priority="2" friction="0.15 0.02 0.001"'
+SPIKE_GEOM = 'contype="2" conaffinity="3" priority="2" friction="1.6 0.02 0.001"'
 LINK_RGBA  = "0.55 0.60 0.70 1"
 SPRING_RGBA = "0.95 0.50 0.10 1"   # orange: a passive flexure, no servo
 
@@ -140,6 +144,23 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     elif node.kind == "foot":
         inner = (f'<geom type="sphere" size="{node.foot_rad:.4f}" density="{LIMB_DENSITY}" '
                  f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+    elif node.kind == "tail":
+        mass = max(node.tail_mass, 1e-6)   # a zero-mass geom would be degenerate
+        inner = (f'<geom name="tail{i}" type="box" pos="{_f(node.length / 2, 0, 0)}" '
+                 f'size="{_f(node.length / 2, TAIL_BAR_SIZE[0] / 2, TAIL_BAR_SIZE[1] / 2)}" '
+                 f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>\n'
+                 f'        <geom name="tailtip{i}" type="sphere" '
+                 f'pos="{_f(node.length, 0, 0)}" size="{TAIL_TIP_RADIUS:.4f}" '
+                 f'mass="{mass:.6f}" rgba="0.15 0.15 0.15 1" {ROBOT_GEOM}/>')
+    elif node.kind == "skid":
+        inner = (f'<geom name="skid{i}" type="box" '
+                 f'size="{_f(*(np.array(SKID_SIZE) / 2))}" '
+                 f'density="{LINK_DENSITY}" rgba="0.2 0.25 0.30 1" {SKID_GEOM}/>')
+    elif node.kind == "spike":
+        inner = (f'<geom name="spike{i}" type="capsule" '
+                 f'fromto="{_f(0, 0, 0, SPIKE_LENGTH, 0, 0)}" '
+                 f'size="{SPIKE_RADIUS:.4f}" density="{LINK_DENSITY}" '
+                 f'rgba="{SPRING_RGBA}" {SPIKE_GEOM}/>')
     if node.kind in ("joint", "link", "spring"):
         inner += "".join(f"\n{_elbow_geom(node, morph.nodes[c], slot)}"
                          for slot, c in sorted(children.get(i, {}).items()) if slot)

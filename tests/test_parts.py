@@ -84,6 +84,38 @@ def test_spring_rejects_short_link():
         parts.spring(10, 20, 4)
 
 
+@pytest.mark.parametrize("length", [40, 100, 200])
+def test_tail_bar(length):
+    p = parts.tail_bar(length)
+    _ok(p)
+    bb = p.bounding_box()
+    assert bb.size.X == pytest.approx(length, abs=0.1)
+    assert bb.size.Y == pytest.approx(parts.TAIL_W, abs=0.1)
+    assert bb.size.Z == pytest.approx(parts.TAIL_T, abs=0.1)
+
+
+def test_tail_bar_rejects_short_or_oversized_bar():
+    for length in (10, parts.BED_MM + 1):
+        with pytest.raises(ValueError):
+            parts.tail_bar(length)
+
+def test_skid_pad():
+    p = parts.skid()
+    _ok(p)
+    bb = p.bounding_box()
+    assert bb.size.X == pytest.approx(parts.SKID_L, abs=0.1)
+    assert bb.size.Y == pytest.approx(parts.SKID_W, abs=0.1)
+    assert bb.size.Z == pytest.approx(parts.SKID_T, abs=0.1)
+
+
+def test_spike_tip():
+    p = parts.spike()
+    _ok(p)
+    bb = p.bounding_box()
+    assert bb.size.X == pytest.approx(parts.SPIKE_L, abs=0.1)
+    assert bb.size.Y == pytest.approx(2 * parts.SPIKE_R, abs=0.1)
+
+
 def test_torso_plate():
     p = parts.torso_plate(200, 100, HIPS)
     _ok(p)

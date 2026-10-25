@@ -18,7 +18,7 @@ def _same(a, b):
         assert (n.kind, n.parent, n.slot, n.axis, n.flip) == \
             (m.kind, m.parent, m.slot, m.axis, m.flip)
         for field in ("rot", "length", "wheel_rad", "width", "thick",
-                      "foot_rad", "offset", "angle"):
+                      "foot_rad", "tail_mass", "offset", "angle"):
             assert getattr(n, field) == pytest.approx(getattr(m, field))
 
 
@@ -34,13 +34,15 @@ def _within_limits(m):
             assert n.slot < mo.N_SLOTS[m.nodes[n.parent].kind]
         assert 0.0 <= n.rot < 2 * np.pi
         assert 0.0 <= n.offset <= 1.0 and 0.0 <= n.angle <= 1.0
-        if n.kind in ("joint", "link", "spring"):
+        if n.kind in ("joint", "link", "spring", "tail"):
             assert mo.LENGTH_RANGE[0] <= n.length <= mo.LENGTH_RANGE[1]
             assert mo.LINK_WIDTH_RANGE[0] <= n.width <= mo.LINK_WIDTH_RANGE[1]
         if n.kind == "spring":
             assert mo.SPRING_BLADE_RANGE[0] <= n.thick <= mo.SPRING_BLADE_RANGE[1]
         elif n.kind in ("joint", "link"):
             assert mo.LINK_THICK_RANGE[0] <= n.thick <= mo.LINK_THICK_RANGE[1]
+        if n.kind == "tail":
+            assert mo.TAIL_MASS_RANGE[0] <= n.tail_mass <= mo.TAIL_MASS_RANGE[1]
         if n.kind == "wheel":
             assert mo.WHEEL_RANGE_M[0] <= n.wheel_rad <= mo.WHEEL_RANGE_M[1]
         if n.kind == "foot":
@@ -330,3 +332,45 @@ def test_soft_spring_blade_does_not_fail_the_strength_check():
     m.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, length=0.08, width=0.02, thick=0.002)
     assert not mo.violations(m)
     assert mo.plate_thick(m.nodes[i]) == mo.SPRING_SEGMENT_THICK
+
+
+TERMINALS = ("tail", "skid", "spike")
+
+
+def _terminal(kind, length=0.12, tail_mass=0.05):
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, kind, 0, 0, 0.0,
+                         length=length if kind == "tail" else 0.08,
+                         tail_mass=tail_mass if kind == "tail" else 0.0)
+    m.nodes[2] = mo.Node(2, "joint", 0, 1, 3 * np.pi / 2, "pitch", 0.10)
+    return m
+
+
+@pytest.mark.parametrize("kind", TERMINALS)
+def test_terminal_round_trip(kind):
+    m = _terminal(kind)
+    genes = mo.encode(m)
+    _same(m, mo.decode(genes))
+    assert np.allclose(mo.encode(mo.decode(genes)), genes)
+
+
+@pytest.mark.parametrize("kind", TERMINALS)
+def test_terminal_helpers_include_the_module(kind):
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 3, 3 * np.pi / 2, "pitch", 0.10)
+    m.nodes[2] = mo.Node(2, kind, 1, 1, 0.0, length=0.12,
+                         tail_mass=0.05 if kind == "tail" else 0.0)
+    point = next((p, r) for j, p, r in m.terminal_points() if j == 2)
+    p, rad = point
+    assert m.max_reach >= np.linalg.norm(p) + rad
+    low = {"tail": mo.TAIL_TIP_RADIUS, "skid": mo.SKID_SIZE[2] / 2,
+           "spike": mo.SPIKE_RADIUS}[kind]
+    assert m.lowest_z() == pytest.approx(p[2] - low)
+
+
+def test_tail_mass_comes_from_the_wheel_gene():
+    light = mo.decode(mo.encode(_terminal("tail", 0.10, 0.0)))
+    heavy = mo.decode(mo.encode(_terminal("tail", 0.10, 0.10)))
+    assert light.nodes[1].tail_mass == pytest.approx(0.0)
+    assert heavy.nodes[1].tail_mass == pytest.approx(0.10)
+    assert light.nodes[1].length == heavy.nodes[1].length == pytest.approx(0.10)

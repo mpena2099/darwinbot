@@ -122,10 +122,11 @@ def main():
     if a.list:
         archive = open_archive(a.archive)
         names = archive.names()
-        print("type                       fitness  duty  height  servos")
+        print("type                       fitness  duty  height  servos    cot")
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
-            duty, height, servos, _ = e.behaviour
-            print(f"{names[cell]:26s} {e.fitness:7.2f}  {duty:4.2f}  {height:6.2f}  {int(servos):6d}")
+            duty, height, servos, _, cot = e.behaviour
+            print(f"{names[cell]:26s} {e.fitness:7.2f}  {duty:4.2f}  {height:6.2f}  "
+                  f"{int(servos):6d}  {cot:5.1f}")
         return
 
     archive, elite = load(a.archive, a.cell)

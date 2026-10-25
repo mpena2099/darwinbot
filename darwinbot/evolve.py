@@ -3,11 +3,12 @@ evolve.py
 ---------
 Outer loop: quality diversity over body plans.
 
-The archive is a pyribs CVTArchive (about 300 cells) over three behaviour and
+The archive is a pyribs CVTArchive (about 500 cells) over four behaviour and
 cost descriptors, all measured on the nominal flat-terrain episode of the
 body's best controller: duty (fraction of time the terminal points touch the
-ground), height (mean torso height over the body's reach) and cost (number of
-servos). Each cell keeps the best body found there, together with the
+ground), height (mean torso height over the body's reach), cost (number of
+servos) and cost of transport (work per weight and distance, log scale), which
+lets an efficient walker keep its cell next to a faster but hungrier roller. Each cell keeps the best body found there, together with the
 controller CMA-ES learned for it. Instead of converging on one design, the run
 ends with a map of the fastest crawler, the fastest roller, the best tall
 trotter, and so on.
@@ -36,11 +37,11 @@ from ribs.archives import CVTArchive
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.inner import optimise_controller
-from darwinbot.sim import HEIGHT_MAX
+from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 3                      # bump when the genome meaning changes
-N_CELLS    = 300                    # CVT cells
+BODY_MODEL = 4                      # bump when the genome meaning changes
+N_CELLS    = 500                    # CVT cells
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 PARENT_SELECTIONS = ("novelty", "uniform")
@@ -53,27 +54,33 @@ CRAWL_DUTY, WALK_DUTY, BELLY_DUTY = 0.8, 0.5, 0.15
 Cell = int                          # index of the CVT cell
 
 
-def normalise(duty: float, height: float, servos: float) -> np.ndarray:
-    """Descriptor in [0, 1]^3, so that every axis weighs the same."""
-    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS], 0.0, 1.0)
+N_DESCRIPTORS = 4
+
+
+def normalise(behaviour) -> np.ndarray:
+    """Descriptor in [0, 1]^4 from a behaviour vector, so that every axis
+    weighs the same. Cost of transport spans decades, so it is taken in log."""
+    duty, height, servos, _, cot = np.asarray(behaviour, dtype=float)[:5]
+    cot = np.log(np.clip(cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
+    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS, cot], 0.0, 1.0)
 
 
 @lru_cache(maxsize=1)
 def _centroids() -> np.ndarray:
-    probe = CVTArchive(solution_dim=1, centroids=N_CELLS, ranges=[(0.0, 1.0)] * 3,
+    probe = CVTArchive(solution_dim=1, centroids=N_CELLS, ranges=[(0.0, 1.0)] * N_DESCRIPTORS,
                        seed=CVT_SEED, samples=20000)
     return np.array(probe.centroids)
 
 
 def cell_of(behaviour) -> Cell:
-    """CVT cell of a behaviour vector (duty, height, servos, wheel share)."""
-    point = normalise(*np.asarray(behaviour, dtype=float)[:3])
+    """CVT cell of a behaviour vector (duty, height, servos, wheel share, cot)."""
+    point = normalise(behaviour)
     return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
     """Readable type from a behaviour vector, e.g. '8servos-low-crawl'."""
-    duty, height, servos, wheel_share = (float(v) for v in behaviour)
+    duty, height, servos, wheel_share = (float(v) for v in behaviour[:4])
     band = next(name for top, name in HEIGHT_BINS if height < top)
     if wheel_share > ROLL_SHARE:
         gait = "roll"
@@ -108,13 +115,13 @@ class Elite:
     fitness: float
     scores:  List[float]
     born:    int          # batch index
-    # (duty, height, servos, wheel share); None: a body never simulated
+    # (duty, height, servos, wheel share, cot); None: a body never simulated
     behaviour: Optional[np.ndarray] = None
 
     def __post_init__(self):
         if self.behaviour is None:
             self.behaviour = np.array(
-                [0.0, 0.0, float(morpho.decode(self.morph).n_servos), 0.0])
+                [0.0, 0.0, float(morpho.decode(self.morph).n_servos), 0.0, COT_MAX])
         self.behaviour = np.asarray(self.behaviour, dtype=float)
 
 
@@ -146,12 +153,12 @@ class Archive:
             self._grid = CVTArchive(
                 solution_dim=morpho.MORPH_LENGTH,
                 centroids=_centroids(),
-                ranges=[(0.0, 1.0)] * 3,
+                ranges=[(0.0, 1.0)] * N_DESCRIPTORS,
                 extra_fields={
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
                     "scores": ((n_scores,), np.float64),
                     "born": ((), np.int64),
-                    "behaviour": ((4,), np.float64),
+                    "behaviour": ((5,), np.float64),
                 },
             )
         return self._grid
@@ -200,7 +207,7 @@ class Archive:
     def insert(self, elite: Elite, parent: Optional[str] = None) -> bool:
         grid = self._ensure(len(elite.scores))
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
-                        measures=[normalise(*elite.behaviour[:3])],
+                        measures=[normalise(elite.behaviour)],
                         ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
                         behaviour=[elite.behaviour])
         added = int(info["status"][0]) != 0

@@ -13,7 +13,7 @@ from darwinbot import fitness
 from darwinbot import morphology as mo
 from darwinbot import randomize
 from darwinbot import terrain as te
-from darwinbot.sim import Episode, Metrics
+from darwinbot.sim import Episode, Metrics, cost_of_transport
 
 
 LEGS = mo.encode(mo.template(2, wheels=False, yaw=True))
@@ -259,4 +259,18 @@ def test_optimise_returns_nominal_flat_behaviour():
     morph = mo.decode(LEGS)
     res = optimise_controller(morph, [te.flat()], budget=4, seed=1, seconds=1.0, variants=1)
     ref = Episode(morph, te.flat(), seconds=1.0).run(res.ctrl)
-    assert np.allclose(res.behaviour, [ref.duty, ref.height, morph.n_servos, ref.wheel_share])
+    assert np.allclose(res.behaviour, [ref.duty, ref.height, morph.n_servos, ref.wheel_share,
+                                       cost_of_transport(ref)])
+
+
+def test_cost_of_transport_is_clipped_and_charges_standing_still():
+    from darwinbot.sim import COT_DX_MIN, COT_MAX, COT_MIN
+    moving = Metrics(dx=1.0, dy=0.0, energy=9.81, fell=False, unstable=False,
+                     duration=5.0, mass=1.0)
+    assert cost_of_transport(moving) == pytest.approx(1.0)
+    still = Metrics(dx=-0.2, dy=0.0, energy=9.81 * COT_DX_MIN, fell=False,
+                    unstable=False, duration=5.0, mass=1.0)
+    assert cost_of_transport(still) == pytest.approx(1.0)
+    idle = Metrics(0.0, 0.0, 0.0, False, False, 5.0, 1.0)
+    assert cost_of_transport(idle) == COT_MIN
+    assert cost_of_transport(Metrics(0.0, 0.0, 1e6, False, False, 5.0, 1.0)) == COT_MAX

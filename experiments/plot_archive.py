@@ -22,16 +22,17 @@ def load(path):
 
 
 def heatmap(archive):
-    """Elites in (duty, height), coloured by fitness and sized by servo count."""
+    """Left: elites in (duty, height), coloured by fitness and sized by servo
+    count. Right: fitness against cost of transport, rolling robots marked."""
     import matplotlib.pyplot as plt
 
     if not archive.cells:
         raise SystemExit("archive has no elites to plot")
     elites = list(archive.cells.values())
-    duty, height, servos, _ = np.array([e.behaviour for e in elites]).T
-    fits = [e.fitness for e in elites]
+    duty, height, servos, wheel, cot = np.array([e.behaviour for e in elites]).T
+    fits = np.array([e.fitness for e in elites])
 
-    fig, ax = plt.subplots(figsize=(6.4, 4.6))
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 4.6))
     points = ax.scatter(duty, height, c=fits, s=20 + 14 * (servos - servos.min()),
                         cmap="viridis", edgecolor="k", linewidth=0.4)
     ax.set_xlim(-0.05, 1.05)
@@ -40,6 +41,17 @@ def heatmap(archive):
     ax.set_ylabel("height (torso z / body reach)")
     ax.set_title("archive: one dot per elite, size = servos")
     fig.colorbar(points, ax=ax, label="fitness")
+
+    roll = wheel > 0.5
+    ax2.scatter(cot[~roll], fits[~roll], s=24, edgecolor="k", linewidth=0.4, label="legs")
+    ax2.scatter(cot[roll], fits[roll], s=24, marker="s", edgecolor="k",
+                linewidth=0.4, label="wheels (roll)")
+    ax2.set_xscale("log")
+    ax2.set_xlabel("cost of transport (lower is more efficient)")
+    ax2.set_ylabel("fitness")
+    ax2.set_title("speed against efficiency")
+    ax2.legend()
+    fig.tight_layout()
     return fig
 
 

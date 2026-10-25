@@ -45,10 +45,12 @@ so at the end you can browse a catalogue of different solutions.
 Two nested loops:
 
 1. **Outer loop, MAP-Elites over behaviour.** The archive is a pyribs
-   CVTArchive with about 300 cells over three descriptors measured in the nominal
+   CVTArchive with about 500 cells over four descriptors measured in the nominal
    flat-floor episode: `duty` (fraction of time the ground-touching tips are on
-   the floor), `height` (mean torso height over the body reach) and `cost`
-   (number of servos). Each cell keeps the best body found there, so a run ends
+   the floor), `height` (mean torso height over the body reach), `cost`
+   (number of servos) and `cot`, the cost of transport (mechanical work per
+   weight and distance, on a log scale). The last one lets an efficient walker
+   keep its own cell next to a faster but hungrier roller. Each cell keeps the best body found there, so a run ends
    with a map of specialists instead of a single design. Parents are drawn with
    probability proportional to their novelty (mean distance to the 10 nearest
    elites in descriptor space), which pushes the search towards sparse regions.
@@ -171,10 +173,10 @@ Step 1, see which types the run has found, best first:
 
 ```
 $ python experiments/replay.py --list
-type                       fitness  duty  height  servos
-8servos-mid-trot              0.11  0.34    0.45       8
-12servos-low-trot            -0.03  0.41    0.28      12
-12servos-low-walk-133        -0.03  0.52    0.33      12
+type                       fitness  duty  height  servos    cot
+8servos-mid-trot              0.11  0.34    0.45       8    6.2
+12servos-low-trot            -0.03  0.41    0.28      12   21.4
+12servos-low-walk-133        -0.03  0.52    0.33      12   18.7
 ...
 ```
 

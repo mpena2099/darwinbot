@@ -24,14 +24,14 @@ def _elite(fitness, behaviour, genes=GENES, born=0):
 
 
 def test_cell_of_is_deterministic_and_in_range():
-    cell = evolve.cell_of([0.5, 0.7, 8, 0.0])
-    assert cell == evolve.cell_of([0.5, 0.7, 8, 0.0])
+    cell = evolve.cell_of([0.5, 0.7, 8, 0.0, 1.0])
+    assert cell == evolve.cell_of([0.5, 0.7, 8, 0.0, 1.0])
     assert 0 <= cell < evolve.N_CELLS
-    assert 0 <= evolve.cell_of([5.0, 9.0, 99, 0.0]) < evolve.N_CELLS   # clipped
+    assert 0 <= evolve.cell_of([5.0, 9.0, 99, 0.0, 1.0]) < evolve.N_CELLS   # clipped
 
 
 def test_insert_keeps_best_per_cell():
-    behaviour = [0.9, 0.3, 8, 0.0]
+    behaviour = [0.9, 0.3, 8, 0.0, 1.0]
     cell = evolve.cell_of(behaviour)
     archive = evolve.Archive(terrains="flat")
 
@@ -53,7 +53,7 @@ def test_run_writes_archive(tmp_path):
     path = tmp_path / "archive.pkl"
     assert path.exists()
     assert archive.cells
-    assert all(len(e.behaviour) == 4 for e in archive.cells.values())
+    assert all(len(e.behaviour) == 5 for e in archive.cells.values())
     assert len(archive.history) == 2
     with open(path, "rb") as f:
         loaded = pickle.load(f)
@@ -70,7 +70,7 @@ def test_lineage_survives_parent_eviction():
     a = evolve.Archive(terrains="flat")
     rng = np.random.default_rng(0)
     morph = mo.encode(mo.template(2))
-    beh = np.array([0.6, 0.3, 8.0, 0.0])
+    beh = np.array([0.6, 0.3, 8.0, 0.0, 1.0])
     old = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.1, [0.1], 0, beh)
     new = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.5, [0.5], 1, beh)
     pid = evolve.elite_id(old.morph, old.ctrl)
@@ -95,7 +95,8 @@ def test_names_round_trip_with_parse():
     rng = np.random.default_rng(3)
     for i in range(40):
         archive.insert(_elite(float(i), [rng.uniform(), rng.uniform(0, 1.5),
-                                         int(rng.integers(4, 17)), rng.choice([0.0, 1.0])]))
+                                         int(rng.integers(4, 17)), rng.choice([0.0, 1.0]),
+                                         rng.uniform(0.1, 100)]))
     names = archive.names()
     assert len(set(names.values())) == len(names)          # unique
     for cell, name in names.items():
@@ -107,8 +108,9 @@ def test_names_round_trip_with_parse():
 
 def _at(i):
     """Behaviour vector sitting on the centroid of cell i."""
-    duty, height, cost = evolve._centroids()[i]
-    return [duty, height * evolve.HEIGHT_MAX, round(cost * mo.MAX_SERVOS), 0.0]
+    duty, height, cost, cot = evolve._centroids()[i]
+    return [duty, height * evolve.HEIGHT_MAX, round(cost * mo.MAX_SERVOS), 0.0,
+            evolve.COT_MIN * (evolve.COT_MAX / evolve.COT_MIN) ** cot]
 
 
 def test_name_collision_appends_cell_index():
@@ -137,7 +139,7 @@ def test_parse_rejects_bad_names():
 
 def test_novelty_selection_prefers_isolated_elites():
     centroids = evolve._centroids()
-    corner = np.array([1.0, 1.0, 1.0])
+    corner = np.ones(evolve.N_DESCRIPTORS)
     order = np.argsort(np.linalg.norm(centroids - corner, axis=1))
     archive = evolve.Archive(terrains="flat")
     for i in order[:30]:                       # a dense cluster in one corner ...

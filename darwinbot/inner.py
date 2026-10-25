@@ -30,7 +30,7 @@ from darwinbot import randomize
 from darwinbot.controller import CTRL_LENGTH, active_genes, random_controller
 from darwinbot.fitness import UNSTABLE_SCORE, aggregate, score
 from darwinbot.morphology import Morphology
-from darwinbot.sim import EPISODE_SECONDS, Episode, Metrics
+from darwinbot.sim import COT_MAX, EPISODE_SECONDS, Episode, Metrics, cost_of_transport
 from darwinbot.terrain import Terrain, flat
 
 
@@ -62,10 +62,12 @@ def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None):
 
 
 def behaviour_vector(morph: Morphology, m: Optional[Metrics]) -> np.ndarray:
-    """(duty, height, servos, wheel share) of a body from its nominal flat episode."""
+    """(duty, height, servos, wheel share, cost of transport) of a body from its
+    nominal flat episode."""
     if m is None:
-        return np.array([0.0, 0.0, float(morph.n_servos), 0.0])
-    return np.array([m.duty, m.height, float(morph.n_servos), m.wheel_share])
+        return np.array([0.0, 0.0, float(morph.n_servos), 0.0, COT_MAX])
+    return np.array([m.duty, m.height, float(morph.n_servos), m.wheel_share,
+                     cost_of_transport(m)])
 
 
 def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:

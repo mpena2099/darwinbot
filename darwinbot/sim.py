@@ -25,6 +25,8 @@ from darwinbot.terrain import Terrain
 EPISODE_SECONDS = 8.0
 UPRIGHT_MIN     = 0.5     # torso z-axis . world z below this (60 deg) is a fall
 HEIGHT_MAX      = 1.5     # clip of the height descriptor (torso z / body reach)
+COT_MIN, COT_MAX = 0.1, 100.0   # range of the cost of transport descriptor (log scale)
+COT_DX_MIN      = 0.05    # m: a robot that barely moves gets the cost of this distance
 
 
 @dataclass
@@ -39,6 +41,14 @@ class Metrics:
     duty:     float = 0.0   # mean fraction of control ticks a terminal point touches the ground
     height:   float = 0.0   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
+
+
+def cost_of_transport(m: "Metrics") -> float:
+    """Mechanical work per weight and distance (no unit), clipped to the
+    descriptor range: low is efficient. Robots that go backwards or stay put
+    are charged as if they had moved COT_DX_MIN."""
+    cot = m.energy / (m.mass * 9.81 * max(m.dx, COT_DX_MIN))
+    return float(np.clip(cot, COT_MIN, COT_MAX))
 
 
 def control_hold(timestep: float) -> int:

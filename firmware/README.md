@@ -11,11 +11,16 @@ substeps per control tick), the start ramp, the speed clip
 conversion (`zero + sign * target * 4096 / 2pi`, rounded). Wheels get only a
 ramped, signed speed and ignore phase and load.
 
+The core takes loads as bus load over the servo maximum torque and divides
+them by `load_full_scale` (control.json, default 0.7: the simulation treats
+70% of the stall torque as N = 1). The phase is wrapped to [0, 2pi) every tick
+so float precision never stalls it.
+
 ## Parity test
 
 `tests/test_firmware_parity.py` builds a case with `numpy` from
-`darwinbot/controller.py` (random genes, open loop with `sigma = 0`, and an
-active speed clip), writes it to a temporary file, compiles the core plus
+`darwinbot/controller.py` (random genes, open loop with `sigma = 0`, an
+active speed clip, and signed wheel speeds), writes it to a temporary file, compiles the core plus
 `test/parity_main.cpp` with the first of `g++`, `clang++`, `c++` found, and
 runs it. The test skips only when no compiler is installed.
 
@@ -27,8 +32,9 @@ pytest tests/test_firmware_parity.py -q
 
 `test/parity_main.cpp` reads a plain text case file. Its header comment
 documents the format: a line with `frequency ramp_time control_hz n_servos`,
-one line per servo, then one line per tick with the normalised loads followed
-by the expected targets. Expected targets are radians for position servos and
+an optional `load_full_scale` on the header line, one line per servo, then one
+line per tick with the loads, the expected targets and the expected signed
+wheel speeds. Expected targets are radians for position servos and
 rad/s for wheels.
 
 ```bash

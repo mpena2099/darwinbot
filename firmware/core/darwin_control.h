@@ -3,7 +3,8 @@
 //
 // Position servo:
 //   dtheta/dt = omega - sigma * N * cos(theta)          (5 substeps per tick)
-//   N         = clip(sign * load_normalised, -1, 1)
+//   N         = clip(sign * load_normalised / load_full_scale, -1, 1)
+//   theta is wrapped to [0, 2pi) every tick
 //   target    = ramp(t) * (offset + amp1 sin(theta + phase1)
 //                                  + amp2 sin(2 theta + phase2))
 // Wheel: speed = ramp(t) * speed * sign, phase and load ignored.
@@ -35,14 +36,18 @@ class Controller {
 public:
     static constexpr int kSubsteps = 5;       // 4 ms each at 50 Hz
     static constexpr float kServoSpeed = 5.45f;
+    static constexpr float kLoadFullScale = 0.7f;   // control.json default
 
     Controller(float frequency, float ramp_time, float control_hz,
-               std::vector<ServoParams> servos);
+               std::vector<ServoParams> servos,
+               float load_full_scale = kLoadFullScale);
 
     // One control period: targets from the current phases at t, then
     // kSubsteps explicit-Euler phase steps under the same loads.
-    // loads_normalised: signed bus load / max torque in [-1, 1]; sign is
-    // applied here, per docs/formato-controle.md.
+    // loads_normalised: signed bus load / max torque (the servo's full
+    // scale, not the simulation's). The core divides by load_full_scale (the
+    // fraction of that torque that counts as N = 1) and applies the sign, per
+    // docs/formato-controle.md.
     void tick(const float* loads_normalised);
 
     std::vector<float> targets;       // position: rad (clamped); wheel: rad/s
@@ -54,6 +59,7 @@ private:
     float omega_;
     float ramp_time_;
     float dt_;
+    float load_full_scale_;
     float time_ = 0.0f;
     std::vector<ServoParams> servos_;
     std::vector<float> theta_;

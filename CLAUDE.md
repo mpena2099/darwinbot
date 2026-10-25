@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é
 
-Evolução de robôs construíveis: MAP-Elites (pyribs, arquivo CVT por comportamento e custo) sobre corpos em árvore de módulos, CMA-ES sobre um CPG com dois harmônicos e retorno de carga (Tegotae) para cada corpo, simulação no MuJoCo. Os corpos usam peças reais (servo Feetech STS3215 7,4 V, links impressos, ESP32 + LiPo) e qualquer robô do arquivo pode ser exportado como STL, lista de materiais, guia de montagem e JSON de controle. Projeto pessoal, hobby e portfólio. Navegação e firmware ainda não existem (o firmware espera o hardware).
+Evolução de robôs construíveis: MAP-Elites (pyribs, arquivo CVT por comportamento e custo) sobre corpos em árvore de módulos, CMA-ES sobre um CPG com dois harmônicos e retorno de carga (Tegotae) para cada corpo, simulação no MuJoCo. Os corpos usam peças reais (servo Feetech STS3215 7,4 V, links impressos, ESP32 + LiPo) e qualquer robô do arquivo pode ser exportado como STL, lista de materiais, guia de montagem e JSON de controle. Projeto pessoal, hobby e portfólio. Navegação ainda não existe. O núcleo do firmware existe (C++ portátil em `firmware/core`, com teste de paridade contra o Python); falta só a camada do ESP32, que espera o hardware.
 
 Código, comentários e README em inglês; `docs/` e este arquivo em português. O guia para iniciantes existe nas duas línguas (`docs/guia-evolucao.md` e `docs/evolution-guide.md`); mudou um, mude o outro. Figuras do guia: `tools/make_guide_figures.py`.
 
@@ -17,7 +17,7 @@ pip install -e ".[video,cad]"                 # gpu: venv separado (venv-gpu) co
 pytest tests -q                               # testes, ~1 min; os de GPU se pulam sem jax
 python experiments/train.py --terrains terrain --batches 30 --workers 3
 python experiments/train.py --parent-selection uniform   # padrão: novelty
-python experiments/replay.py --list           # tipos de robô no arquivo, com duty, altura e servos
+python experiments/replay.py --list           # tipos de robô no arquivo, com duty, altura, servos e custo de transporte (cot)
 python experiments/replay.py --type 12servos-high-trot --speed 0.5
 python experiments/validate.py --type <tipo>  # PASS se perde < 30% em física variada
 python experiments/export.py --type <tipo>    # exports/<tipo>/
@@ -39,7 +39,8 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 - `randomize.py`: variações de física (atrito, massa, torque, rigidez, folga, atraso) para o treino e o `validate.py`.
 - `experiments/lineage.py`: genealogia gravada em `Archive.lineage` (pai de cada elite, inclusive os substituídos).
 - `inner.py`: CMA-ES por corpo; `evolve.py`: arquivo CVT do pyribs (~500 células; descritores duty, altura do tronco sobre o alcance, nº de servos e custo de transporte em escala log, medidos no terreno plano nominal), seleção de pais por novidade (`--parent-selection novelty|uniform`), nomes de tipo (`8servos-mid-trot`: servos, faixa de altura `low/mid/high`, marcha `crawl/walk/trot/roll`), laço externo, checkpoints.
-- `parts.py`, `control_file.py`, `export.py`: peças build123d com as medidas de cada robô, JSON do firmware (formato 2, `docs/formato-controle.md`), pacote de exportação que percorre a árvore: um STL por tamanho distinto (`link_{L}x{W}x{T}`, `elbow_{D}mm_{A}deg_{W}x{T}`, `foot_{R}`, `spring_{W}x{B}`, `tail_{L}`, `skid`, `spike`, `caster_wheel_{R}`, `caster_fork`), tronco em placas do tamanho da mesa (`torso_tile_{i}`, ou `torso_plate` se couber) com placas de emenda (`splice_plate_{span}`), e uma linha de montagem por servo na ordem do layout.
+- `firmware/core`: o mesmo CPG em C++17 sem dependências (`darwin_control`), que divide a carga por `load_full_scale` e dá a volta na fase a cada tick; `tests/test_firmware_parity.py` compila e compara alvos e velocidades de roda com `controller.py`.
+- `parts.py`, `control_file.py`, `export.py`: peças build123d com as medidas de cada robô, JSON do firmware (formato 2, com `load_full_scale`, `docs/formato-controle.md`), pacote de exportação que percorre a árvore: um STL por tamanho distinto (`link_{L}x{W}x{T}`, `elbow_{D}mm_{A}deg_{W}x{T}`, `foot_{R}`, `spring_{W}x{B}`, `tail_{L}`, `skid`, `spike`, `caster_wheel_{R}`, `caster_fork`), tronco em placas do tamanho da mesa (`torso_tile_{i}`, ou `torso_plate` se couber) com placas de emenda (`splice_plate_{span}`), e uma linha de montagem por servo na ordem do layout.
 
 ## Convenções e armadilhas
 

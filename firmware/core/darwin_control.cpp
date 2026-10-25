@@ -12,10 +12,11 @@ constexpr float kStepsPerRad = 4096.0f / kTwoPi;
 }  // namespace
 
 Controller::Controller(float frequency, float ramp_time, float control_hz,
-                       std::vector<ServoParams> servos)
+                       std::vector<ServoParams> servos, float load_full_scale)
     : omega_(kTwoPi * frequency),
       ramp_time_(ramp_time),
       dt_(control_hz > 0.0f ? 1.0f / control_hz : 0.0f),
+      load_full_scale_(load_full_scale > 0.0f ? load_full_scale : kLoadFullScale),
       servos_(std::move(servos)) {
     const size_t n = servos_.size();
     theta_.assign(n, 0.0f);
@@ -59,12 +60,16 @@ void Controller::tick(const float* loads_normalised) {
 
         const float n =
             loads_normalised
-                ? std::clamp(p.sign * loads_normalised[i], -1.0f, 1.0f)
+                ? std::clamp(p.sign * loads_normalised[i] / load_full_scale_, -1.0f,
+                           1.0f)
                 : 0.0f;
         for (int k = 0; k < kSubsteps; ++k) {
             const float dtheta = omega_ - p.sigma * n * std::cos(theta_[i]);
             theta_[i] += h * dtheta;
         }
+        // keep the phase small so float precision never stalls it
+        theta_[i] = std::fmod(theta_[i], kTwoPi);
+        if (theta_[i] < 0.0f) theta_[i] += kTwoPi;
     }
 
     time_ += dt_;

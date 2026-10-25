@@ -24,8 +24,9 @@ COMPILERS = ("g++", "clang++", "c++")
 LAYOUT = [mo.Actuator(1, "joint", "pitch"),
           mo.Actuator(2, "joint", "yaw"),
           mo.Actuator(3, "joint", "roll"),
-          mo.Actuator(4, "wheel", "wheel")]
-SIGNS = (-1.0, 1.0, -1.0, 1.0)
+          mo.Actuator(4, "wheel", "wheel"),
+          mo.Actuator(5, "wheel", "wheel")]
+SIGNS = (-1.0, 1.0, -1.0, -1.0, 1.0)      # one reversed wheel, one not
 LIMITS = JOINT_RANGE      # same joint limits as the simulation
 TICKS = 200
 
@@ -43,7 +44,7 @@ def _write_case(path, ctrl, loads):
 
     lines = [" ".join(_fmt(v) for v in
                       (p.omega / (2 * np.pi), co.RAMP_TIME,
-                       round(1 / co.CONTROL_DT), n))]
+                       round(1 / co.CONTROL_DT), n, co.LOAD_FULL_SCALE))]
     for i, act in enumerate(LAYOUT):
         sign, lim = SIGNS[i], limits[i]
         if act.kind == "wheel":
@@ -64,7 +65,12 @@ def _write_case(path, ctrl, loads):
         expected = [out[i] if act.kind == "wheel"
                     else np.clip(out[i], -limits[i], limits[i])
                     for i, act in enumerate(LAYOUT)]
-        row = [load[i] * SIGNS[i] for i in range(n)] + expected
+        speeds = [out[i] * SIGNS[i] if act.kind == "wheel" else 0.0
+                  for i, act in enumerate(LAYOUT)]
+        # bus load / servo maximum torque: the simulation's full scale is
+        # LOAD_FULL_SCALE of it, which the core divides out again
+        row = ([load[i] * SIGNS[i] * co.LOAD_FULL_SCALE for i in range(n)]
+               + expected + speeds)
         lines.append(" ".join(_fmt(v) for v in row))
 
     path.write_text("\n".join(lines) + "\n")
@@ -97,6 +103,7 @@ def _genes(seed):
         ctrl[b + co.AMP2] = 0.9          # second harmonic present
         ctrl[b + co.SIGMA] = 0.85        # Tegotae on
     ctrl[co.node_base(4) + co.OFFSET] = 0.7
+    ctrl[co.node_base(5) + co.OFFSET] = 0.2      # a slower second wheel
     return rng, ctrl
 
 
@@ -127,5 +134,13 @@ def test_parity_with_speed_clip_active(tmp_path):
     p = co.Controller(ctrl, LAYOUT).params
     peak = (p.amp1 + 2 * p.amp2) * p.omega
     assert np.allclose(peak[[0, 1, 2]], co.SERVO_SPEED)
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads)
+
+
+def test_wheel_speed_signs_reach_the_output(tmp_path):
+    rng, ctrl = _genes(6)
+    p = co.Controller(ctrl, LAYOUT).params
+    assert p.offset[3] > 0 and SIGNS[3] < 0 and SIGNS[4] > 0
     loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
     _run_case(tmp_path, ctrl, loads)

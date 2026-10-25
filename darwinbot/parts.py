@@ -41,12 +41,16 @@ WHEEL_T = 10.0          # wheel thickness
 CASTER_T = 8.0          # caster wheel thickness, matches morphology.CASTER_WHEEL_T
 CASTER_GAP = CASTER_T + 1.2   # clearance between the fork arms
 CASTER_ARM = 7.5        # fork arm width, keeps >= 2 mm around the axle hole
+FORK_T = 10.0          # fork thickness: keeps the axle bore 3 mm clear of the faces
 CASTER_L = 44.0         # fork length along the arms
 FOOT_R = 9.0            # default foot cap radius
 FOOT_SOCKET_D = 12.0    # PLACEHOLDER: shin tube/socket diameter
 FOOT_MIN_R = 8.6        # keeps the wall around the socket >= 2 mm
 SPRING_FLEX = 12.0      # TPU blade length, matches morphology.SPRING_FLEX_LEN
-SPRING_BLOCK = 10.0     # mounting block length at each end of the blade
+MOUNT_SIDE = 16.0       # M3 mounting pattern: 4 holes on a square of this side
+MOUNT_MIN_W = MOUNT_SIDE + M3 + 2 * WALL   # narrowest part that holds the pattern
+END_BOSS_D = HORN_BOLT_CIRCLE + 2 * (HORN_HOLE_D / 2 + WALL)   # keeps the horn holes inside
+SPRING_BLOCK = MOUNT_MIN_W   # mounting block length at each end of the blade
 TAIL_W = 15.0           # tail bar width, matches morphology.TAIL_BAR_SIZE
 TAIL_T = 6.0            # tail bar thickness
 SKID_L, SKID_W, SKID_T = 60.0, 30.0, 6.0   # low-friction pad
@@ -65,6 +69,36 @@ def _horn_holes(thickness: float) -> Part:
     return c.part
 
 
+def _mount_holes(thickness: float, yaw_deg: float = 0.0) -> Part:
+    """Cutter at the origin: the common M3 mounting pattern (4 holes on a
+    MOUNT_SIDE square), turned about Z. Every mounting interface uses it: the
+    servo bracket floor, link ends, elbow plate ends, spring blocks and torso
+    tabs, so any of them bolts to any other."""
+    h = MOUNT_SIDE / 2
+    cut = None
+    for sx in (-h, h):
+        for sy in (-h, h):
+            hole = Pos(sx, sy, 0) * Cylinder(M3 / 2, thickness * 3)
+            cut = hole if cut is None else cut + hole
+    return Rot(Z=yaw_deg) * cut
+
+
+def _boss_d(width_mm: float) -> float:
+    """Diameter of a link end boss: wide enough for the horn holes."""
+    return max(width_mm, END_BOSS_D)
+
+
+def _bar(x0: float, x1: float, width_mm: float, thick_mm: float) -> Part:
+    """Flat bar along X from x0 to x1 with a round boss at each end."""
+    d = _boss_d(width_mm)
+    bar = Pos((x0 + x1) / 2, 0, 0) * Box(
+        x1 - x0, width_mm, thick_mm, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    for x in (x0, x1):
+        bar += Pos(x, 0, 0) * Cylinder(d / 2, thick_mm,
+                                       align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return bar
+
+
 def servo_bracket() -> Part:
     """Open-top box holding one servo body, with ear screw holes."""
     iw, il = SERVO_W + 2 * SERVO_CLEARANCE, SERVO_L + 2 * SERVO_CLEARANCE
@@ -73,6 +107,8 @@ def servo_bracket() -> Part:
     box = Box(ol, ow, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
     pocket = Pos(0, 0, WALL) * Box(il, iw, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
     part = box - pocket
+    # mounting pattern through the floor, centred under the servo axis
+    part -= Pos(0, 0, 0) * _mount_holes(WALL)
     # ear screws go through the floor, along the servo length
     for sx in (-EAR_HOLE_DX / 2, EAR_HOLE_DX / 2):
         part -= Pos(sx, 0, 0) * Cylinder(EAR_HOLE_D / 2, WALL * 3)
@@ -84,34 +120,27 @@ def servo_bracket() -> Part:
 
 def link(length_mm: float, width_mm: float = LINK_W,
          thick_mm: float = LINK_T) -> Part:
-    """Plate between two servo axes (horn at x=0, next bracket at x=length)."""
+    """Plate between two servo axes (horn at x=0, next bracket at x=length).
+    Both ends carry a round boss of END_BOSS_D (or the width, if wider), so the
+    horn holes stay inside the material for any width."""
     if length_mm < width_mm:
         raise ValueError("link too short")
-    body = Pos(length_mm / 2, 0, 0) * (
-        Box(length_mm + width_mm, width_mm, thick_mm,
-            align=(Align.CENTER, Align.CENTER, Align.MIN)))
-    part = fillet(body.edges().filter_by(lambda e: abs(e.length - thick_mm) < 1e-6),
-                  width_mm / 2 - 0.01)
+    part = _bar(0.0, length_mm, width_mm, thick_mm)
     part -= _horn_holes(thick_mm)
-    # bracket end: pair of M3 holes plus a central slot for the cable
-    for dy in (-6, 6):
-        part -= Pos(length_mm, dy, 0) * Cylinder(M3 / 2, thick_mm * 3)
-    part -= Pos(length_mm, 0, 0) * Cylinder(HORN_BORE_D / 2, thick_mm * 3)
+    # bracket end: the common mounting pattern plus a bore for the cable
+    part -= Pos(length_mm, 0, 0) * _link_end_pattern(thick_mm)
     return part
 
 
-def _link_end_pattern(thick_mm: float) -> Part:
-    """Cutter at the origin: cable bore plus the bracket end M3 pair."""
-    cut = Cylinder(HORN_BORE_D / 2, thick_mm * 3)
-    for dy in (-6, 6):
-        cut += Pos(0, dy, 0) * Cylinder(M3 / 2, thick_mm * 3)
-    return cut
+def _link_end_pattern(thick_mm: float, yaw_deg: float = 0.0) -> Part:
+    """Cutter at the origin: cable bore plus the mounting pattern."""
+    return Cylinder(HORN_BORE_D / 2, thick_mm * 3) + _mount_holes(thick_mm, yaw_deg)
 
 
 def _link_end_holes(x: float, y: float, angle_deg: float = 0.0,
                     thick_mm: float = PLATE_T) -> Part:
     """The bracket end pattern placed at (x, y) and turned about Z."""
-    return Pos(x, y, 0) * Rot(Z=angle_deg) * _link_end_pattern(thick_mm)
+    return Pos(x, y, 0) * _link_end_pattern(thick_mm, angle_deg)
 
 
 def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
@@ -121,34 +150,33 @@ def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
     turned about Z by angle_deg - 90."""
     if distance_mm < width_mm:
         raise ValueError("elbow too short")
-    body = Pos(0, distance_mm / 2, 0) * Box(
-        width_mm, distance_mm + width_mm, thick_mm,
-        align=(Align.CENTER, Align.CENTER, Align.MIN))
-    part = fillet(body.edges().filter_by(lambda e: abs(e.length - thick_mm) < 1e-6),
-                  width_mm / 2 - 0.01)
+    part = Rot(Z=90) * _bar(0.0, distance_mm, width_mm, thick_mm)
     part -= _link_end_holes(0, 0, 0.0, thick_mm)
     part -= _link_end_holes(0, distance_mm, angle_deg - 90.0, thick_mm)
     return part
 
 
-def spring(length_mm: float, width_mm: float = LINK_W,
-           blade_mm: float = 4.0) -> Part:
-    """TPU flexure (print in TPU): two mounting blocks with the link end
-    pattern, joined by a blade of blade_mm thickness and SPRING_FLEX length.
-    The blade lies flat, so it bends about Y; turn the part to get the axis of
-    the spring. length_mm is the link it sits under; the module link is a
-    separate PLA plate on the far block, so only block, blade and block are
-    printed here."""
-    if length_mm < SPRING_FLEX + 2 * SPRING_BLOCK:
-        raise ValueError("spring too short")
-    t = LINK_T
+def spring(width_mm: float = LINK_W, blade_mm: float = 4.0) -> Part:
+    """TPU flexure (print in TPU): block, blade, block along X. Each block
+    carries the common mounting pattern; the blade is exactly blade_mm thick
+    (2..8 mm), SPRING_FLEX long and as wide as the part. The blade lies flat,
+    so it bends about Y; turn the part to get the axis of the spring. The PLA
+    link of the module is a separate plate bolted on a block, so the part does
+    not depend on the link length. Blocks are at least MOUNT_MIN_W wide to
+    hold the pattern, and as thick as the blade when it is thicker than a link."""
+    if not 2.0 <= blade_mm <= 8.0:
+        raise ValueError("spring blade must be 2..8 mm")
+    t = max(LINK_T, blade_mm)
+    wb = max(width_mm, MOUNT_MIN_W)
     total = SPRING_FLEX + 2 * SPRING_BLOCK
-    part = Box(total, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    if blade_mm < t:                   # thin the middle down to the blade
-        part -= (Pos(SPRING_BLOCK, 0, t / 2)
-                 * Box(SPRING_FLEX, width_mm, t - blade_mm,
-                       align=(Align.CENTER, Align.CENTER, Align.CENTER)))
-    for x in (SPRING_BLOCK / 2, total - SPRING_BLOCK / 2):
+    xb = (SPRING_FLEX + SPRING_BLOCK) / 2          # block centres, at +-xb
+    part = Pos(-xb, 0, 0) * Box(SPRING_BLOCK, wb, t,
+                                align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part += Pos(xb, 0, 0) * Box(SPRING_BLOCK, wb, t,
+                                align=(Align.CENTER, Align.CENTER, Align.MIN))
+    # the blade overlaps the blocks by 1 mm each side so the union is solid
+    part += Pos(0, 0, t / 2) * Box(SPRING_FLEX + 2.0, width_mm, blade_mm)
+    for x in (-xb, xb):
         part -= _link_end_holes(x, 0, 0.0, t)
     return part
 
@@ -226,40 +254,61 @@ def caster_wheel(radius_mm: float) -> Part:
 
 
 def caster_fork() -> Part:
-    """U-shaped PLA fork: two arms on the wheel sides, an M3 axle hole
-    through each, and two M3 holes in the base."""
+    """U-shaped PLA fork: two arms on the wheel sides, one M3 axle hole through
+    both arms (a single bore along X) and two M3 holes in the base."""
     w = CASTER_GAP + 2 * CASTER_ARM
-    part = Box(w, CASTER_L, 4.0, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    part -= Pos(0, 5, 0) * Box(CASTER_GAP, 34, 12)
-    for x in (-w / 2 + CASTER_ARM / 2, w / 2 - CASTER_ARM / 2):
-        part -= Pos(x, 10, 0) * Cylinder(M3 / 2, 12)
+    part = Box(w, CASTER_L, FORK_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= Pos(0, 5, 0) * Box(CASTER_GAP, 34, 3 * FORK_T)
+    part -= Pos(0, 10, FORK_T / 2) * Rot(Y=90) * Cylinder(M3 / 2, 2 * w)
     for x in (-5, 5):
-        part -= Pos(x, -17, 0) * Cylinder(M3 / 2, 12)
+        part -= Pos(x, -17, 0) * Cylinder(M3 / 2, 3 * FORK_T)
     return part
 
 
+def _mount(m, width_mm: float):
+    """(x, y, yaw in degrees) of a torso mount. A mount given as (x, y) is
+    turned to face outward: 90 degrees on a side edge, otherwise 0."""
+    if len(m) == 3:
+        return float(m[0]), float(m[1]), float(m[2])
+    x, y = m
+    return float(x), float(y), 90.0 if abs(abs(y) - width_mm / 2) < 1e-3 else 0.0
+
+
+def _footprint(yaw_deg: float):
+    """Axis-aligned extents (x, y) of the servo bracket footprint turned by yaw."""
+    ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
+    ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
+    a = math.radians(yaw_deg)
+    c, s = abs(math.cos(a)), abs(math.sin(a))
+    return ol * c + ow * s, ol * s + ow * c
+
+
 def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
-    """Base plate; each used core slot, given as an (x, y) mm position in `mounts`,
-    gets a tab under its servo bracket and 4 M3 holes. A mount on a side edge
-    holds a servo pointing along Y, any other one a servo along X. The bracket
-    is centred on the slot as in the simulation, so half of it overhangs the
-    edge and the tab carries it."""
+    """Base plate; each used core slot in `mounts` gets a tab under its servo
+    bracket and the common mounting pattern. A mount is (x, y, yaw_deg): the
+    slot position in mm and the yaw of the child on the core (its attachment
+    angle), which turns both the tab footprint and the pattern. A plain (x, y)
+    is turned 90 degrees on a side edge and 0 elsewhere. The bracket is
+    centred on the slot as in the simulation, so part of it overhangs the edge
+    and the tab carries it."""
     t = PLATE_T
     part = Box(length_mm, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
     part = fillet(part.edges().filter_by(lambda e: abs(e.length - t) < 1e-6), 5)
     ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
     ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
-    feet = []                                   # bracket footprints (x, y, size x, size y)
-    for x, y in mounts:
-        side = abs(abs(y) - width_mm / 2) < 1e-3
-        fx, fy = (ow, ol) if side else (ol, ow)
+    feet = []                                   # bracket footprints (x, y, extent x, extent y)
+    for m in mounts:
+        x, y, yaw = _mount(m, width_mm)
+        fx, fy = _footprint(yaw)
         feet.append((x, y, fx, fy))
-        part += Pos(x, y, 0) * Box(fx, fy, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    for x, y, fx, fy in feet:
-        for sx in (-1, 1):
-            for sy in (-1, 1):
-                part -= Pos(x + sx * (fx / 2 - 3), y + sy * (fy / 2 - 3), 0) * Cylinder(M3 / 2, t * 3)
-    # ESP32 board: 58 x 23 mm hole pattern, centred behind the origin
+        part += Pos(x, y, 0) * Rot(Z=yaw) * Box(
+            ol, ow, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    for m in mounts:
+        x, y, yaw = _mount(m, width_mm)
+        part -= Pos(x, y, 0) * _mount_holes(t, yaw)
+    # ESP32 board hole pattern, centred behind the origin.
+    # PLACEHOLDER: 58 x 23 mm is a guess. Check it against your board
+    # (candidates in docs/hardware-dados.md) before printing.
     for sx in (-29, 29):
         for sy in (-11.5, 11.5):
             part -= Pos(sx, sy, 0) * Cylinder(1.6, t * 3)
@@ -279,11 +328,9 @@ def _plate_bounds(length_mm: float, width_mm: float, mounts):
     """Bounding box of torso_plate in mm, brackets included."""
     x0, x1 = -length_mm / 2, length_mm / 2
     y0, y1 = -width_mm / 2, width_mm / 2
-    ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
-    ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
-    for x, y in mounts:
-        side = abs(abs(y) - width_mm / 2) < 1e-3
-        fx, fy = (ow, ol) if side else (ol, ow)
+    for m in mounts:
+        x, y, yaw = _mount(m, width_mm)
+        fx, fy = _footprint(yaw)
         x0, x1 = min(x0, x - fx / 2), max(x1, x + fx / 2)
         y0, y1 = min(y0, y - fy / 2), max(y1, y + fy / 2)
     return x0, x1, y0, y1

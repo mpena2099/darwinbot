@@ -38,7 +38,8 @@ FREQ_RANGE   = (0.5, 3.0)     # Hz
 AMP_RANGE    = (0.0, 0.8)     # rad, each harmonic
 OFFSET_RANGE = (-0.6, 0.6)    # rad
 SERVO_SPEED  = 5.45           # rad/s, STS3215 no-load speed at 7.4 V
-SERVO_TORQUE = 1.91 * 0.7     # N*m: 7.4 V stall torque with a 30% margin
+LOAD_FULL_SCALE = 0.7        # fraction of the STS3215 stall torque that reads as N = 1
+SERVO_TORQUE = 1.91 * LOAD_FULL_SCALE   # N*m: 7.4 V stall torque with a 30% margin
 WHEEL_RANGE  = (-SERVO_SPEED, SERVO_SPEED)   # signed so wheels may roll either way
 SIGMA_MAX    = 3.0            # rad/s; signed, load sign depends on the mounting
 SIGMA_RANGE  = (-SIGMA_MAX, SIGMA_MAX)

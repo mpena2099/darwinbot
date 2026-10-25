@@ -18,6 +18,7 @@ lido nem gerado.
   "fitness": 0.11,
   "control_hz": 50,
   "ramp_time": 0.5,
+  "load_full_scale": 0.7,
   "frequency": 2.62,
   "servos": [
     {"id": 1, "name": "s8_pitch", "mode": "position",
@@ -43,6 +44,7 @@ lido nem gerado.
 | `fitness` | float | só informativo |
 | `control_hz` | int | frequência do laço de controle; a simulação usa a mesma (50) |
 | `ramp_time` | float, s | tempo da rampa de partida, igual a `controller.RAMP_TIME` |
+| `load_full_scale` | float | opcional, padrão `0.7`: fração do torque máximo do STS3215 que vale `N = 1`; é a `SERVO_TORQUE` da simulação (70% do torque de travamento) |
 | `frequency` | float, Hz | frequência natural global; `omega = 2π · frequency` |
 | `servos` | lista | um item por servo, na ordem do layout (a ordem do modelo; `id` = posição + 1) |
 
@@ -69,10 +71,11 @@ começa em 0 na partida. A cada tick, de período `dt = 1 / control_hz`, com
 `t` = tempo desde a partida, e `omega = 2π · frequency`:
 
 ```
-N       = sign * carga_lida / carga_máxima        # entre -1 e 1
+N       = sign * (carga_lida / carga_máxima) / load_full_scale   # cortado em -1 e 1
 repetir 5 vezes, com h = dt / 5:                   # mesmos 4 ms da simulação
     dtheta = omega - sigma * N * cos(theta)       # Tegotae
     theta  = theta + h * dtheta
+theta   = theta mod 2π                            # uma vez por tick, mantém a precisão do float
 
 ramp    = min(1, t / ramp_time)
 alvo    = ramp * (offset + amp1 * sin(theta + phase1)
@@ -82,7 +85,9 @@ passos  = zero + sign * alvo * 4096 / (2π)
 vel     = ramp * speed * sign                     # wheel
 ```
 
-- `N` é a carga do servo dividida pelo torque máximo. No STS3215 vem do
+- `carga_lida / carga_máxima` é a carga do servo dividida pelo torque máximo.
+  A simulação normaliza pela fração `load_full_scale` desse torque (0,7), então
+  a leitura é dividida por ela: 70% do torque máximo vira `N = 1`. No STS3215 vem do
   registro de carga presente (0x3C e 0x3D, 0 a 1000 em décimos de por cento do
   torque máximo, com um bit de direção). Multiplicar por `sign` leva a leitura
   para o sentido do eixo da junta, que é o sentido usado na simulação. Se o

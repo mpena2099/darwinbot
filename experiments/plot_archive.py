@@ -13,6 +13,7 @@ import pickle
 
 import numpy as np
 
+from darwinbot.fitness import UNSTABLE_SCORE
 from darwinbot.sim import HEIGHT_MAX
 
 
@@ -28,7 +29,10 @@ def heatmap(archive):
 
     if not archive.cells:
         raise SystemExit("archive has no elites to plot")
-    elites = list(archive.cells.values())
+    # unbuildable bodies (UNSTABLE_SCORE) are not robots and squash the scale
+    elites = [e for e in archive.cells.values() if e.fitness > UNSTABLE_SCORE]
+    if not elites:
+        raise SystemExit("archive has no buildable elites to plot")
     duty, height, servos, wheel, cot = np.array([e.behaviour for e in elites]).T
     fits = np.array([e.fitness for e in elites])
 

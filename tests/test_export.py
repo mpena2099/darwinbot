@@ -10,7 +10,8 @@ from darwinbot import controller as co
 from darwinbot import morphology as mo
 from darwinbot.control_file import read_control_file
 from darwinbot.evolve import Elite
-from darwinbot.export import bom_rows, export_robot, mount_positions_mm, parent_chain
+from darwinbot.export import (bom_rows, export_robot, mount_positions_mm,
+                              parent_chain, part_counts)
 
 
 def _tree():
@@ -43,7 +44,7 @@ def test_export_files(tmp_path):
     servo_row = next(r for r in rows if "STS3215" in r["item"])
     assert int(servo_row["quantity"]) == morph.n_servos
     assert any(r["item"].startswith("wheel_") for r in rows)
-    assert any(r["item"] == "foot.stl" for r in rows)
+    assert any(r["item"].startswith("foot_") for r in rows)
     assert not (out / "parts").exists()
     assert "\u2014" not in (out / "assembly.md").read_text()
 
@@ -52,15 +53,29 @@ def test_bom_counts_from_tree():
     morph = _tree()
     rows = {item: q for item, q, _ in bom_rows(morph)}
     links = sum(q for k, q in rows.items() if k.startswith("link_"))
-    assert links == morph.n_joints
+    assert links == sum(n.kind in ("joint", "link") for n in morph.nodes.values())
     wheels = sum(q for k, q in rows.items() if k.startswith("wheel_"))
     assert wheels == morph.n_wheels
     assert rows["servo_bracket.stl"] == morph.n_servos
     side = sum(1 for n in morph.nodes.values()
                if n.parent > 0 and n.slot and morph.nodes[n.parent].kind in ("joint", "link"))
-    assert side > 0 and rows["elbow_plate.stl"] == side
+    assert side > 0
+    assert sum(q for k, q in rows.items() if k.startswith("elbow_")) == side
     # the explicit foot plus the free tip of every joint without a child
-    assert rows["foot.stl"] >= 1
+    assert sum(q for k, q in rows.items() if k.startswith("foot_")) >= 1
+
+
+def test_bom_links_match_distinct_sizes():
+    morph = _tree()
+    joint = next(n for n in morph.nodes.values() if n.kind == "joint")
+    joint.width, joint.thick = 0.017, 0.005
+    rows = {item: q for item, q, _ in bom_rows(morph)}
+    expected = {f"link_{int(round(n.length * 1000))}x{int(round(n.width * 1000))}"
+                f"x{int(round(n.thick * 1000))}.stl"
+                for n in morph.nodes.values() if n.kind in ("joint", "link")}
+    assert len(expected) > 1
+    assert {k for k in rows if k.startswith("link_")} == expected
+    assert all(rows[name] >= 1 for name in expected)
 
 
 def test_assembly_has_one_row_per_servo(tmp_path):
@@ -105,12 +120,25 @@ def test_export_stls(tmp_path):
     elite = _elite()
     export_robot(elite, out, "test-robot")
     stls = os.listdir(out / "parts")
-    assert "torso_plate.stl" in stls and "servo_bracket.stl" in stls
-    assert "foot.stl" in stls
+    assert "servo_bracket.stl" in stls
+    assert any(s.startswith("torso_") for s in stls)
+    assert any(s.startswith("foot_") for s in stls)
     assert any(s.startswith("link_") for s in stls)
+    assert any(s.startswith("elbow_") for s in stls)
     assert any(s.startswith("wheel_") for s in stls)
     with open(out / "bom.csv") as f:
         listed = {r["item"] for r in csv.DictReader(f) if r["item"].endswith(".stl")}
     assert listed == set(stls)
     for s in stls:
         assert (out / "parts" / s).stat().st_size > 0
+
+
+def test_large_torso_splits_into_tiles_with_splice_plates():
+    m = mo.template(3, wheels=True)
+    m.body_length, m.body_width = 0.36, 0.22
+    rows = {item: q for item, q, _ in bom_rows(m)}
+    tiles = [k for k in rows if k.startswith("torso_tile_")]
+    splices = [k for k in rows if k.startswith("splice_plate_")]
+    assert len(tiles) >= 2 and splices
+    # splice length in mm, not metres scaled twice
+    assert all(int(k.split("_")[2].split(".")[0]) < 250 for k in splices)

@@ -5,9 +5,9 @@ Evolved robot -> build folder for the real DarwinBot: control.json, STL parts, b
 notes and the MJCF used in simulation.
 
 The body is a module tree (darwinbot/morphology.py), so everything is read by
-walking the tree: one STL per distinct part (torso plate with a mount at each
-used core slot, a link per catalogue length, servo bracket, wheel per radius,
-foot), and one assembly row per servo in layout order. Mount positions on the
+walking the tree: one STL per distinct part (torso plate or its tiles, one per
+link size, elbow size, wheel radius and foot radius, servo bracket, splice
+plates), and one assembly row per servo in layout order. Mount positions on the
 plate are the core slot offsets of Morphology.slot_frame, in mm.
 """
 
@@ -42,44 +42,72 @@ def mount_positions_mm(morph):
 
 
 def part_counts(morph):
-    """Printed parts needed: link lengths (mm), wheel radii (mm), feet and
-    elbow plates (one per module on a side slot of a link)."""
+    """Printed parts needed, keyed by whole millimetres: links by
+    (length, width, thick), elbow plates by (distance, angle deg, width,
+    thick) of the parent link, feet by radius, wheels by radius."""
     cm = morph.child_map()
-    links, wheels, feet, elbows = Counter(), Counter(), 0, 0
+    links, wheels = Counter(), Counter()
+    feet, elbows = Counter(), Counter()
     for i, n in morph.nodes.items():
         if n.kind in ("joint", "link"):
-            links[_mm(n.length)] += 1
-            elbows += sum(1 for slot in cm.get(i, {}) if slot)
+            links[(_mm(n.length), _mm(n.width), _mm(n.thick))] += 1
+            for slot, child in cm.get(i, {}).items():
+                if slot:
+                    c = morph.nodes[child]
+                    elbows[(_mm(morpho.elbow_distance(c)),
+                            int(round(np.degrees(morpho.elbow_angle(c)))),
+                            _mm(n.width), _mm(n.thick))] += 1
             if i not in cm:
-                feet += 1            # a free tip ends in an implicit foot
+                feet[_mm(morpho.section_radius(n))] += 1   # implicit tip foot
         elif n.kind == "wheel":
             wheels[_mm(n.wheel_rad)] += 1
         elif n.kind == "foot":
-            feet += 1
+            feet[_mm(n.foot_rad)] += 1
     return links, wheels, feet, elbows
+
+
+def _torso_names(morph):
+    """STL names of the torso pieces, plus (span mm, count) for each splice."""
+    from darwinbot import parts
+    _, _, tw, th, nx, ny = parts.tile_plan(
+        morph.body_length * 1000, morph.body_width * 1000,
+        mount_positions_mm(morph))
+    if nx == 1 and ny == 1:
+        return ["torso_plate.stl"], Counter()
+    spans = Counter()
+    if nx > 1:
+        spans[int(round(th))] += (nx - 1) * ny
+    if ny > 1:
+        spans[int(round(tw))] += (ny - 1) * nx
+    return [f"torso_tile_{i + 1}.stl" for i in range(nx * ny)], spans
 
 
 def bom_rows(morph):
     """Bill of materials as (item, quantity, note) rows."""
     n = morph.n_servos
-    links, wheels, n_feet, n_elbows = part_counts(morph)
-    rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n),
-            ("torso_plate.stl", 1, "PLA")]
-    for length, q in sorted(links.items()):
-        rows.append((f"link_{length}.stl", q, "PLA"))
+    links, wheels, feet, elbows = part_counts(morph)
+    torso, splices = _torso_names(morph)
+    rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
+    rows += [(name, 1, "PLA") for name in torso]
+    for (length, width, thick), q in sorted(links.items()):
+        rows.append((f"link_{length}x{width}x{thick}.stl", q, "PLA"))
     rows.append(("servo_bracket.stl", n, "PLA, one per servo"))
-    if n_elbows:
-        rows.append(("elbow_plate.stl", n_elbows, "PLA, one per side module"))
-    if n_feet:
-        rows.append(("foot.stl", n_feet, "TPU"))
+    for (dist, angle, width, thick), q in sorted(elbows.items()):
+        rows.append((f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl", q,
+                     "PLA, one per side module"))
+    for radius, q in sorted(feet.items()):
+        rows.append((f"foot_{radius}.stl", q, "TPU"))
     for r, q in sorted(wheels.items()):
         rows.append((f"wheel_{r}.stl", q, "PLA"))
         rows.append((f"Rubber O-ring tyre, wheel_{r}", q, f"fits rim of radius {r} mm"))
+    for span, q in sorted(splices.items()):
+        rows.append((f"splice_plate_{span}.stl", q, "PLA, across a torso cut"))
     rows += [("ESP32 servo driver board", 1, "see docs/hardware-dados.md"),
              ("2S LiPo battery 7.4 V", 1, "1000 to 1500 mAh"),
              ("Step-down regulator", 1, "from 7.4 V to the board supply"),
-             ("M3 screws", 4 * n + 4 * n_elbows + 4,
-              "estimate: 4 per servo, 4 per elbow plate, 4 for the board")]
+             ("M3 screws",
+              4 * n + 4 * sum(elbows.values()) + 4 * sum(splices.values()) + 4,
+              "estimate: 4 per servo, 4 per elbow or splice plate, 4 for the board")]
     return rows
 
 
@@ -169,15 +197,21 @@ def _write_stls(morph, out_dir):
     os.makedirs(d, exist_ok=True)
     out = lambda name, part: parts.export_stl(part, os.path.join(d, name))
     links, wheels, feet, elbows = part_counts(morph)
-    out("torso_plate.stl", parts.torso_plate(morph.body_length * 1000, morph.body_width * 1000,
-                                             mount_positions_mm(morph)))
-    for length in sorted(links):
-        out(f"link_{length}.stl", parts.link(length))
+    torso, splices = _torso_names(morph)
+    tiles = parts.torso_tiles(morph.body_length * 1000, morph.body_width * 1000,
+                              mount_positions_mm(morph))
+    for name, tile in zip(torso, tiles):
+        out(name, tile)
+    for span in sorted(splices):
+        out(f"splice_plate_{span}.stl", parts.splice_plate(span))
+    for length, width, thick in sorted(links):
+        out(f"link_{length}x{width}x{thick}.stl", parts.link(length, width, thick))
     out("servo_bracket.stl", parts.servo_bracket())
-    if elbows:
-        out("elbow_plate.stl", parts.elbow_plate())
-    if feet:
-        out("foot.stl", parts.foot())
+    for dist, angle, width, thick in sorted(elbows):
+        out(f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl",
+            parts.elbow_plate(dist, angle, width, thick))
+    for radius in sorted(feet):
+        out(f"foot_{radius}.stl", parts.foot(radius))
     for r in sorted(wheels):
         out(f"wheel_{r}.stl", parts.wheel(r))
 

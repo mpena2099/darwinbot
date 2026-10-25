@@ -170,3 +170,11 @@ def test_large_torso_splits_into_tiles_with_splice_plates():
     assert len(tiles) >= 2 and splices
     # splice length in mm, not metres scaled twice
     assert all(int(k.split("_")[2].split(".")[0]) < 250 for k in splices)
+
+
+def test_bom_lists_caster_parts():
+    m = mo.template(2)
+    i = max(m.nodes) + 1
+    m.nodes[i] = mo.Node(i, "caster", 0, 1, 0.0, wheel_rad=0.025)
+    rows = {item: q for item, q, _ in bom_rows(m)}
+    assert rows["caster_wheel_25.stl"] == 1 and rows["caster_fork.stl"] == 1

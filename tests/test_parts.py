@@ -161,3 +161,8 @@ def test_export_stl(tmp_path):
     f = tmp_path / "x.stl"
     parts.export_stl(parts.foot(), f)
     assert f.stat().st_size > 0
+
+
+def test_caster_parts():
+    _ok(parts.caster_wheel(25))
+    _ok(parts.caster_fork())

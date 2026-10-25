@@ -29,7 +29,8 @@ from typing import Tuple
 import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
-from darwinbot.morphology import (AXIS_LOCAL, SERVO_BOX, SKID_SIZE, SPIKE_LENGTH,
+from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
+                                  SERVO_BOX, SKID_SIZE, SPIKE_LENGTH,
                                   SPIKE_RADIUS, SPRING_DAMPING, TAIL_BAR_SIZE,
                                   TAIL_TIP_RADIUS, TORSO_HEIGHT, Actuator,
                                   ActuatorLayout, Morphology, elbow_distance,
@@ -51,6 +52,7 @@ JOINT_KP       = 13.37
 SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
 WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
 WHEEL_DAMPING  = 0.05         # wheel spins freely, unlike a position servo
+CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
 ROBOT_GEOM = f'contype="2" conaffinity="3" friction="{ROBOT_FRICTION}"'
 SERVO_GEOM = f'mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" {ROBOT_GEOM}'
@@ -137,6 +139,20 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         inner = f"""{_servo_box()}
           <body name="{name}" pos="{_f(*hub)}">
             <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{WHEEL_DAMPING}"/>
+            <geom type="cylinder" fromto="{_f(0, -half_t, 0, 0, half_t, 0)}"
+                  size="{node.wheel_rad:.4f}" density="{LIMB_DENSITY}"
+                  rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
+          </body>"""
+    elif node.kind == "caster":
+        pos, rot = frames[i]
+        name = f"c{i}"
+        hub = morph.caster_hub(node, pos, rot)
+        half_t = CASTER_WHEEL_T / 2
+        axle = np.array([0.0, morph.wheel_axis_sign(rot), 0.0])
+        inner = f"""<geom name="fork{i}" type="box" size="{_f(*(np.array(CASTER_FORK_SIZE) / 2))}"
+              density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>
+          <body name="{name}" pos="{_f(*hub)}">
+            <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{CASTER_DAMPING}"/>
             <geom type="cylinder" fromto="{_f(0, -half_t, 0, 0, half_t, 0)}"
                   size="{node.wheel_rad:.4f}" density="{LIMB_DENSITY}"
                   rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>

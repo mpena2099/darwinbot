@@ -38,6 +38,10 @@ SPLICE_W = 24.0         # splice strip width, across the cut
 SPLICE_EDGE = 12.0      # splice hole distance from the strip ends
 SPLICE_HOLE = 8.0       # splice hole distance from the cut on each side
 WHEEL_T = 10.0          # wheel thickness
+CASTER_T = 8.0          # caster wheel thickness, matches morphology.CASTER_WHEEL_T
+CASTER_GAP = CASTER_T + 1.2   # clearance between the fork arms
+CASTER_ARM = 7.5        # fork arm width, keeps >= 2 mm around the axle hole
+CASTER_L = 44.0         # fork length along the arms
 FOOT_R = 9.0            # default foot cap radius
 FOOT_SOCKET_D = 12.0    # PLACEHOLDER: shin tube/socket diameter
 FOOT_MIN_R = 8.6        # keeps the wall around the socket >= 2 mm
@@ -208,6 +212,29 @@ def wheel(radius_mm: float) -> Part:
             for i in range(6):
                 a = 2 * math.pi * (i + 0.5) / 6
                 part -= Pos(r_mid * math.cos(a), r_mid * math.sin(a), 0) * Cylinder(d / 2, WHEEL_T * 3)
+    return part
+
+
+def caster_wheel(radius_mm: float) -> Part:
+    """Free PLA disc on an M3 axle: O-ring groove on the rim, no servo horn."""
+    if not 15 <= radius_mm <= 35:
+        raise ValueError("caster radius must be 15..35 mm")
+    part = Cylinder(radius_mm, CASTER_T)
+    part -= Cylinder(radius_mm + 1, 4) - Cylinder(radius_mm - 3, 5)
+    part -= Cylinder(M3 / 2, CASTER_T * 3)
+    return part
+
+
+def caster_fork() -> Part:
+    """U-shaped PLA fork: two arms on the wheel sides, an M3 axle hole
+    through each, and two M3 holes in the base."""
+    w = CASTER_GAP + 2 * CASTER_ARM
+    part = Box(w, CASTER_L, 4.0, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= Pos(0, 5, 0) * Box(CASTER_GAP, 34, 12)
+    for x in (-w / 2 + CASTER_ARM / 2, w / 2 - CASTER_ARM / 2):
+        part -= Pos(x, 10, 0) * Cylinder(M3 / 2, 12)
+    for x in (-5, 5):
+        part -= Pos(x, -17, 0) * Cylinder(M3 / 2, 12)
     return part
 
 

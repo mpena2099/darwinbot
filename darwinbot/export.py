@@ -6,8 +6,9 @@ notes and the MJCF used in simulation.
 
 The body is a module tree (darwinbot/morphology.py), so everything is read by
 walking the tree: one STL per distinct part (torso plate or its tiles, one per
-link size, elbow size, wheel radius, foot radius and spring flexure, servo
-bracket, splice plates), and one assembly row per servo in layout order. Mount
+link size, elbow size, wheel radius, caster wheel radius, foot radius and
+spring flexure, servo bracket, splice plates), and one assembly row per servo
+in layout order. Mount
 positions on the plate are the core slot offsets of Morphology.slot_frame, in mm.
 """
 
@@ -45,11 +46,12 @@ def part_counts(morph):
     """Printed parts needed, keyed by whole millimetres: links by
     (length, width, thick), elbow plates by (distance, angle deg, width,
     thick) of the parent link, feet by radius, wheels by radius, springs
-    by (length, width, blade) and tails by length; skids and spikes as
-    plain counts."""
+    by (length, width, blade), tails by length and caster wheels by radius;
+    skids and spikes as plain counts."""
     cm = morph.child_map()
     links, wheels = Counter(), Counter()
     feet, elbows, springs, tails = Counter(), Counter(), Counter(), Counter()
+    casters = Counter()
     skids = spikes = 0
     for i, n in morph.nodes.items():
         if n.kind in ("joint", "link", "spring"):
@@ -66,6 +68,8 @@ def part_counts(morph):
                 feet[_mm(morpho.section_radius(n))] += 1   # implicit tip foot
         elif n.kind == "wheel":
             wheels[_mm(n.wheel_rad)] += 1
+        elif n.kind == "caster":
+            casters[_mm(n.wheel_rad)] += 1
         elif n.kind == "foot":
             feet[_mm(n.foot_rad)] += 1
         elif n.kind == "tail":
@@ -74,7 +78,8 @@ def part_counts(morph):
             skids += 1
         elif n.kind == "spike":
             spikes += 1
-    return links, wheels, feet, elbows, springs, tails, skids, spikes
+    return (links, wheels, feet, elbows, springs, tails, skids, spikes,
+            casters)
 
 
 def _torso_names(morph):
@@ -96,7 +101,8 @@ def _torso_names(morph):
 def bom_rows(morph):
     """Bill of materials as (item, quantity, note) rows."""
     n = morph.n_servos
-    links, wheels, feet, elbows, springs, tails, skids, spikes = part_counts(morph)
+    (links, wheels, feet, elbows, springs, tails, skids, spikes,
+     casters) = part_counts(morph)
     torso, splices = _torso_names(morph)
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
     rows += [(name, 1, "PLA") for name in torso]
@@ -113,6 +119,14 @@ def bom_rows(morph):
     for r, q in sorted(wheels.items()):
         rows.append((f"wheel_{r}.stl", q, "PLA"))
         rows.append((f"Rubber O-ring tyre, wheel_{r}", q, f"fits rim of radius {r} mm"))
+    for r, q in sorted(casters.items()):
+        rows.append((f"caster_wheel_{r}.stl", q, "PLA"))
+        rows.append((f"Rubber O-ring tyre, caster_wheel_{r}", q,
+                     f"fits rim of radius {r} mm"))
+    if casters:
+        q = sum(casters.values())
+        rows.append(("caster_fork.stl", q, "PLA, one per caster"))
+        rows.append(("M3 x 20 bolt as caster axle", q, "one per caster"))
     for length, q in sorted(tails.items()):
         rows.append((f"tail_{length}.stl", q, "PLA"))
     if tails:
@@ -220,7 +234,8 @@ def _write_stls(morph, out_dir):
     d = os.path.join(out_dir, "parts")
     os.makedirs(d, exist_ok=True)
     out = lambda name, part: parts.export_stl(part, os.path.join(d, name))
-    links, wheels, feet, elbows, springs, tails, skids, spikes = part_counts(morph)
+    links, wheels, feet, elbows, springs, tails, skids, spikes, \
+        casters = part_counts(morph)
     torso, splices = _torso_names(morph)
     tiles = parts.torso_tiles(morph.body_length * 1000, morph.body_width * 1000,
                               mount_positions_mm(morph))
@@ -240,6 +255,10 @@ def _write_stls(morph, out_dir):
         out(f"foot_{radius}.stl", parts.foot(radius))
     for r in sorted(wheels):
         out(f"wheel_{r}.stl", parts.wheel(r))
+    for r in sorted(casters):
+        out(f"caster_wheel_{r}.stl", parts.caster_wheel(r))
+    if casters:
+        out("caster_fork.stl", parts.caster_fork())
     for length in sorted(tails):
         out(f"tail_{length}.stl", parts.tail_bar(length))
     if skids:

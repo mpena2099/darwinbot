@@ -343,3 +343,15 @@ def test_skid_and_spike_friction_beats_the_terrain():
     for name in ("skid", "spike"):
         g = next(g for g in range(ep.model.ngeom) if (ep.model.geom(g).name or "").startswith(name))
         assert ep.model.geom_priority[g] > floor
+
+
+def test_caster_is_a_free_wheel_without_actuator():
+    morph = mo.template(2)
+    i = max(morph.nodes) + 1
+    morph.nodes[i] = mo.Node(i, "caster", 0, 1, 0.0, wheel_rad=0.025)
+    assert morph.n_servos == mo.template(2).n_servos
+    ep = Episode(morph, te.flat(), seconds=1.0)
+    assert ep.buildable
+    hinges = sum(ep.model.jnt_type == mujoco.mjtJoint.mjJNT_HINGE)
+    assert hinges == ep.model.nu + 1
+    assert mo.decode(mo.encode(morph)).nodes[i].kind == "caster"

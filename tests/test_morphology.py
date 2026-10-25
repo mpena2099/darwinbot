@@ -259,13 +259,6 @@ def test_summary_mentions_every_module():
     assert "wheel" in text and "\u2014" not in text
 
 
-def test_descriptor_stays_in_grid_range():
-    rng = np.random.default_rng(7)
-    for _ in range(50):
-        pairs, wheeled, servos = mo.descriptor(mo.decode(mo.random_morphology(rng)))
-        assert 1 <= pairs <= 3 and 0 <= wheeled <= 3 and 4 <= servos <= 24
-
-
 def test_elbow_offset_and_angle_reproduce_todays_frame():
     m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
     m.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", 0.10)

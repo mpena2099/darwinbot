@@ -943,16 +943,8 @@ def mutate(genes: np.ndarray, rng: np.random.Generator,
 
 
 # --------------------------------------------------------------------------
-# Descriptors and summary
+# Summary
 # --------------------------------------------------------------------------
-
-def descriptor(m: Morphology) -> tuple:
-    """Features used as MAP-Elites axes: (limb pairs, wheeled pairs, servos)."""
-    # TODO D3: the map moves to behaviour descriptors.
-    pairs = int(np.clip(round(m.n_terminals / 2), 1, 3))
-    return (pairs, int(np.clip(m.n_wheels // 2, 0, 3)),
-            int(np.clip(m.n_servos, 4, 24)))
-
 
 def summary(m: Morphology) -> str:
     lines = [f"torso {m.body_length:.2f} x {m.body_width:.2f} m, "

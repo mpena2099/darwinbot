@@ -56,7 +56,29 @@ def test_run_writes_archive(tmp_path):
     assert all(len(e.behaviour) == 4 for e in archive.cells.values())
     assert len(archive.history) == 2
     with open(path, "rb") as f:
-        assert isinstance(pickle.load(f), evolve.Archive)
+        loaded = pickle.load(f)
+    assert isinstance(loaded, evolve.Archive)
+    # every elite has a lineage record; children point to an earlier elite
+    assert loaded.lineage
+    for e in loaded.cells.values():
+        chain = loaded.ancestors(e)
+        assert chain and chain[-1][1][0] is None
+        assert all(rec[1] <= e.born for _, rec in chain)
+
+
+def test_lineage_survives_parent_eviction():
+    a = evolve.Archive(terrains="flat")
+    rng = np.random.default_rng(0)
+    morph = mo.encode(mo.template(2))
+    beh = np.array([0.6, 0.3, 8.0, 0.0])
+    old = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.1, [0.1], 0, beh)
+    new = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.5, [0.5], 1, beh)
+    pid = evolve.elite_id(old.morph, old.ctrl)
+    assert a.insert(old)
+    assert a.insert(new, parent=pid)          # same cell: the parent is evicted
+    assert len(a.cells) == 1
+    chain = a.ancestors(next(iter(a.cells.values())))
+    assert [uid for uid, _ in chain][1] == pid and chain[1][1][0] is None
 
 
 def test_type_name_bins():

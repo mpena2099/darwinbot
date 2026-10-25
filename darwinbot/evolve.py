@@ -19,6 +19,7 @@ optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
 
+import hashlib
 import multiprocessing
 import os
 import pickle
@@ -117,10 +118,21 @@ class Elite:
         self.behaviour = np.asarray(self.behaviour, dtype=float)
 
 
+def elite_id(morph_genes, ctrl_genes) -> str:
+    """Stable id of an elite: hash of its body and controller genes, so it can
+    be recomputed from any copy of the elite (the CMA-ES result never repeats)."""
+    h = hashlib.blake2b(np.asarray(morph_genes, np.float64).tobytes(), digest_size=8)
+    h.update(np.asarray(ctrl_genes, np.float64).tobytes())
+    return h.hexdigest()
+
+
 @dataclass
 class Archive:
     terrains: str
     history:  List[dict] = field(default_factory=list)
+    # id -> (parent id or None, batch, fitness, type name) of every elite that
+    # ever entered the archive, so a lineage survives its ancestors' eviction
+    lineage:  Dict[str, tuple] = field(default_factory=dict)
     batch:    int = 0
     evals:    int = 0
     seconds:  float = 8.0      # simulated seconds per episode in this run
@@ -185,13 +197,26 @@ class Archive:
                 sorted(n for n in names.values() if n.startswith(base + "-"))))
         raise ValueError(f"no {name} robot in the archive")
 
-    def insert(self, elite: Elite) -> bool:
+    def insert(self, elite: Elite, parent: Optional[str] = None) -> bool:
         grid = self._ensure(len(elite.scores))
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
                         measures=[normalise(*elite.behaviour[:3])],
                         ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
                         behaviour=[elite.behaviour])
-        return int(info["status"][0]) != 0
+        added = int(info["status"][0]) != 0
+        if added:
+            self.lineage[elite_id(elite.morph, elite.ctrl)] = (
+                parent, elite.born, float(elite.fitness), type_name(elite.behaviour))
+        return added
+
+    def ancestors(self, elite: Elite) -> List[Tuple[str, tuple]]:
+        """(id, lineage record) from the elite back to its first ancestor; empty
+        for archives saved before lineage was recorded."""
+        out, uid = [], elite_id(elite.morph, elite.ctrl)
+        while uid in self.lineage and len(out) <= len(self.lineage):
+            out.append((uid, self.lineage[uid]))
+            uid = self.lineage[uid][0]
+        return out
 
     def novelty(self) -> np.ndarray:
         """Per elite (in data() order): mean distance to its K_NOVELTY nearest
@@ -227,6 +252,7 @@ class Archive:
         self.__dict__.setdefault("_grid", None)
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
         self.__dict__.setdefault("variants", 0)    # and no randomisation
+        self.__dict__.setdefault("lineage", {})    # nor lineage records
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
@@ -249,13 +275,14 @@ def _ignore_sigint():
 def _work(task):
     """Pool worker: optimise one body's controller. Runs in a subprocess."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
-     device, popsize, variants) = task
+     device, popsize, variants, parent) = task
     morph = morpho.decode(morph_genes)
     res = optimise_controller(morph, get_terrains(terrains), x0=x0,
                               budget=budget, sigma0=sigma0, seed=seed,
                               seconds=seconds, device=device, popsize=popsize,
                               variants=variants)
-    return morph_genes, res.ctrl, res.fitness, res.scores, res.evals, res.behaviour
+    return (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
+            res.behaviour, parent)
 
 
 def run(
@@ -307,19 +334,20 @@ def run(
         if not archive.cells:
             return [(morpho.random_morphology(rng), None, terrains,
                      budget_init, 0.25, new_seed(), archive.seconds,
-                     device, popsize, archive.variants) for _ in range(n_init)]
+                     device, popsize, archive.variants, None) for _ in range(n_init)]
         parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
             if rng.random() < random_frac:
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
-                              device, popsize, archive.variants))
+                              device, popsize, archive.variants, None))
             else:
                 child = morpho.mutate(parents["solution"][i], rng)
                 tasks.append((child, parents["ctrl"][i], terrains,
                               budget_child, 0.12, new_seed(), archive.seconds,
-                              device, popsize, archive.variants))
+                              device, popsize, archive.variants,
+                              elite_id(parents["solution"][i], parents["ctrl"][i])))
         return tasks
 
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
@@ -334,10 +362,10 @@ def run(
             tasks = make_batch()
             results = ([_work(t) for t in tasks] if pool is None
                        else pool.imap_unordered(_work, tasks))
-            for genes, ctrl, fit, scores, evals, behaviour in results:
+            for genes, ctrl, fit, scores, evals, behaviour, parent in results:
                 archive.evals += evals
                 added += archive.insert(Elite(genes, ctrl, fit, scores,
-                                              archive.batch, behaviour))
+                                              archive.batch, behaviour), parent)
             s = archive.stats()
             s.update(added=added, seconds=round(time.time() - t0, 1))
             archive.history.append(s)

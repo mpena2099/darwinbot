@@ -15,10 +15,11 @@ def _same(a, b):
     assert sorted(a.nodes) == sorted(b.nodes)
     for i, n in a.nodes.items():
         m = b.nodes[i]
-        assert (n.kind, n.parent, n.slot, n.rot, n.axis, n.flip) == \
-            (m.kind, m.parent, m.slot, m.rot, m.axis, m.flip)
-        assert n.length == pytest.approx(m.length)
-        assert n.wheel_rad == pytest.approx(m.wheel_rad)
+        assert (n.kind, n.parent, n.slot, n.axis, n.flip) == \
+            (m.kind, m.parent, m.slot, m.axis, m.flip)
+        for field in ("rot", "length", "wheel_rad", "width", "thick",
+                      "foot_rad", "offset", "angle"):
+            assert getattr(n, field) == pytest.approx(getattr(m, field))
 
 
 def _within_limits(m):
@@ -31,6 +32,16 @@ def _within_limits(m):
     for n in m.nodes.values():
         if n.parent >= 0:
             assert n.slot < mo.N_SLOTS[m.nodes[n.parent].kind]
+        assert 0.0 <= n.rot < 2 * np.pi
+        assert 0.0 <= n.offset <= 1.0 and 0.0 <= n.angle <= 1.0
+        if n.kind in ("joint", "link"):
+            assert mo.LENGTH_RANGE[0] <= n.length <= mo.LENGTH_RANGE[1]
+            assert mo.LINK_WIDTH_RANGE[0] <= n.width <= mo.LINK_WIDTH_RANGE[1]
+            assert mo.LINK_THICK_RANGE[0] <= n.thick <= mo.LINK_THICK_RANGE[1]
+        if n.kind == "wheel":
+            assert mo.WHEEL_RANGE_M[0] <= n.wheel_rad <= mo.WHEEL_RANGE_M[1]
+        if n.kind == "foot":
+            assert mo.FOOT_RANGE[0] <= n.foot_rad <= mo.FOOT_RANGE[1]
 
 
 @pytest.mark.parametrize("fill", [0.0, 0.3, 0.5, 0.7, 1.0])
@@ -50,13 +61,21 @@ def test_encode_decode_round_trip():
         genes = mo.random_morphology(rng)
         m = mo.decode(genes)
         _same(m, mo.decode(mo.encode(m)))
-        assert np.array_equal(mo.encode(m), genes)     # already canonical
+        assert np.allclose(mo.encode(m), genes)        # already canonical
+
+
+def test_random_genes_decode_to_valid_bodies():
+    rng = np.random.default_rng(9)
+    for _ in range(200):
+        m = mo.decode(rng.uniform(0, 1, mo.MORPH_LENGTH))
+        _within_limits(m)
+        _same(m, mo.decode(mo.encode(m)))
 
 
 def test_repair_is_canonical():
     genes = np.random.default_rng(3).uniform(0, 1, mo.MORPH_LENGTH)
     fixed = mo.repair(genes)
-    assert np.array_equal(mo.repair(fixed), fixed)
+    assert np.allclose(mo.repair(fixed), fixed)
     _same(mo.decode(genes), mo.decode(fixed))
 
 
@@ -89,9 +108,15 @@ def test_mutation_from_a_body_at_the_servo_cap_respects_limits():
 def _assert_mirrored(m, a, b):
     """Subtree b is the reflection of subtree a across the XZ plane."""
     na, nb = m.nodes[a], m.nodes[b]
-    assert (na.kind, na.axis, na.length, na.wheel_rad) == \
-        (nb.kind, nb.axis, nb.length, nb.wheel_rad)
-    assert nb.rot == (-na.rot) % 4
+    assert (na.kind, na.axis, na.wheel_rad, na.foot_rad) == \
+        (nb.kind, nb.axis, nb.wheel_rad, nb.foot_rad)
+    for field in ("length", "width", "thick", "offset"):
+        assert getattr(na, field) == pytest.approx(getattr(nb, field))
+    if na.parent == 0:                    # yaw mirrors around the torso
+        assert nb.angle == pytest.approx(1.0 - na.angle)
+    else:
+        assert nb.angle == pytest.approx(na.angle)
+    assert nb.rot == pytest.approx((-na.rot) % (2 * np.pi))
     assert nb.flip == (na.flip if na.axis == "yaw" or na.kind != "joint" else not na.flip)
     ca, cb = m.child_map().get(a, {}), m.child_map().get(b, {})
     assert {mo.mirror_slot(na.kind, s) for s in ca} == set(cb)
@@ -101,10 +126,11 @@ def _assert_mirrored(m, a, b):
 
 def test_mirrored_duplication_is_symmetric():
     m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
-    m.nodes[1] = mo.Node(1, "joint", 0, 2, 3, "pitch", 0.10, flip=True)
-    m.nodes[2] = mo.Node(2, "joint", 1, 1, 1, "roll", 0.08)
-    m.nodes[3] = mo.Node(3, "wheel", 2, 0, 1, wheel_rad=0.04)
-    m.nodes[4] = mo.Node(4, "foot", 1, 2, 2)
+    m.nodes[1] = mo.Node(1, "joint", 0, 2, 3 * np.pi / 2, "pitch", 0.10,
+                         flip=True, offset=0.3, angle=0.3)
+    m.nodes[2] = mo.Node(2, "joint", 1, 1, np.pi / 2, "roll", 0.08)
+    m.nodes[3] = mo.Node(3, "wheel", 2, 0, np.pi, wheel_rad=0.04)
+    m.nodes[4] = mo.Node(4, "foot", 1, 2, np.pi)
     twin = mo.copy_subtree(m, 1, 0, mo.mirror_slot("core", 2), mirror=True)
     assert m.nodes[twin].slot == 5
     _assert_mirrored(m, 1, twin)
@@ -205,8 +231,8 @@ def test_terminal_points_and_reach():
     m = mo.template(2, wheels=False)
     pts = m.terminal_points()
     assert len(pts) == 4
-    for _, p, rad in pts:
-        assert p[2] < 0 and rad == mo.LINK_RADIUS     # shins hang down
+    for i, p, rad in pts:
+        assert p[2] < 0 and rad == mo.section_radius(m.nodes[i])   # shins hang down
     assert m.max_reach >= max(np.linalg.norm(p) for _, p, _ in pts)
     assert m.lowest_z() == pytest.approx(min(p[2] - r for _, p, r in pts), abs=0.03)
 
@@ -215,7 +241,7 @@ def test_prune_drops_deepest_first():
     m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
     for i in range(1, 8):
         m.nodes[i] = mo.Node(i, "link", i - 1, 0)
-    m.nodes[8] = mo.Node(8, "joint", 0, 3)
+    m.nodes[8] = mo.Node(8, "joint", 0, 3, 3 * np.pi / 2)
     mo.prune(m)
     assert m.max_depth <= mo.MAX_DEPTH
     assert 5 in m.nodes and 6 not in m.nodes
@@ -233,3 +259,33 @@ def test_descriptor_stays_in_grid_range():
     for _ in range(50):
         pairs, wheeled, servos = mo.descriptor(mo.decode(mo.random_morphology(rng)))
         assert 1 <= pairs <= 3 and 0 <= wheeled <= 3 and 4 <= servos <= 24
+
+
+def test_elbow_offset_and_angle_reproduce_todays_frame():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", 0.10)
+    m.nodes[2] = mo.Node(2, "joint", 1, 1, 0.0, "pitch", 0.08,
+                         offset=mo.ELBOW_OFFSET)
+    for slot, side in ((1, 1.0), (2, -1.0)):
+        off, rot = m.slot_frame(m.nodes[1], slot, m.nodes[2])
+        assert off == pytest.approx([0.10, side * 0.04, 0.0])
+        assert rot == pytest.approx(mo._rz(side * np.pi / 2))
+
+
+def _single_link(width, thick, length=0.10):
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", length,
+                         width=width, thick=thick)
+    return m
+
+
+def test_thin_link_violates_strength():
+    assert mo.violations(_single_link(0.012, 0.003))
+
+
+def test_wide_link_passes_printability():
+    assert mo.violations(_single_link(0.020, 0.006)) == []
+
+
+def test_link_longer_than_the_bed_is_a_violation():
+    assert mo.violations(_single_link(0.030, 0.006, length=0.20))

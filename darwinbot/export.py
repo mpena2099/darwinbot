@@ -15,6 +15,8 @@ import csv
 import os
 from collections import Counter
 
+import numpy as np
+
 from darwinbot import builder
 from darwinbot import morphology as morpho
 from darwinbot.control_file import make_control_file, write_control_file
@@ -33,8 +35,8 @@ def _mm(m):
 def mount_positions_mm(morph):
     """(x, y) on the torso plate of every used core slot, in mm."""
     out = []
-    for slot in sorted(morph.child_map().get(0, {})):
-        off, _ = morph.slot_frame(morph.nodes[0], slot)
+    for slot, child in sorted(morph.child_map().get(0, {}).items()):
+        off, _ = morph.slot_frame(morph.nodes[0], slot, morph.nodes[child])
         out.append((float(off[0]) * 1000, float(off[1]) * 1000))
     return out
 
@@ -113,7 +115,7 @@ def parent_chain(morph, node_id):
         if n.parent != 0 and n.slot:
             notes.append(ELBOW_SLOTS[n.slot])
         if n.rot:
-            notes.append(f"rolled {n.rot * 90} deg")
+            notes.append(f"rolled {np.degrees(n.rot):.0f} deg")
         if notes:
             w += f" ({', '.join(notes)})"
         if n.parent == 0:

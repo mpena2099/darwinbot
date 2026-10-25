@@ -19,7 +19,7 @@ import numpy as np
 
 from darwinbot.builder import build_mjcf
 from darwinbot.controller import CONTROL_DT, Controller
-from darwinbot.morphology import Morphology
+from darwinbot.morphology import Morphology, violations
 from darwinbot.terrain import Terrain
 
 EPISODE_SECONDS = 8.0
@@ -67,8 +67,12 @@ def terminal_geoms(model: mujoco.MjModel, morph: Morphology):
         body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY,
                                  f"{'w' if is_wheel else 'n'}{i}")
         first = model.body_geomadr[body]
-        own = range(first, first + model.body_geomnum[body])
-        geoms.append(next(g for g in own if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX))
+        own = list(range(first, first + model.body_geomnum[body]))
+        # Links are boxes now; a free tip has no non-box geom to pick.
+        non_box = [g for g in own if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX]
+        geoms.append(non_box[0] if non_box else
+                     max(own, key=lambda g: abs(model.geom_pos[g][0])
+                         + model.geom_size[g][0]))
         wheel.append(is_wheel)
     return np.array(geoms, dtype=int), np.array(wheel, dtype=bool)
 
@@ -106,7 +110,7 @@ class Episode:
         self.torso = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso")
         self.mass  = float(self.model.body_subtreemass[self.torso])
         self.hold  = control_hold(self.model.opt.timestep)
-        self.buildable = is_buildable(self.model)
+        self.buildable = is_buildable(self.model) and not violations(morph)
         self.reach = morph.max_reach
         self._robot = self.model.geom_contype == 2
         self._tgeoms, self._twheel = terminal_geoms(self.model, morph)

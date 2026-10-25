@@ -99,6 +99,14 @@ def test_side_modules_hang_from_an_elbow_plate():
         assert g.bodyid[0] == ep.model.body(f"n{morph.nodes[i].parent}").id
 
 
+def test_printability_violation_is_not_buildable():
+    morph = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    morph.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", 0.10,
+                             width=0.012, thick=0.003)
+    assert mo.violations(morph)
+    assert not Episode(morph, te.flat(), seconds=1.0).buildable
+
+
 def test_unbuildable_body_scores_unstable_without_simulating():
     from darwinbot.inner import optimise_controller
     morph = mo.template(2, wheels=True, wheel_rad=0.06, body_length=0.15)

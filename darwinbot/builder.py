@@ -17,7 +17,7 @@ Parts are real: every joint is a Feetech STS3215 (7.4 V) with the torque and
 speed limits of its data sheet, minus a safety margin. Each servo adds a 60 g
 box, the torso carries a payload (ESP32, 2S LiPo, regulator), and links are
 printed. A child on a side slot of a link hangs from a printed elbow plate that
-bridges the ELBOW offset, so no module floats. See docs/hardware-dados.md.
+bridges the child's elbow offset, so no module floats. See docs/hardware-dados.md.
 
 Self-collision is ON: robot geoms (contype 2, conaffinity 3) touch each other
 and the terrain (1, 1). MuJoCo already skips parent/child pairs. A body whose
@@ -29,12 +29,12 @@ from typing import Tuple
 import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
-from darwinbot.morphology import (AXIS_LOCAL, ELBOW, FOOT_RADIUS, LINK_RADIUS,
-                                  SERVO_BOX, TORSO_HEIGHT, Actuator,
-                                  ActuatorLayout, Morphology)
+from darwinbot.morphology import (AXIS_LOCAL, SERVO_BOX, TORSO_HEIGHT, Actuator,
+                                  ActuatorLayout, Morphology, elbow_distance)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
+LINK_DENSITY   = 1240.0  # kg/m^3, solid PLA printed link
 PAYLOAD_MASS   = 0.13    # kg: ESP32 + 2S LiPo + regulator
 SERVO_MASS     = 0.060   # kg
 ROBOT_FRICTION = "1.0 0.02 0.001"
@@ -71,20 +71,21 @@ def _servo_box() -> str:
     return f'<geom type="box" size="{half}" {SERVO_GEOM}/>'
 
 
-def _link_geom(length: float) -> str:
-    return (f'<geom type="capsule" fromto="{_f(0, 0, 0, length, 0, 0)}" '
-            f'size="{LINK_RADIUS:.4f}" density="{LIMB_DENSITY}" '
-            f'rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+def _link_geom(node) -> str:
+    return (f'<geom type="box" pos="{_f(node.length / 2, 0, 0)}" '
+            f'size="{_f(node.length / 2, node.width / 2, node.thick / 2)}" '
+            f'density="{LINK_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
 
 
-def _elbow_geom(length: float, slot: int, child: int) -> str:
+def _elbow_geom(parent, child, slot: int) -> str:
     """Printed elbow plate from the link tip to the side slot `slot` (1 left,
     2 right), where the child module is mounted."""
     side = 1.0 if slot == 1 else -1.0
-    return (f'<geom name="elbow{child}" type="box" '
-            f'pos="{_f(length, side * ELBOW / 2, 0)}" '
-            f'size="{_f(LINK_RADIUS, ELBOW / 2, LINK_RADIUS)}" '
-            f'density="{LIMB_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+    d = elbow_distance(child)
+    return (f'<geom name="elbow{child.id}" type="box" '
+            f'pos="{_f(parent.length, side * d / 2, 0)}" '
+            f'size="{_f(parent.width / 2, d / 2, parent.thick / 2)}" '
+            f'density="{LINK_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
@@ -102,9 +103,9 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_link_geom(node.length)}')
+                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_link_geom(node)}')
     elif node.kind == "link":
-        inner = _link_geom(node.length)
+        inner = _link_geom(node)
     elif node.kind == "wheel":
         pos, rot = frames[i]
         name = f"w{i}"
@@ -124,10 +125,10 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                   rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
           </body>"""
     elif node.kind == "foot":
-        inner = (f'<geom type="sphere" size="{FOOT_RADIUS:.4f}" density="{LIMB_DENSITY}" '
+        inner = (f'<geom type="sphere" size="{node.foot_rad:.4f}" density="{LIMB_DENSITY}" '
                  f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
     if node.kind in ("joint", "link"):
-        inner += "".join(f"\n{_elbow_geom(node.length, slot, c)}"
+        inner += "".join(f"\n{_elbow_geom(node, morph.nodes[c], slot)}"
                          for slot, c in sorted(children.get(i, {}).items()) if slot)
     # Actuators follow the depth first order of Morphology.order.
     below = "".join(

@@ -44,20 +44,21 @@ class ControllerResult:
     behaviour: Optional[np.ndarray] = None   # (duty, height, servos, wheel share)
 
 
-def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None):
+def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
+             task: str = "forward"):
     """
     variants: None, or one list of randomize.Variant per episode. The terrain
     score is then the mean over its variants (metrics keep the first one).
     """
     if not variants:
         metrics = [ep.run(ctrl) for ep in episodes]
-        scores  = [score(m) for m in metrics]
+        scores  = [score(m, task) for m in metrics]
         return aggregate(scores), scores, metrics
     metrics, scores = [], []
     for ep, vs in zip(episodes, variants):
         ms = [ep.run(ctrl, v) for v in vs]
         metrics.append(ms[0])
-        scores.append(float(np.mean([score(m) for m in ms])))
+        scores.append(float(np.mean([score(m, task) for m in ms])))
     return aggregate(scores), scores, metrics
 
 
@@ -89,11 +90,15 @@ def optimise_controller(
     device: str = "cpu",
     popsize: Optional[int] = None,
     variants: int = 0,
+    task: str = "forward",
+    payload: float = 0.0,
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
     terrain (domain randomisation, CPU only). They are drawn once per body from
     its seed, so all candidates face the same ones (common random numbers).
+    task picks the score (fitness.TASKS); payload is extra torso mass in kg.
+    The behaviour descriptor is the same for every task.
     """
     if variants > 0 and device == "gpu":
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
@@ -109,7 +114,7 @@ def optimise_controller(
 
     if device == "gpu":
         from darwinbot.sim_gpu import BatchEpisode
-        batches = [BatchEpisode(morph, t, seconds) for t in terrains]
+        batches = [BatchEpisode(morph, t, seconds, payload) for t in terrains]
         if not batches[0].buildable:
             return _unbuildable(morph, base, terrains, batches[0].mass)
 
@@ -118,7 +123,7 @@ def optimise_controller(
             out = []
             for i in range(len(ctrls)):
                 metrics = [p[i] for p in per_terrain]
-                scores = [score(m) for m in metrics]
+                scores = [score(m, task) for m in metrics]
                 out.append((aggregate(scores), scores, metrics))
             return out
 
@@ -131,7 +136,7 @@ def optimise_controller(
         # must not be lost just because CMA-ES never resamples it exactly.
         fit, scores, metrics = run_one(base, popsize or 1)
     else:
-        episodes = [Episode(morph, t, seconds) for t in terrains]
+        episodes = [Episode(morph, t, seconds, payload) for t in terrains]
         if not episodes[0].buildable:
             return _unbuildable(morph, base, terrains, episodes[0].mass)
 
@@ -142,7 +147,7 @@ def optimise_controller(
                         for ep in episodes]
 
         def run_one(c, n: int = 1):
-            return evaluate(episodes, c, var_sets)
+            return evaluate(episodes, c, var_sets, task)
 
         fit, scores, metrics = run_one(base)
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)
@@ -168,11 +173,12 @@ def optimise_controller(
 
     best.evals = evals
     best.behaviour = behaviour_vector(morph, _nominal_flat(
-        morph, terrains, best, variants, seconds, device))
+        morph, terrains, best, variants, seconds, device, payload))
     return best
 
 
-def _nominal_flat(morph, terrains, best, variants, seconds, device) -> Metrics:
+def _nominal_flat(morph, terrains, best, variants, seconds, device,
+                  payload=0.0) -> Metrics:
     """Metrics of the best controller on flat ground, no randomised variant."""
     if variants == 0:
         for t, m in zip(terrains, best.metrics):
@@ -180,5 +186,5 @@ def _nominal_flat(morph, terrains, best, variants, seconds, device) -> Metrics:
                 return m
     if device == "gpu":
         from darwinbot.sim_gpu import BatchEpisode
-        return BatchEpisode(morph, flat(), seconds).run_batch(best.ctrl[None])[0]
-    return Episode(morph, flat(), seconds).run(best.ctrl)
+        return BatchEpisode(morph, flat(), seconds, payload).run_batch(best.ctrl[None])[0]
+    return Episode(morph, flat(), seconds, payload).run(best.ctrl)

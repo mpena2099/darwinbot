@@ -260,3 +260,26 @@ def test_lineage_tool_orders_ancestors_oldest_first():
     assert [t.split("-")[-1] for _, _, t in steps] == ["crawl", "walk", "trot"]
     rows = lineage.overview(a)
     assert rows[:, 1].max() == 3
+
+
+def test_archive_task_and_payload_roundtrip_and_old_pickles_load():
+    a = evolve.Archive(terrains="flat", task="turn", payload=0.3)
+    b = pickle.loads(pickle.dumps(a))
+    assert (b.task, b.payload) == ("turn", 0.3)
+
+    state = dict(a.__dict__)                  # an archive saved before the fields
+    del state["task"], state["payload"]
+    old = evolve.Archive.__new__(evolve.Archive)
+    old.__setstate__(state)
+    assert (old.task, old.payload) == ("forward", 0.0)
+
+
+def test_run_with_turn_task(tmp_path):
+    archive = evolve.run(n_init=2, n_batches=1, batch_size=2, budget_init=4,
+                         budget_child=4, workers=1, episode_seconds=1.0,
+                         variants=0, task="turn", payload=0.1,
+                         out_dir=str(tmp_path))
+    assert archive.cells
+    assert (archive.task, archive.payload) == ("turn", 0.1)
+    with pytest.raises(ValueError):
+        evolve.run(task="fly", out_dir=str(tmp_path))

@@ -125,7 +125,14 @@ python experiments/train.py
 # Flat, rough and steps, with more batches and workers
 python experiments/train.py --terrains terrain --batches 60 --workers 8
 
-# Resume a previous run
+# Learn to turn in place instead of walking forward
+python experiments/train.py --task turn
+
+# Climb a 3 cm step, or carry 0.3 kg on the torso
+python experiments/train.py --terrains step
+python experiments/train.py --payload 0.3
+
+# Resume a previous run (task and payload come from the archive)
 python experiments/train.py --resume checkpoints/archive.pkl --batches 20
 
 # Draw parents by novelty (default) or uniformly at random
@@ -382,11 +389,26 @@ sources and the values still to be checked are in `docs/hardware-dados.md`.
 | `flat` | flat floor |
 | `rough` | smoothed random bumps, flat near the spawn |
 | `steps` | ascending staircase starting at x = 0.6 m |
+| `step` | one 3 cm high box step across the path, 0.30 m ahead of the spawn, 1 m deep |
 | `slope` | 8 degree ramp starting at x = 0.5 m |
 | `slippery` | floor with friction 0.2 |
 
 Presets: `flat` (flat), `terrain` (flat, rough, steps) and `all` (all five).
 `--terrains` also accepts a comma separated list of names.
+
+## Tasks
+
+`--task` picks what the score rewards; the body and controller genomes are the
+same for every task, and so are the behaviour descriptors.
+
+- `forward` (default): walk straight, the score above.
+- `turn`: rotate in place. `score = |yaw| - 0.5 * hypot(dx, dy) - 0.05 * energy / (m * g) - 0.5 * fell`,
+  where `yaw` is the net heading change of the torso in radians, either way.
+
+`--payload KG` adds mass to the torso payload box for the whole run. The task
+and payload are stored in the archive, so `replay.py`, `validate.py` and
+`export.py` use the same conditions the robot was trained under (`replay.py
+--list` prints them in a header line when they are not the default).
 
 ## Fitness
 

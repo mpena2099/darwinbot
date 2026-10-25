@@ -74,6 +74,14 @@ def steps(rise: float = 0.03, run: float = 0.5, count: int = 6) -> Terrain:
     return Terrain("steps", world="".join(geoms))
 
 
+def step(height: float = 0.03, start: float = 0.30, depth: float = 1.0) -> Terrain:
+    """One box step across the path, `start` metres ahead of the spawn."""
+    return Terrain("step", world=_plane() + (
+        f'<geom type="box" pos="{start + depth / 2:.3f} 0 {height / 2:.3f}" '
+        f'size="{depth / 2:.3f} 2 {height / 2:.3f}" '
+        f'rgba="0.75 0.65 0.55 1" friction="1.0 0.02 0.001" {GROUND}/>'))
+
+
 def slope(degrees: float = 8.0, start: float = 0.5, length: float = 6.0) -> Terrain:
     a = np.radians(degrees)
     h = 0.05                                      # half thickness
@@ -92,7 +100,7 @@ def slippery(friction: float = 0.2) -> Terrain:
 
 
 TERRAINS = {
-    "flat": flat, "rough": rough, "steps": steps,
+    "flat": flat, "rough": rough, "steps": steps, "step": step,
     "slope": slope, "slippery": slippery,
 }
 

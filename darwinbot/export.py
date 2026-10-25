@@ -267,12 +267,13 @@ def _write_stls(morph, out_dir):
         out("spike.stl", parts.spike())
 
 
-def export_robot(elite, out_dir, name, stl=True) -> dict:
+def export_robot(elite, out_dir, name, stl=True, payload=0.0) -> dict:
     """Write the build folder for elite into out_dir; returns a small summary."""
     morph = morpho.decode(elite.morph)
     os.makedirs(out_dir, exist_ok=True)
     flat = get_terrains("flat")[0]
-    xml, layout = builder.build_mjcf(morph, flat.assets, flat.world)
+    xml, layout = builder.build_mjcf(morph, flat.assets, flat.world,
+                                    payload=payload)
     with open(os.path.join(out_dir, "robot.xml"), "w") as f:
         f.write(xml)
 

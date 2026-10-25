@@ -20,7 +20,8 @@ printed. A child on a side slot of a link hangs from a printed elbow plate that
 bridges the child's elbow offset, so no module floats. See docs/hardware-dados.md.
 
 Self-collision is ON: robot geoms (contype 2, conaffinity 3) touch each other
-and the terrain (1, 1). MuJoCo already skips parent/child pairs. A body whose
+and the terrain (1, 1). MuJoCo already skips parent/child pairs. `payload` (kg) is extra mass on the torso's payload box, for carrying tasks.
+A body whose
 geoms already touch at spawn is not buildable (see sim.is_buildable).
 """
 
@@ -192,7 +193,8 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
 
 def build_mjcf(morph: Morphology, terrain_assets: str = "",
                terrain_world: str = "", spawn_x: float = 0.0,
-               ground_z: float = 0.0) -> Tuple[str, ActuatorLayout]:
+               ground_z: float = 0.0,
+               payload: float = 0.0) -> Tuple[str, ActuatorLayout]:
     actuators: list = []
     layout: ActuatorLayout = []
     frames = morph.frames()
@@ -228,7 +230,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
       <geom type="box" size="{_f(morph.body_length / 2, morph.body_width / 2, TORSO_HEIGHT / 2)}"
             density="{SHELL_DENSITY}" rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>
       <geom type="box" size="{_f(min(0.05, morph.body_length / 2), 0.03, 0.015)}"
-            mass="{PAYLOAD_MASS}" contype="0" conaffinity="0" rgba="0.2 0.6 0.2 0.3"/>
+            mass="{PAYLOAD_MASS + payload}" contype="0" conaffinity="0" rgba="0.2 0.6 0.2 0.3"/>
       {legs}
     </body>
   </worldbody>

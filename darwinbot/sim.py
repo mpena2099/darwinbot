@@ -41,6 +41,7 @@ class Metrics:
     duty:     float = 0.0   # mean fraction of control ticks a terminal point touches the ground
     height:   float = 0.0   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
+    yaw:      float = 0.0   # net change of the torso heading (rad, unwrapped)
 
 
 def cost_of_transport(m: "Metrics") -> float:
@@ -49,6 +50,16 @@ def cost_of_transport(m: "Metrics") -> float:
     are charged as if they had moved COT_DX_MIN."""
     cot = m.energy / (m.mass * 9.81 * max(m.dx, COT_DX_MIN))
     return float(np.clip(cot, COT_MIN, COT_MAX))
+
+
+def wrap_angle(a):
+    """Angle wrapped to [-pi, pi). Works on floats and on JAX arrays."""
+    return (a + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def heading(xmat):
+    """Torso yaw about world Z from a flattened 3x3 rotation matrix."""
+    return np.arctan2(xmat[3], xmat[0])
 
 
 def control_hold(timestep: float) -> int:
@@ -99,13 +110,15 @@ def is_buildable(model: mujoco.MjModel) -> bool:
 
 class Episode:
     def __init__(self, morph: Morphology, terrain: Terrain,
-                 seconds: float = EPISODE_SECONDS):
-        xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world)
+                 seconds: float = EPISODE_SECONDS, payload: float = 0.0):
+        xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world,
+                                      payload=payload)
         self.model = mujoco.MjModel.from_xml_string(xml)
         self.data  = mujoco.MjData(self.model)
         self.xml   = xml
         self.morph = morph
         self.terrain = terrain
+        self.payload = payload
         self.n_steps = int(seconds / self.model.opt.timestep)
         self.torso = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso")
         self.mass  = float(self.model.body_subtreemass[self.torso])
@@ -154,6 +167,7 @@ class Episode:
         x0, y0 = d.xpos[self.torso][:2].copy()
         dt = m.opt.timestep
         energy = 0.0
+        yaw, prev = 0.0, heading(d.xmat[self.torso])
         fell = unstable = False
         touch = np.zeros(len(self._tgeoms))
         zsum, ticks = 0.0, 0
@@ -172,6 +186,10 @@ class Episode:
                 mujoco.mj_step(sim_model, d)
                 controller.advance(dt, d.actuator_force)
             energy += float(np.abs(d.actuator_force * d.actuator_velocity).sum()) * dt
+            # Per-step wrapped differences: the sum is the unwrapped heading change.
+            now = heading(d.xmat[self.torso])
+            yaw += float(wrap_angle(now - prev))
+            prev = now
             if not np.isfinite(d.qacc).all() or np.abs(d.qvel).max() > 1e3:
                 unstable = True
                 break
@@ -191,4 +209,5 @@ class Episode:
             energy=energy, fell=fell, unstable=unstable,
             duration=float(d.time), mass=self.mass,
             duty=duty, height=height, wheel_share=share,
+            yaw=yaw if not unstable else 0.0,
         )

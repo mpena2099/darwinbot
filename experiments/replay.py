@@ -122,6 +122,8 @@ def main():
     if a.list:
         archive = open_archive(a.archive)
         names = archive.names()
+        if archive.task != "forward" or archive.payload:
+            print(f"task: {archive.task}, payload {archive.payload:g} kg")
         print("type                       fitness  duty  height  servos    cot")
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
             duty, height, servos, _, cot = e.behaviour
@@ -132,12 +134,12 @@ def main():
     archive, elite = load(a.archive, a.cell)
     morph = morpho.decode(elite.morph)
     print(morpho.summary(morph))
-    print(f"fitness {elite.fitness:.3f}")
+    print(f"fitness {elite.fitness:.3f}  (task {archive.task}, payload {archive.payload:g} kg)")
     for terrain, s in zip(get_terrains(archive.terrains), elite.scores):
         print(f"  {terrain.name:9s} {s:+.3f}")
 
     terrain = get_terrains(a.terrain)[0]
-    episode = Episode(morph, terrain)
+    episode = Episode(morph, terrain, payload=archive.payload)
     print(f"terrain {terrain.name}")
     if a.record:
         record(episode, elite.ctrl, a.record, a.seconds)

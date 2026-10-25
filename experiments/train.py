@@ -6,12 +6,14 @@ Run MAP-Elites over body plans, with CMA-ES learning each body's gait.
   python experiments/train.py                          # flat, defaults
   python experiments/train.py --terrains terrain       # flat + rough + steps
   python experiments/train.py --batches 60 --workers 8
+  python experiments/train.py --task turn --terrains step --payload 0.3
   python experiments/train.py --resume checkpoints/archive.pkl --batches 20
 """
 
 import argparse
 
 from darwinbot import evolve
+from darwinbot.fitness import TASKS
 from darwinbot.morphology import decode, summary
 
 
@@ -41,6 +43,11 @@ def main():
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
+    p.add_argument("--task", choices=TASKS, default="forward",
+                   help="what the score rewards: walking forward (default) or "
+                        "turning in place (ignored on --resume)")
+    p.add_argument("--payload", type=float, default=0.0, metavar="KG",
+                   help="extra mass carried on the torso (ignored on --resume)")
     p.add_argument("--resume", default=None)
     a = p.parse_args()
 
@@ -60,6 +67,7 @@ def main():
         out_dir=a.out, resume=a.resume, episode_seconds=a.seconds,
         device=a.device, popsize=a.popsize, variants=variants,
         parent_selection=a.parent_selection,
+        task=a.task, payload=a.payload,
     )
     if not archive.cells:
         return

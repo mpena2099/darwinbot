@@ -32,7 +32,7 @@ def main():
     archive, elite = load(a.archive, a.cell)
     name = archive.names()[cell_of(elite.behaviour)]
     out = a.out or os.path.join("exports", name)
-    info = export_robot(elite, out, name)
+    info = export_robot(elite, out, name, payload=archive.payload)
     print(f"wrote {out}")
     print(f"{name}: {info['servos']} servos, {info['printed_parts']} printed parts")
 

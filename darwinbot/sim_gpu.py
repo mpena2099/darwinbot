@@ -25,7 +25,8 @@ from darwinbot.builder import build_mjcf
 from darwinbot.controller import (CTRL_LENGTH, RAMP_TIME, SERVO_TORQUE, Params)
 from darwinbot.morphology import Morphology, violations
 from darwinbot.sim import (EPISODE_SECONDS, UPRIGHT_MIN, Metrics, behaviour,
-                           control_hold, is_buildable, terminal_geoms)
+                           control_hold, is_buildable, terminal_geoms,
+                           wrap_angle)
 from darwinbot.terrain import Terrain
 
 BATCH_ALIGN = 8          # pad small batches so x0 reuses the compiled shape
@@ -33,8 +34,9 @@ BATCH_ALIGN = 8          # pad small batches so x0 reuses the compiled shape
 
 class BatchEpisode:
     def __init__(self, morph: Morphology, terrain: Terrain,
-                 seconds: float = EPISODE_SECONDS):
-        xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world)
+                 seconds: float = EPISODE_SECONDS, payload: float = 0.0):
+        xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world,
+                                      payload=payload)
         model = mujoco.MjModel.from_xml_string(xml)
         self.dt = float(model.opt.timestep)
         self.buildable = is_buildable(model) and not violations(morph)
@@ -57,9 +59,10 @@ class BatchEpisode:
         mx, torso, dt = self.model, self.torso, self.dt
         x0 = self.d0.xpos[torso, 0]
         y0 = self.d0.xpos[torso, 1]
+        yaw0 = jnp.arctan2(self.d0.xmat[torso, 1, 0], self.d0.xmat[torso, 0, 0])
 
         def body(carry, k):
-            d, theta, held, dx, dy, energy, duration, done, unstable, touch, zsum, ticks = carry
+            d, theta, held, dx, dy, energy, duration, done, unstable, touch, zsum, ticks, yaw, prev = carry
             t = d.time
             ramp = jnp.minimum(1.0, t / RAMP_TIME)
             new = ramp * (offset + amp1 * jnp.sin(theta + phase1)
@@ -75,6 +78,9 @@ class BatchEpisode:
             dx = jnp.where(done, dx, d.xpos[torso, 0] - x0)
             dy = jnp.where(done, dy, d.xpos[torso, 1] - y0)
             energy = jnp.where(done, energy, energy + work)
+            # Same as Episode: accumulate wrapped per-step heading differences.
+            now = jnp.arctan2(d.xmat[torso, 1, 0], d.xmat[torso, 0, 0])
+            yaw = jnp.where(done, yaw, yaw + wrap_angle(now - prev))
             duration = jnp.where(done, duration, d.time)
             unstable = jnp.where(first, blew_up, unstable)
             # Behaviour is sampled once per control tick, while the episode runs.
@@ -83,17 +89,18 @@ class BatchEpisode:
             zsum = zsum + sample * d.xpos[torso, 2]
             ticks = ticks + sample
             return (d, theta, held, dx, dy, energy, duration, done | ended, unstable,
-                    touch, zsum, ticks), None
+                    touch, zsum, ticks, yaw, now), None
 
         carry = (self.d0, jnp.zeros_like(amp1), jnp.zeros_like(amp1), 0.0, 0.0, 0.0, 0.0,
-                 False, False, jnp.zeros(len(self.tgeoms)), 0.0, 0)
-        (d, _, _, dx, dy, energy, duration, done, unstable, touch, zsum, ticks), _ = (
+                 False, False, jnp.zeros(len(self.tgeoms)), 0.0, 0, 0.0, yaw0)
+        (d, _, _, dx, dy, energy, duration, done, unstable, touch, zsum, ticks,
+         yaw, _), _ = (
             jax.lax.scan(body, carry, jnp.arange(self.n_steps)))
         # Same convention as Episode: a blow up reports no displacement.
         keep = jnp.where(unstable, 0.0, 1.0)
         # As in Episode, a blow up is reported as unstable, not as a fall.
         return (dx * keep, dy * keep, energy, done & ~unstable, unstable, duration,
-                touch, zsum, ticks)
+                touch, zsum, ticks, yaw * keep)
 
     def _touching(self, d):
         """Per terminal point: any active contact with a non-robot geom."""
@@ -121,7 +128,7 @@ class BatchEpisode:
             *(stack(n) for n in ("amp1", "phase1", "offset", "amp2", "phase2",
                                  "sigma")),
         )
-        dx, dy, energy, fell, unstable, duration, touch, zsum, ticks = (
+        dx, dy, energy, fell, unstable, duration, touch, zsum, ticks, yaw = (
             np.asarray(v) for v in out)
         beh = [behaviour(touch[i], self.twheel, float(zsum[i]), int(ticks[i]), self.reach)
                for i in range(n)]
@@ -129,6 +136,7 @@ class BatchEpisode:
             Metrics(dx=float(dx[i]), dy=float(dy[i]), energy=float(energy[i]),
                     fell=bool(fell[i]), unstable=bool(unstable[i]),
                     duration=float(duration[i]), mass=self.mass,
-                    duty=beh[i][0], height=beh[i][1], wheel_share=beh[i][2])
+                    duty=beh[i][0], height=beh[i][1], wheel_share=beh[i][2],
+                    yaw=float(yaw[i]))
             for i in range(n)
         ]

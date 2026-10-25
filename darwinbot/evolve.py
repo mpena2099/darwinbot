@@ -36,6 +36,7 @@ from ribs.archives import CVTArchive
 
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
+from darwinbot.fitness import TASKS
 from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
@@ -144,6 +145,8 @@ class Archive:
     evals:    int = 0
     seconds:  float = 8.0      # simulated seconds per episode in this run
     variants: int = 0          # randomised models per terrain in this run
+    task:     str = "forward"  # fitness.TASKS: how episodes are scored
+    payload:  float = 0.0      # extra torso mass in kg
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -260,6 +263,8 @@ class Archive:
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
         self.__dict__.setdefault("variants", 0)    # and no randomisation
         self.__dict__.setdefault("lineage", {})    # nor lineage records
+        self.__dict__.setdefault("task", "forward")   # nor tasks
+        self.__dict__.setdefault("payload", 0.0)      # nor payload
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
@@ -279,15 +284,15 @@ def _ignore_sigint():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
-def _work(task):
+def _work(job):
     """Pool worker: optimise one body's controller. Runs in a subprocess."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
-     device, popsize, variants, parent) = task
+     device, popsize, variants, parent, task, payload) = job
     morph = morpho.decode(morph_genes)
     res = optimise_controller(morph, get_terrains(terrains), x0=x0,
                               budget=budget, sigma0=sigma0, seed=seed,
                               seconds=seconds, device=device, popsize=popsize,
-                              variants=variants)
+                              variants=variants, task=task, payload=payload)
     return (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
             res.behaviour, parent)
 
@@ -309,9 +314,13 @@ def run(
     popsize: Optional[int] = None,
     variants: int = 2,
     parent_selection: str = "novelty",
+    task: str = "forward",
+    payload: float = 0.0,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
+    if task not in TASKS:
+        raise ValueError(f"task must be one of {TASKS}")
     if device == "gpu" and variants > 0 and not resume:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     os.makedirs(out_dir, exist_ok=True)
@@ -326,11 +335,11 @@ def run(
     if resume:
         with open(resume, "rb") as f:
             archive: Archive = pickle.load(f)
-        terrains = archive.terrains
+        terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:
         archive = Archive(terrains=terrains, seconds=episode_seconds,
-                          variants=variants)
+                          variants=variants, task=task, payload=payload)
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
@@ -341,24 +350,28 @@ def run(
         if not archive.cells:
             return [(morpho.random_morphology(rng), None, terrains,
                      budget_init, 0.25, new_seed(), archive.seconds,
-                     device, popsize, archive.variants, None) for _ in range(n_init)]
+                     device, popsize, archive.variants, None,
+                     archive.task, archive.payload) for _ in range(n_init)]
         parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
             if rng.random() < random_frac:
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
-                              device, popsize, archive.variants, None))
+                              device, popsize, archive.variants, None,
+                              archive.task, archive.payload))
             else:
                 child = morpho.mutate(parents["solution"][i], rng)
                 tasks.append((child, parents["ctrl"][i], terrains,
                               budget_child, 0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,
-                              elite_id(parents["solution"][i], parents["ctrl"][i])))
+                              elite_id(parents["solution"][i], parents["ctrl"][i]),
+                              archive.task, archive.payload))
         return tasks
 
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
-          f"batches={n_batches} batch_size={batch_size}")
+          f"batches={n_batches} batch_size={batch_size} "
+          f"task={archive.task} payload={archive.payload} kg")
     pool = None if device == "gpu" else multiprocessing.Pool(workers, _ignore_sigint)
     path = os.path.join(out_dir, "archive.pkl")
     saved = None                                  # batch count in the file on disk

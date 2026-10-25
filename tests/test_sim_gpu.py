@@ -35,6 +35,7 @@ def test_batch_matches_cpu(batch):
     for got, ref in zip(batch.run_batch(ctrls), (cpu.run(c) for c in ctrls)):
         assert got.fell == ref.fell
         assert abs(got.dx - ref.dx) < 0.05, (got.dx, ref.dx)
+        assert abs(got.yaw - ref.yaw) < 0.1, (got.yaw, ref.yaw)
         assert abs(got.duty - ref.duty) < 0.1, (got.duty, ref.duty)
         assert abs(got.height - ref.height) < 0.05, (got.height, ref.height)
 

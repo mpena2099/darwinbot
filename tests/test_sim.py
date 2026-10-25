@@ -13,7 +13,7 @@ from darwinbot import fitness
 from darwinbot import morphology as mo
 from darwinbot import randomize
 from darwinbot import terrain as te
-from darwinbot.sim import Episode, Metrics, cost_of_transport
+from darwinbot.sim import Episode, Metrics, cost_of_transport, heading, wrap_angle
 
 
 LEGS = mo.encode(mo.template(2, wheels=False, yaw=True))
@@ -355,3 +355,75 @@ def test_caster_is_a_free_wheel_without_actuator():
     hinges = sum(ep.model.jnt_type == mujoco.mjtJoint.mjJNT_HINGE)
     assert hinges == ep.model.nu + 1
     assert mo.decode(mo.encode(morph)).nodes[i].kind == "caster"
+
+
+# --- tasks: turning, step terrain, payload ---------------------------------
+
+def test_wrap_angle_accumulates_across_pi():
+    # heading goes 3.0 -> 3.2 -> 3.4 -> ... -> 3.8 rad, read back wrapped
+    true = np.linspace(3.0, 3.8, 5)
+    seen = ((true + np.pi) % (2 * np.pi)) - np.pi
+    assert seen[-1] < 0                      # the reading did cross +pi
+    yaw = sum(float(wrap_angle(b - a)) for a, b in zip(seen[:-1], seen[1:]))
+    assert yaw == pytest.approx(0.8)
+    assert sum(float(wrap_angle(b - a)) for a, b in zip(seen[1:], seen[:-1])) == pytest.approx(-0.8)
+
+
+@pytest.mark.parametrize("spin", [4.0, -4.0])
+def test_episode_yaw_follows_spin_and_sign(spin):
+    ep = Episode(mo.decode(LEGS), te.flat(), seconds=1.5)
+    ep.model.opt.gravity[:] = 0.0            # no ground friction: the spin lasts
+    reset = ep.reset
+
+    def spun(ctrl, model=None):
+        c = reset(ctrl, model)
+        ep.data.qvel[5] = spin               # angular velocity about world Z
+        return c
+
+    ep.reset = spun
+    m = ep.run(_ctrl(mo.decode(LEGS)))
+    assert np.sign(m.yaw) == np.sign(spin) and abs(m.yaw) > np.pi      # crosses +-pi
+    # the unwrapped total agrees with the final wrapped heading
+    final = float(heading(ep.data.xmat[ep.torso]))
+    assert float(wrap_angle(m.yaw - final)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_turn_score_rewards_rotation_and_penalises_displacement():
+    spin = fitness.score(_metrics(yaw=2.0), "turn")
+    assert spin == pytest.approx(2.0)
+    assert fitness.score(_metrics(yaw=-2.0), "turn") == pytest.approx(spin)
+    drift = fitness.score(_metrics(yaw=2.0, dx=0.6, dy=0.8), "turn")
+    assert spin - drift == pytest.approx(fitness.TURN_DRIFT_W * 1.0)
+    assert fitness.score(_metrics(yaw=2.0, fell=True), "turn") == pytest.approx(
+        spin - fitness.FALL_PENALTY)
+    assert fitness.score(_metrics(unstable=True, yaw=2.0), "turn") == fitness.UNSTABLE_SCORE
+
+
+def test_forward_score_ignores_yaw_and_unknown_task_fails():
+    assert fitness.score(_metrics(dx=1.0, yaw=3.0)) == fitness.score(_metrics(dx=1.0))
+    with pytest.raises(ValueError):
+        fitness.score(_metrics(), "fly")
+
+
+def test_step_terrain_box_position_and_height():
+    (t,) = te.get_terrains("step")
+    assert t.name == "step"
+    assert [x.name for x in te.get_terrains("flat,step")] == ["flat", "step"]
+    ep = Episode(mo.decode(LEGS), t, seconds=0.5)
+    m = ep.model
+    box = next(g for g in range(m.ngeom)
+               if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
+               and m.geom_bodyid[g] == 0)
+    x, _, z = m.geom_pos[box]
+    hx, _, hz = m.geom_size[box]
+    assert x - hx == pytest.approx(0.30)       # starts 0.30 m ahead of the spawn
+    assert 2 * hx == pytest.approx(1.0)        # 1 m deep
+    assert z + hz == pytest.approx(0.03)       # top at 3 cm
+    assert m.geom_priority[box] == 1
+
+
+def test_payload_adds_exactly_its_mass():
+    morph = mo.decode(LEGS)
+    base = Episode(morph, te.flat(), seconds=0.5)
+    loaded = Episode(morph, te.flat(), seconds=0.5, payload=0.3)
+    assert loaded.mass - base.mass == pytest.approx(0.3)

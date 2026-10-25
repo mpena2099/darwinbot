@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Evolução de robôs construíveis: MAP-Elites (pyribs, arquivo CVT por comportamento e custo) sobre corpos em árvore de módulos, CMA-ES sobre um CPG com dois harmônicos e retorno de carga (Tegotae) para cada corpo, simulação no MuJoCo. Os corpos usam peças reais (servo Feetech STS3215 7,4 V, links impressos, ESP32 + LiPo) e qualquer robô do arquivo pode ser exportado como STL, lista de materiais, guia de montagem e JSON de controle. Projeto pessoal, hobby e portfólio. Navegação e firmware ainda não existem (o firmware espera o hardware).
 
-Código, comentários e README em inglês; `docs/` e este arquivo em português.
+Código, comentários e README em inglês; `docs/` e este arquivo em português. O guia para iniciantes existe nas duas línguas (`docs/guia-evolucao.md` e `docs/evolution-guide.md`); mudou um, mude o outro. Figuras do guia: `tools/make_guide_figures.py`.
 
 ## Comandos
 

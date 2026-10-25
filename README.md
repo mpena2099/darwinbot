@@ -16,6 +16,9 @@ exported as printable parts, a bill of materials and a control file for an ESP32
 
 ## Resumo em português
 
+Quem está começando com algoritmos evolutivos pode ler antes o
+[guia em português](docs/guia-evolucao.md).
+
 O DarwinBot inventa robôs e ensina cada um a andar, numa simulação física
 (MuJoCo). A evolução decide o corpo, uma árvore de módulos: quantas pernas, de que
 tamanho, em que direção cada junta gira e se a perna termina numa roda. Para cada
@@ -39,6 +42,15 @@ the rhythm of joint movements that carries it farthest forward in a few simulate
 seconds. The run does not keep a single winner: it keeps the best robot for each
 *behaviour* (crawling low with few servos, trotting tall with many, rolling...),
 so at the end you can browse a catalogue of different solutions.
+
+## New to evolutionary algorithms?
+
+Read the beginner guide: [English](docs/evolution-guide.md) ·
+[Português](docs/guia-evolucao.md). It explains genomes, mutation, fitness,
+CMA-ES, MAP-Elites, novelty search and the reality gap, each with pointers to
+the code and small experiments to run on a laptop.
+
+![The evolutionary loop](docs/img/guide/cycle_en.png)
 
 ## How it works
 
@@ -423,7 +435,7 @@ list, not in any single robot.
 
 - Wheels still lead: the best rolling robot covers about 2.4 times the
   distance of the best legged one, and the top of the archive is mostly `roll`.
-- No firmware yet: the ESP32 side waits for real hardware. The control file format it will read is already fixed.
+- The firmware is half done: `firmware/core/` runs the controller math in portable C++ and a test proves it matches the Python controller tick by tick (`tests/test_firmware_parity.py`). The ESP32 layer (servo bus, load reading, calibration) waits for real hardware.
 - Randomised training (`--variants`) is CPU only.
 - The only feedback is the servo load. The controller never sees the world, so
   tasks that need steering or reacting (finding a doorway, avoiding a wall) are
@@ -454,7 +466,9 @@ darwinbot/
 │   ├── replay.py       # viewer or video for an elite
 │   ├── validate.py     # elite on randomised models (sim-to-real check)
 │   ├── export.py       # export a robot to build
-│   └── plot_archive.py # behaviour scatter and progress plots
+│   ├── plot_archive.py # behaviour scatter and progress plots
+│   └── lineage.py      # family tree of the elites
+├── firmware/           # controller core in C++ for the ESP32, parity-tested
 ├── tests/              # pytest suite (GPU tests skip without jax)
 ├── docs/               # hardware data, control file format
 ├── checkpoints/        # archive.pkl and plots

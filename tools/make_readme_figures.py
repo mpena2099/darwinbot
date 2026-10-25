@@ -46,7 +46,7 @@ from darwinbot.terrain import get_terrains   # noqa: E402
 FIGURES = ("robots", "gait", "map", "progress", "parts")
 SNIPPETS = {
     "robots": "![Evolved body plans](docs/img/robots.png)",
-    "gait": "![Best wheel-less gait](docs/img/gait.gif)",
+    "gait": "![Four evolved robots moving](docs/img/gait.gif)",
     "map": "![MAP-Elites archive](docs/img/archive_map.png)",
     "progress": "![Training progress](docs/img/progress.png)",
     "parts": "![Printable parts of the best robot](docs/img/parts.png)",
@@ -172,10 +172,10 @@ def make_robots(items, out, seed):
     return [path]
 
 
-def make_gait(items, out, seed, seconds=4.0, fps=15, size=(480, 320)):
-    from PIL import Image
+def _record(cell, elite, seconds, fps, size):
+    """Frames of one robot on the flat floor, camera following its torso."""
+    from PIL import Image, ImageDraw
 
-    cell, elite = best_wheelless(items)
     ep = Episode(morpho.decode(elite.morph), get_terrains("flat")[0])
     cam = follow_camera(ep, azimuth=90, elevation=-25, distance_scale=2.6)
     r = mujoco.Renderer(ep.model, height=size[1], width=size[0])
@@ -186,8 +186,30 @@ def make_gait(items, out, seed, seconds=4.0, fps=15, size=(480, 320)):
             ep.step(cpg)
         aim(cam, ep)
         r.update_scene(ep.data, camera=cam)
-        frames.append(Image.fromarray(r.render().copy()))
+        img = Image.fromarray(r.render().copy())
+        ImageDraw.Draw(img).text((8, 6), cell, fill=(20, 20, 20))
+        frames.append(img)
     r.close()
+    return frames
+
+
+def make_gait(items, out, seed, seconds=4.0, fps=15, size=(360, 240)):
+    """2 x 2 grid of four different robots moving at the same time: the
+    first SHOWCASE picks (best roller, then the best legged gaits)."""
+    from PIL import Image
+
+    chosen = pick_distinct(items, n=4)
+    clips = [_record(c, e, seconds, fps, size) for c, e in chosen]
+    cols = 2
+    rows = -(-len(clips) // cols)
+    frames = []
+    for k in range(len(clips[0])):
+        tile = Image.new("RGB", (size[0] * cols, size[1] * rows), (255, 255, 255))
+        for i, clip in enumerate(clips):
+            tile.paste(clip[k], ((i % cols) * size[0], (i // cols) * size[1]))
+        frames.append(tile)
+    size = frames[0].size
+    cell = ", ".join(c for c, _ in chosen)
 
     # One shared palette (built from a mosaic of frames) avoids flicker.
     sample = frames[:: max(1, len(frames) // 6)][:6]
@@ -200,7 +222,7 @@ def make_gait(items, out, seed, seconds=4.0, fps=15, size=(480, 320)):
     path = os.path.join(out, FILES["gait"])
     paletted[0].save(path, save_all=True, append_images=paletted[1:], loop=0,
                      duration=round(1000 / fps), optimize=True, disposal=1)
-    print(f"gait: {cell}, fitness {elite.fitness:.2f}")
+    print(f"gait: {cell}")
     return [path]
 
 

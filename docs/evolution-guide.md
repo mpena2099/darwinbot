@@ -38,13 +38,20 @@ organism it produces. In DarwinBot:
 
 - the genotype is a vector of numbers between 0 and 1;
 - the phenotype is the robot's body: a tree of modules (trunk, servo
-  joints, links, wheels, feet).
+  joints, links, TPU springs, wheels, feet, tails, skids, spikes and free
+  caster wheels).
 
 ![From genome to body](img/guide/genome_en.png)
 
 The vector is split into blocks, one per module "slot". Each block says
 whether the slot is active, who the parent is, which socket it attaches to,
 what type of module it is, the joint axis, the link length and so on.
+
+The measures are continuous: link length goes from 40 to 200 mm, the
+section from 12 to 30 mm by 3 to 10 mm, the elbow has its own distance and
+angle, the mount rolls to any angle and can sit anywhere along the torso
+edge. Each block has 13 genes. The passive modules (spring, tail with
+counterweight, skid, spike, caster) have no servo.
 
 **In the code:** `darwinbot/morphology.py`, functions `decode` (genome to
 body) and `encode` (body to genome).
@@ -61,9 +68,9 @@ little. DarwinBot uses six operators, drawn with different weights:
 
 | Operator | What it does | Chance |
 |---|---|---|
-| `param` | changes a measurement (length, axis, wheel radius) | 35% |
+| `param` | nudges a continuous measure (length, section, elbow, roll, radius) | 35% |
 | `add` | adds a module in a free socket | 20% |
-| `type` | swaps a module's type (a joint becomes a link, for example) | 15% |
+| `type` | swaps a module's type (a joint becomes a link, spring, tail, skid, spike or caster, for example) | 15% |
 | `mirror` | copies a limb to the opposite side, mirrored | 15% |
 | `remove` | removes a whole limb | 10% |
 | `copy` | copies a limb to another socket | 5% |
@@ -192,6 +199,13 @@ exist. DarwinBot uses three defenses:
 3. **Validation:** `experiments/validate.py` tests the robot under 50
    varied physics and approves it if it loses less than 30% of its
    performance.
+
+There is a fourth defense, **natural selection by the printer**: a body is
+buildable only if every part fits a 220 mm print bed, every link survives
+the servo stall torque (1.91 N*m) with a bending stress of at most 25 MPa
+(half of what PLA takes), and no parts overlap. The torso has no limit: it
+is split into bed-sized tiles joined by splice plates. A body that breaks a
+rule is scored as unbuildable and is never simulated.
 
 ![Varied physics](img/guide/randomize_en.png)
 

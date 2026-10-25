@@ -83,6 +83,31 @@ def _servo_box() -> str:
     return f'<geom type="box" size="{half}" {SERVO_GEOM}/>'
 
 
+# Look only: no mass, no contact, render group 1. They show the printed
+# bracket around the servo and the horn on its output face, which the physics
+# approximates with the servo box and a link starting at the joint axis.
+VISUAL_GEOM = 'contype="0" conaffinity="0" group="1" density="0"'
+BRACKET_RGBA = "0.55 0.60 0.70 1"
+HORN_RGBA = "0.80 0.80 0.82 1"
+HORN_RADIUS, HORN_THICK = 0.011, 0.003
+
+
+def _servo_dress(axis_local) -> str:
+    """Bracket around the lower 60% of the servo and the horn on the face the
+    joint axis points out of."""
+    sx, sy, sz = np.array(SERVO_BOX) / 2
+    wall = 0.0025
+    h = 0.6 * sz
+    bracket = (f'<geom type="box" pos="{_f(0, 0, -sz + h - wall)}" '
+               f'size="{_f(sx + wall, sy + wall, h)}" rgba="{BRACKET_RGBA}" {VISUAL_GEOM}/>')
+    a = np.abs(np.asarray(axis_local, dtype=float))
+    face = float(a @ np.array([sx, sy, sz]))
+    start, end = a * face, a * (face + HORN_THICK)
+    horn = (f'<geom type="cylinder" fromto="{_f(*start, *end)}" size="{HORN_RADIUS}" '
+            f'rgba="{HORN_RGBA}" {VISUAL_GEOM}/>')
+    return f"{bracket}\n{horn}"
+
+
 def _link_geom(node, rgba: str = LINK_RGBA) -> str:
     return (f'<geom type="box" pos="{_f(node.length / 2, 0, 0)}" '
             f'size="{_f(node.length / 2, node.width / 2, plate_thick(node) / 2)}" '
@@ -115,7 +140,8 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_link_geom(node)}')
+                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_servo_dress(AXIS_LOCAL[node.axis])}\n'
+                 f'{_link_geom(node)}')
     elif node.kind == "link":
         inner = _link_geom(node)
     elif node.kind == "spring":

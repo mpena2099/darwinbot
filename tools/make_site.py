@@ -57,7 +57,8 @@ def geometry(model):
     """Robot geoms of a compiled model (the floor and terrain are skipped)."""
     out = []
     for g in range(model.ngeom):
-        if model.geom_contype[g] != 2:
+        # robot geoms: physical (contype 2) and look-only parts (render group 1)
+        if model.geom_contype[g] != 2 and model.geom_group[g] != 1:
             continue
         kind = GEOM_TYPES.get(model.geom_type[g])
         if kind is None:

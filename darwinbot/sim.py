@@ -78,7 +78,9 @@ def terminal_geoms(model: mujoco.MjModel, morph: Morphology):
         body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY,
                                  f"{'w' if is_wheel else 'n'}{i}")
         first = model.body_geomadr[body]
-        own = list(range(first, first + model.body_geomnum[body]))
+        # physical geoms only: the look-only bracket and horn have contype 0
+        own = [g for g in range(first, first + model.body_geomnum[body])
+               if model.geom_contype[g] != 0]
         # Links are boxes now; a free tip has no non-box geom to pick.
         non_box = [g for g in own if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX]
         geoms.append(non_box[0] if non_box else

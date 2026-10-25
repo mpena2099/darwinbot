@@ -87,7 +87,7 @@ SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
 SIDE_X = (0.7, 0.0, -0.7)           # core side slots, fraction of half length
 ELBOW_OFFSET = (0.04 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
 
-# Printability (see docs/plano-forma-livre.md, "Restricoes de construcao").
+# Printability: a part must print on a common bed and survive the servo stall torque.
 SERVO_STALL = 1.91       # N*m, STS3215 stall torque
 PLA_STRENGTH = 50e6      # Pa, printed PLA
 STRENGTH_SAFETY = 0.5    # link bending stress must stay below half of PLA

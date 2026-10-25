@@ -73,24 +73,36 @@ def ranked(archive, seed):
     return sorted(items, key=lambda kv: -kv[1].fitness)
 
 
+# Showcase slots, filled in order: the best roller, the best of each legged
+# gait, and the best robots built around a passive module.
+SHOWCASE = (
+    ("roll", lambda m, name: name.split("-")[2] == "roll"),
+    ("trot", lambda m, name: name.split("-")[2] == "trot"),
+    ("walk", lambda m, name: name.split("-")[2] == "walk"),
+    ("crawl", lambda m, name: name.split("-")[2] == "crawl"),
+    ("spring", lambda m, name: any(x.kind == "spring" for x in m.nodes.values())),
+    ("passive", lambda m, name: any(x.kind in ("spike", "skid", "caster", "tail")
+                                    for x in m.nodes.values())),
+)
+MIN_SHOWCASE_SERVOS = 3      # a one-servo brick is a valid elite but a dull picture
+
+
 def pick_distinct(items, n=6):
     """
-    Best elite of each (leg count, has wheels) group. The first pass takes the
-    best group per leg count so every leg count shows up; the rest fill up by
-    fitness.
+    One robot per SHOWCASE slot (best fitness first, each robot used once,
+    bodies with fewer than MIN_SHOWCASE_SERVOS skipped); empty slots are
+    filled with the next best robots.
     """
-    groups = {}
-    for cell, elite in items:                  # items are sorted: first = best
-        m = morpho.decode(elite.morph)
-        groups.setdefault((m.n_terminals, m.n_wheels > 0), (cell, elite))
-    firsts, seen = [], set()
-    for key, val in groups.items():
-        if key[0] not in seen:
-            seen.add(key[0])
-            firsts.append(val)
-    rest = [v for v in groups.values() if v not in firsts]
-    chosen = (firsts + rest)[:n]
-    return sorted(chosen, key=lambda kv: -kv[1].fitness)
+    decoded = [(cell, e, morpho.decode(e.morph)) for cell, e in items]
+    pool = [d for d in decoded if d[2].n_servos >= MIN_SHOWCASE_SERVOS] or decoded
+    chosen = []
+    for _, wanted in SHOWCASE:
+        for d in pool:                         # items are sorted: first = best
+            if d not in chosen and wanted(d[2], d[0]):
+                chosen.append(d)
+                break
+    chosen += [d for d in pool if d not in chosen][:max(0, n - len(chosen))]
+    return sorted([(c, e) for c, e, _ in chosen[:n]], key=lambda kv: -kv[1].fitness)
 
 
 def best_wheelless(items):

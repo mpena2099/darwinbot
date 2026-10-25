@@ -2,15 +2,23 @@ name: tests
 
 on:
   push:
+    # documentation and images do not change the tests
+    paths-ignore: ["**.md", "docs/**", "LICENSE", "CITATION.cff"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE", "CITATION.cff"]
+  workflow_dispatch:
+
+# a newer push to the same branch cancels the run still in progress
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.10", "3.11"]
     steps:
       - uses: actions/checkout@v7

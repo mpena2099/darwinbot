@@ -40,8 +40,9 @@ python experiments/replay.py --archive /tmp/dbot/archive.pkl --list
 
 - Keep code readable and close to the style of the surrounding module:
   a docstring header per module, short comments that explain why.
-- Add or update tests for behaviour you change. CI runs `pytest` on Linux,
-  Windows and macOS with Python 3.10 and 3.11.
+- Add or update tests for behaviour you change. CI runs `pytest` on Linux
+  with Python 3.10 and 3.11. If you work on Windows or macOS, run the tests
+  there before opening a pull request.
 - Physics or control changes in `darwinbot/sim.py` must be mirrored in
   `darwinbot/sim_gpu.py`; `tests/test_sim_gpu.py` compares both.
 - If you change the genome or the physics in a way that makes old archives

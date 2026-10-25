@@ -11,9 +11,9 @@ Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 
 import math
 
-from build123d import (Align, Box, BuildPart, Circle, Cylinder, Locations, Part,
-                       Pos, Rot, Sphere, SlotOverall, extrude, export_stl as _export_stl,
-                       fillet)
+from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Locations,
+                       Part, Pos, Rot, Sphere, SlotOverall, extrude,
+                       export_stl as _export_stl, fillet)
 
 # --- measure a real STS3215 and update ------------------------------------
 SERVO_L = 45.2          # body length (along the output axis offset direction)
@@ -29,14 +29,29 @@ EAR_HOLE_DX = 40.0      # PLACEHOLDER: ear hole spacing along the body
 # ---------------------------------------------------------------------------
 
 WALL = 2.5              # wall thickness (>= 2)
-PLATE_T = 6.0           # link / plate thickness: 4 mm bends at ~36 MPa under the stall torque, 6 mm at ~16
-LINK_W = 20.0           # link width = end boss diameter
+PLATE_T = 6.0           # torso plate thickness (its tabs carry the edge servos)
+LINK_T = 6.0            # default link / elbow plate thickness: 4 mm bends at ~36 MPa under the stall torque, 6 mm at ~16
+LINK_W = 20.0           # default link width = end boss diameter
 M3 = 3.2                # M3 clearance hole
-LINK_LENGTHS = (60, 80, 100, 120)
-ELBOW_MM = 40.0          # side slot offset, morphology.ELBOW in mm
+BED_MM = 220.0          # largest part that fits a common print bed
+SPLICE_W = 24.0         # splice strip width, across the cut
+SPLICE_EDGE = 12.0      # splice hole distance from the strip ends
+SPLICE_HOLE = 8.0       # splice hole distance from the cut on each side
 WHEEL_T = 10.0          # wheel thickness
-FOOT_R = 9.0            # foot cap radius
+CASTER_T = 8.0          # caster wheel thickness, matches morphology.CASTER_WHEEL_T
+CASTER_GAP = CASTER_T + 1.2   # clearance between the fork arms
+CASTER_ARM = 7.5        # fork arm width, keeps >= 2 mm around the axle hole
+CASTER_L = 44.0         # fork length along the arms
+FOOT_R = 9.0            # default foot cap radius
 FOOT_SOCKET_D = 12.0    # PLACEHOLDER: shin tube/socket diameter
+FOOT_MIN_R = 8.6        # keeps the wall around the socket >= 2 mm
+SPRING_FLEX = 12.0      # TPU blade length, matches morphology.SPRING_FLEX_LEN
+SPRING_BLOCK = 10.0     # mounting block length at each end of the blade
+TAIL_W = 15.0           # tail bar width, matches morphology.TAIL_BAR_SIZE
+TAIL_T = 6.0            # tail bar thickness
+SKID_L, SKID_W, SKID_T = 60.0, 30.0, 6.0   # low-friction pad
+SPIKE_L, SPIKE_R = 30.0, 5.0               # TPU tip, tapered to SPIKE_TIP_R
+SPIKE_TIP_R = 1.5
 
 
 def _horn_holes(thickness: float) -> Part:
@@ -67,48 +82,117 @@ def servo_bracket() -> Part:
     return part
 
 
-def link(length_mm: float) -> Part:
+def link(length_mm: float, width_mm: float = LINK_W,
+         thick_mm: float = LINK_T) -> Part:
     """Plate between two servo axes (horn at x=0, next bracket at x=length)."""
-    if length_mm < LINK_W:
+    if length_mm < width_mm:
         raise ValueError("link too short")
     body = Pos(length_mm / 2, 0, 0) * (
-       
-        Box(length_mm + LINK_W, LINK_W, PLATE_T, align=(Align.CENTER, Align.CENTER, Align.MIN)))
-    part = fillet(body.edges().filter_by(lambda e: abs(e.length - PLATE_T) < 1e-6), LINK_W / 2 - 0.01)
-    part -= _horn_holes(PLATE_T)
+        Box(length_mm + width_mm, width_mm, thick_mm,
+            align=(Align.CENTER, Align.CENTER, Align.MIN)))
+    part = fillet(body.edges().filter_by(lambda e: abs(e.length - thick_mm) < 1e-6),
+                  width_mm / 2 - 0.01)
+    part -= _horn_holes(thick_mm)
     # bracket end: pair of M3 holes plus a central slot for the cable
     for dy in (-6, 6):
-        part -= Pos(length_mm, dy, 0) * Cylinder(M3 / 2, PLATE_T * 3)
-    part -= Pos(length_mm, 0, 0) * Cylinder(HORN_BORE_D / 2, PLATE_T * 3)
+        part -= Pos(length_mm, dy, 0) * Cylinder(M3 / 2, thick_mm * 3)
+    part -= Pos(length_mm, 0, 0) * Cylinder(HORN_BORE_D / 2, thick_mm * 3)
     return part
 
 
-def _link_end_holes(x: float, y: float) -> Part:
-    """Cutter: the bracket end pattern of a link (two M3 holes and the cable bore)."""
-    cut = Pos(x, y, 0) * Cylinder(HORN_BORE_D / 2, PLATE_T * 3)
+def _link_end_pattern(thick_mm: float) -> Part:
+    """Cutter at the origin: cable bore plus the bracket end M3 pair."""
+    cut = Cylinder(HORN_BORE_D / 2, thick_mm * 3)
     for dy in (-6, 6):
-        cut += Pos(x, y + dy, 0) * Cylinder(M3 / 2, PLATE_T * 3)
+        cut += Pos(0, dy, 0) * Cylinder(M3 / 2, thick_mm * 3)
     return cut
 
 
-def elbow_plate() -> Part:
-    """Plate bolted on a link end (origin) that carries a side module ELBOW_MM
-    away along +Y, with the link end hole pattern repeated there."""
-    body = Pos(0, ELBOW_MM / 2, 0) * Box(
-        LINK_W, ELBOW_MM + LINK_W, PLATE_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    part = fillet(body.edges().filter_by(lambda e: abs(e.length - PLATE_T) < 1e-6), LINK_W / 2 - 0.01)
-    return part - _link_end_holes(0, 0) - _link_end_holes(0, ELBOW_MM)
+def _link_end_holes(x: float, y: float, angle_deg: float = 0.0,
+                    thick_mm: float = PLATE_T) -> Part:
+    """The bracket end pattern placed at (x, y) and turned about Z."""
+    return Pos(x, y, 0) * Rot(Z=angle_deg) * _link_end_pattern(thick_mm)
 
 
-def foot() -> Part:
-    """Rounded cap (print in TPU): hemisphere over a socket for the shin."""
-    with BuildPart() as b:
-        Sphere(FOOT_R)
-    dome = b.part - Pos(0, 0, -FOOT_R) * Box(4 * FOOT_R, 4 * FOOT_R, 2 * FOOT_R)
-    stem = Pos(0, 0, 0) * Cylinder(FOOT_R, 10, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    part = dome + stem
-    part -= Pos(0, 0, 3) * Cylinder(FOOT_SOCKET_D / 2, 20, align=(Align.CENTER, Align.CENTER, Align.MIN))
+def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
+                width_mm: float = LINK_W, thick_mm: float = LINK_T) -> Part:
+    """Bar bolted on a link end (origin) that carries a side module
+    `distance_mm` away along +Y; the far end repeats the link end pattern,
+    turned about Z by angle_deg - 90."""
+    if distance_mm < width_mm:
+        raise ValueError("elbow too short")
+    body = Pos(0, distance_mm / 2, 0) * Box(
+        width_mm, distance_mm + width_mm, thick_mm,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part = fillet(body.edges().filter_by(lambda e: abs(e.length - thick_mm) < 1e-6),
+                  width_mm / 2 - 0.01)
+    part -= _link_end_holes(0, 0, 0.0, thick_mm)
+    part -= _link_end_holes(0, distance_mm, angle_deg - 90.0, thick_mm)
     return part
+
+
+def spring(length_mm: float, width_mm: float = LINK_W,
+           blade_mm: float = 4.0) -> Part:
+    """TPU flexure (print in TPU): two mounting blocks with the link end
+    pattern, joined by a blade of blade_mm thickness and SPRING_FLEX length.
+    The blade lies flat, so it bends about Y; turn the part to get the axis of
+    the spring. length_mm is the link it sits under; the module link is a
+    separate PLA plate on the far block, so only block, blade and block are
+    printed here."""
+    if length_mm < SPRING_FLEX + 2 * SPRING_BLOCK:
+        raise ValueError("spring too short")
+    t = LINK_T
+    total = SPRING_FLEX + 2 * SPRING_BLOCK
+    part = Box(total, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    if blade_mm < t:                   # thin the middle down to the blade
+        part -= (Pos(SPRING_BLOCK, 0, t / 2)
+                 * Box(SPRING_FLEX, width_mm, t - blade_mm,
+                       align=(Align.CENTER, Align.CENTER, Align.CENTER)))
+    for x in (SPRING_BLOCK / 2, total - SPRING_BLOCK / 2):
+        part -= _link_end_holes(x, 0, 0.0, t)
+    return part
+
+
+def foot(radius_mm: float = FOOT_R) -> Part:
+    """Rounded cap (print in TPU): hemisphere over a socket for the shin.
+    Scaled from the 9 mm foot; the socket keeps its diameter and the radius is
+    clamped so the wall around it stays at least 2 mm."""
+    r = max(radius_mm, FOOT_MIN_R)
+    with BuildPart() as b:
+        Sphere(r)
+    dome = b.part - Pos(0, 0, -r) * Box(4 * r, 4 * r, 2 * r)
+    stem = Pos(0, 0, 0) * Cylinder(r, 10 * r / FOOT_R,
+                                   align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part = dome + stem
+    part -= Pos(0, 0, 3) * Cylinder(FOOT_SOCKET_D / 2, 20,
+                                    align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return part
+
+
+def tail_bar(length_mm: float) -> Part:
+    """PLA bar along +X with an M3 hole near the tip for the counterweight."""
+    if length_mm < TAIL_W or length_mm > BED_MM:
+        raise ValueError("tail bar must fit the print bed")
+    part = Pos(length_mm / 2, 0, 0) * Box(
+        length_mm, TAIL_W, TAIL_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= Pos(length_mm - TAIL_W / 2, 0, 0) * Cylinder(M3 / 2, TAIL_T * 3)
+    return part
+
+
+def skid() -> Part:
+    """Flat PLA pad (print in PLA): a low-friction contact surface."""
+    return Box(SKID_L, SKID_W, SKID_T,
+               align=(Align.CENTER, Align.CENTER, Align.MIN))
+
+
+def spike() -> Part:
+    """Tapered TPU tip (print in TPU) with grip grooves."""
+    part = Cone(SPIKE_R, SPIKE_TIP_R, SPIKE_L,
+                align=(Align.CENTER, Align.CENTER, Align.MIN))
+    for z in (8.0, 16.0, 24.0):
+        r = SPIKE_R + (SPIKE_TIP_R - SPIKE_R) * z / SPIKE_L
+        part -= Pos(0, 0, z) * (Cylinder(r + 0.8, 1.0) - Cylinder(r - 0.8, 1.0))
+    return Rot(Y=90) * part                        # tip along +X, as the module
 
 
 def wheel(radius_mm: float) -> Part:
@@ -128,6 +212,29 @@ def wheel(radius_mm: float) -> Part:
             for i in range(6):
                 a = 2 * math.pi * (i + 0.5) / 6
                 part -= Pos(r_mid * math.cos(a), r_mid * math.sin(a), 0) * Cylinder(d / 2, WHEEL_T * 3)
+    return part
+
+
+def caster_wheel(radius_mm: float) -> Part:
+    """Free PLA disc on an M3 axle: O-ring groove on the rim, no servo horn."""
+    if not 15 <= radius_mm <= 35:
+        raise ValueError("caster radius must be 15..35 mm")
+    part = Cylinder(radius_mm, CASTER_T)
+    part -= Cylinder(radius_mm + 1, 4) - Cylinder(radius_mm - 3, 5)
+    part -= Cylinder(M3 / 2, CASTER_T * 3)
+    return part
+
+
+def caster_fork() -> Part:
+    """U-shaped PLA fork: two arms on the wheel sides, an M3 axle hole
+    through each, and two M3 holes in the base."""
+    w = CASTER_GAP + 2 * CASTER_ARM
+    part = Box(w, CASTER_L, 4.0, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= Pos(0, 5, 0) * Box(CASTER_GAP, 34, 12)
+    for x in (-w / 2 + CASTER_ARM / 2, w / 2 - CASTER_ARM / 2):
+        part -= Pos(x, 10, 0) * Cylinder(M3 / 2, 12)
+    for x in (-5, 5):
+        part -= Pos(x, -17, 0) * Cylinder(M3 / 2, 12)
     return part
 
 
@@ -166,6 +273,79 @@ def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
     if strap is not None:
         part -= Pos(strap, 0, 0) * Box(4, strap_w, t * 3)
     return part
+
+
+def _plate_bounds(length_mm: float, width_mm: float, mounts):
+    """Bounding box of torso_plate in mm, brackets included."""
+    x0, x1 = -length_mm / 2, length_mm / 2
+    y0, y1 = -width_mm / 2, width_mm / 2
+    ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
+    ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
+    for x, y in mounts:
+        side = abs(abs(y) - width_mm / 2) < 1e-3
+        fx, fy = (ow, ol) if side else (ol, ow)
+        x0, x1 = min(x0, x - fx / 2), max(x1, x + fx / 2)
+        y0, y1 = min(y0, y - fy / 2), max(y1, y + fy / 2)
+    return x0, x1, y0, y1
+
+
+def tile_plan(length_mm: float, width_mm: float, mounts):
+    """Fewest equal whole-millimetre tiles of the torso that fit BED_MM:
+    (x0, y0, tile width, tile height, nx, ny) in mm."""
+    x0, x1, y0, y1 = _plate_bounds(length_mm, width_mm, mounts)
+    nx = max(1, math.ceil((x1 - x0) / BED_MM))
+    ny = max(1, math.ceil((y1 - y0) / BED_MM))
+    return (x0, y0, math.ceil((x1 - x0) / nx), math.ceil((y1 - y0) / ny), nx, ny)
+
+
+def splice_plate(span_mm: float, width_mm: float = SPLICE_W,
+                 thick_mm: float = PLATE_T) -> Part:
+    """Strip laid across a torso cut, with the four M3 holes drilled in the
+    tiles: two on each side of the cut, SPLICE_EDGE from the strip ends."""
+    if span_mm < 2 * SPLICE_EDGE:
+        raise ValueError("splice too short")
+    body = Box(width_mm, span_mm, thick_mm,
+               align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part = body
+    for sx in (-SPLICE_HOLE, SPLICE_HOLE):
+        for sy in (-1, 1):
+            part -= Pos(sx, sy * (span_mm / 2 - SPLICE_EDGE), 0) * \
+                Cylinder(M3 / 2, thick_mm * 3)
+    return part
+
+
+def torso_tiles(length_mm: float, width_mm: float, mounts) -> list[Part]:
+    """Printable torso pieces: torso_plate when it fits BED_MM, else the
+    fewest equal tiles (grid along X and Y), each cut drilled for a splice."""
+    plate = torso_plate(length_mm, width_mm, mounts)
+    x0, y0, tw, th, nx, ny = tile_plan(length_mm, width_mm, mounts)
+    if nx == 1 and ny == 1:
+        return [plate]
+    holes = []
+    for i in range(1, nx):                      # vertical cuts
+        for j in range(ny):
+            ya = y0 + j * th + SPLICE_EDGE
+            yb = y0 + (j + 1) * th - SPLICE_EDGE
+            x = x0 + i * tw
+            holes += [(x - SPLICE_HOLE, ya), (x + SPLICE_HOLE, ya),
+                      (x - SPLICE_HOLE, yb), (x + SPLICE_HOLE, yb)]
+    for j in range(1, ny):                      # horizontal cuts
+        for i in range(nx):
+            xa = x0 + i * tw + SPLICE_EDGE
+            xb = x0 + (i + 1) * tw - SPLICE_EDGE
+            y = y0 + j * th
+            holes += [(xa, y - SPLICE_HOLE), (xa, y + SPLICE_HOLE),
+                      (xb, y - SPLICE_HOLE), (xb, y + SPLICE_HOLE)]
+    tiles = []
+    for j in range(ny):
+        for i in range(nx):
+            cell = Pos(x0 + (i + 0.5) * tw, y0 + (j + 0.5) * th, 0) * Box(
+                tw, th, 3 * PLATE_T, align=(Align.CENTER, Align.CENTER, Align.CENTER))
+            tile = plate & cell
+            for x, y in holes:
+                tile -= Pos(x, y, 0) * Cylinder(M3 / 2, PLATE_T * 3)
+            tiles.append(tile)
+    return tiles
 
 
 def export_stl(part: Part, path) -> None:

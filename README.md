@@ -6,9 +6,15 @@
 Quality-diversity evolution of robot bodies and locomotion controllers, built
 from real parts so the result can be printed and assembled.
 
+![An evolved legged robot walking](docs/img/gait.gif)
+
 Every robot is a tree of real modules (Karl Sims and Revolve2 style): a core
-(torso plate, ESP32, LiPo) with servo joints, passive links, wheels and feet
-hanging from its slots, all driven by Feetech STS3215 servos. Bodies are evolved
+(torso plate, ESP32, LiPo) with servo joints, passive links, TPU springs, tails,
+skids, spikes, caster wheels, wheels and feet hanging from its slots, driven by
+Feetech STS3215 servos. Only the interfaces are fixed (servo, horn and bracket
+holes, M3 screws, electronics); link length, section, elbow, roll, mount
+position and foot size are continuous genes, and a body that the printer or the
+servo torque could not deal with is not buildable. Bodies are evolved
 with a MAP-Elites archive laid out by behaviour and cost, while a central
 pattern generator with two harmonics per joint and load feedback (Tegotae) is
 tuned with CMA-ES for each candidate body. Any robot in the archive can be
@@ -21,7 +27,12 @@ Quem está começando com algoritmos evolutivos pode ler antes o
 
 O DarwinBot inventa robôs e ensina cada um a andar, numa simulação física
 (MuJoCo). A evolução decide o corpo, uma árvore de módulos: quantas pernas, de que
-tamanho, em que direção cada junta gira e se a perna termina numa roda. Para cada
+tamanho (medidas contínuas, em milímetros), em que direção cada junta gira, onde
+cada peça se prende no tronco, e se a perna termina numa roda. Há também módulos
+passivos sem servo: mola de TPU, cauda com contrapeso, patim, espeto e roda
+livre. Só entram corpos que a impressora e o servo aguentam: peças de até
+220 mm, links que não dobram sob o torque do servo e tronco cortado em placas
+emendadas. Para cada
 corpo, um otimizador (CMA-ES) procura o ritmo de movimento das juntas, com dois
 harmônicos e um retorno da carga dos servos, que leva o robô mais longe. Em vez de
 um único vencedor, o programa guarda o melhor robô de cada comportamento (MAP-Elites
@@ -36,8 +47,12 @@ de hardware em `docs/` estão em português.
 ## In one paragraph
 
 The program invents robots and teaches each one to move. A robot is a tree of
-modules; evolution decides how many limbs, how long, which way each joint turns
-and whether a limb ends in a wheel. For every new body, an optimiser searches for
+modules; evolution decides how many limbs, how long (continuous lengths, in
+millimetres), which way each joint turns, where each part mounts on the torso
+and whether a limb ends in a wheel. Passive modules without a servo (TPU spring,
+tail with counterweight, skid, spike, caster wheel) are part of the search. A
+body the printer or the servo could not handle is not buildable and is never
+simulated. For every new body, an optimiser searches for
 the rhythm of joint movements that carries it farthest forward in a few simulated
 seconds. The run does not keep a single winner: it keeps the best robot for each
 *behaviour* (crawling low with few servos, trotting tall with many, rolling...),
@@ -77,6 +92,13 @@ parent controller, so learned gaits are inherited along with the body
 each module, so a mutation that keeps a module keeps its control. Only the genes
 that affect the child are optimised; the rest stay in the genome and become
 active again if a module returns.
+
+Construction rules act as natural selection by the printer. A body is buildable
+only if every part fits a 220 mm print bed, every link bends under the 1.91 N*m
+servo stall torque with a stress of at most 25 MPa (half of what PLA takes), and
+no parts overlap at spawn. The torso is not limited: it is split into bed-sized
+tiles joined by splice plates. A body that breaks a rule scores as unbuildable
+and is never simulated.
 
 ## Install
 
@@ -237,12 +259,15 @@ systemd-inhibit --what=sleep python experiments/train.py --terrains terrain --ba
 | `control.json` | the evolved controller for the ESP32 firmware (format 2), described in `docs/formato-controle.md` |
 | `bom.md`, `bom.csv` | servos, printed parts with quantities and material, electronics, screws, tyres |
 | `assembly.md` | one row per servo in layout order: id, node slot, parent chain in words (for example `core right-front > joint pitch > joint roll`), axis, link length, sign; mounting direction and calibration step |
-| `parts/*.stl` | one file per distinct part: torso plate with a mount at every used core slot, a link per catalogue length, servo bracket, a wheel per radius, foot (needs the `cad` extra) |
+| `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl`, `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl`, `wheel_{R}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `servo_bracket.stl`, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
 | `robot.xml` | the MuJoCo model, for inspection |
 
-The export walks the module tree: every joint and link needs one link of its
-length, every servo one bracket, every wheel and foot (explicit, or the free tip
-of a limb) one print. The bill of materials counts them from the tree.
+The export walks the module tree: every joint, link and spring needs a link of
+its own length and section, every elbow an elbow plate for its distance and
+angle, every servo one bracket, every wheel, caster, tail, skid, spike and foot
+(explicit, or the free tip of a limb) one print. Links, elbows, feet and springs
+get one STL per distinct size. Springs and spikes are printed in TPU, the rest in
+PLA. The bill of materials counts everything from the tree.
 
 Servo dimensions in `darwinbot/parts.py` (horn and mounting holes, body size)
 are placeholders marked "measure a real STS3215 and update": check them
@@ -262,22 +287,33 @@ range on decode, so one mutation sigma works for every gene.
 
 ### Body genome (`darwinbot/morphology.py`)
 
-A tree of modules (`core`, `joint`, `link`, `wheel`, `foot`). The genome is a
-fixed vector of `MORPH_LENGTH = MAX_NODES * 9 = 180` genes: one block of 9 genes
-per node slot, with `MAX_NODES = 20`. Block 0 is always the core; the block index
+A tree of modules: `core`, `joint`, `link`, `spring`, `wheel`, `foot`, `tail`,
+`skid`, `spike` and `caster`. Joints and wheels carry an STS3215 servo; links,
+springs, tails, skids, spikes, casters and feet are passive. The genome is a
+fixed vector of `MORPH_LENGTH = MAX_NODES * 13 = 260` genes: one block of 13
+genes per node slot, with `MAX_NODES = 20`. Block 0 is always the core; the block index
 is the stable slot id of the node. A block is
 
 | Gene | Meaning |
 |------|---------|
 | `active` | the module exists when > 0.5 |
 | `parent` | slot id of the parent module |
-| `slot` | attachment slot on the parent (core: 8 slots, front, back, left and right sides; joint and link: tip and two sides) |
-| `rot` | roll of the attachment, 0, 90, 180 or 270 degrees |
-| `type` | joint, link, wheel or foot |
+| `slot` | attachment slot on the parent (core: 8 slots, front, back, left and right sides; joint, link and spring: tip and two sides) |
+| `rot` | roll of the attachment around the slot direction, any angle in [0, 2*pi) |
+| `type` | joint, link, spring, wheel, foot, tail, skid, spike or caster |
 | `axis` | joint turns about pitch, yaw or roll |
-| `length` | catalogue link, 0.06, 0.08, 0.10 or 0.12 m |
-| `wheel` | wheel radius 0.03 - 0.06 m |
+| `length` | link length 40 - 200 mm (tail: bar length) |
+| `wheel` | wheel or caster radius (wheel 30 - 60 mm, caster 15 - 35 mm), or foot radius 8 - 30 mm; for a tail, the counterweight 0 - 100 g |
 | `flip` | joint axis reversed (how a mirrored copy keeps the same signal) |
+| `width` | link section width 12 - 30 mm |
+| `thick` | link section thickness 3 - 10 mm; for a spring, the TPU blade 2 - 8 mm |
+| `offset` | on the core: mount position along the torso edge; on a link side slot: elbow distance 25 - 80 mm |
+| `angle` | on the core: mount yaw up to +/-60 degrees; on a link side slot: elbow angle 30 - 150 degrees |
+
+Passive module physics: a spring is a hinge whose stiffness follows from the TPU
+blade thickness (see "Mola de TPU" in `docs/hardware-dados.md`); a tail is a bar
+with a counterweight at the tip; a skid has low friction (0.15), a spike high
+friction (1.6); a caster is a free wheel on a passive hinge. None has a servo.
 
 For the core block, `length` and `wheel` hold the torso length (0.15 - 0.40 m)
 and width (0.10 - 0.25 m). `decode()` accepts any vector and always returns a
@@ -285,7 +321,7 @@ body within `MAX_NODES`, `MAX_SERVOS = 16` and depth 5: blocks that are
 inactive, unreachable, clash on a slot or break a limit are dropped. A joint or
 link with no child ends in an implicit foot.
 
-Mutation works on the decoded tree: change a parameter, change a module type,
+Mutation works on the decoded tree: nudge a continuous measure, change a module type (including into a passive kind),
 add a module or small subtree, remove a subtree, duplicate a subtree mirrored on
 the opposite slot, or copy it to another free slot. The initial population mixes
 small random trees with seeds that reproduce mirrored leg pairs, with and
@@ -332,8 +368,11 @@ the ESP32.
 Every simulated robot is built from parts you can buy or print: Feetech
 STS3215 servos at 7.4 V (1.91 N*m stall, 5.45 rad/s, run at 70% of the torque),
 60 g per servo, an ESP32 + 2S LiPo + regulator payload of 0.13 kg in the torso,
-printed links of 60, 80, 100 or 120 mm, printed elbow plates that carry the
-modules mounted on the side of a link, and self-collision between limbs. The
+printed links of any length from 40 to 200 mm with a width of 12 to 30 mm and a
+thickness of 3 to 10 mm, printed elbow plates that carry the modules mounted on
+the side of a link, TPU flexure springs, tails, skids, spikes and caster wheels,
+and self-collision between limbs. Link mass comes from the PLA geometry, and a
+link must keep its bending stress under the servo stall torque at or below 25 MPa. The
 sources and the values still to be checked are in `docs/hardware-dados.md`.
 
 ## Terrains
@@ -373,45 +412,52 @@ fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 ## Results
 
 A short run on a 4-core laptop (`--terrains terrain --batches 5 --workers 3`,
-about 20,000 episodes in 2 h 20 min) filled 51 of the ~500 cells:
+about 22,000 episodes in 2 h 20 min) filled 46 of the ~500 cells:
 
 | Gait | Types | Best fitness |
 |------|-------|--------------|
-| `roll` | 13 | 0.91 |
-| `trot` | 17 | 0.25 |
-| `walk` | 7 | 0.23 |
-| `belly` | 10 | 0.01 |
-| `crawl` | 4 | 0.04 |
+| `roll` | 14 | 1.01 |
+| `trot` | 12 | 0.15 |
+| `crawl` | 7 | 0.15 |
+| `walk` | 3 | 0.08 |
+| `belly` | 10 | 0.12 |
 
-Servo counts go from 1 to 16 and the bodies are often asymmetric. 21 types move
-forward (fitness above 0.05), 8 of them with legs carrying most of the ground
-contact. The best of those, `14servos-low-trot`, keeps its distance on
-randomised physics in `validate.py` (PASS) and exports as 14 servos and 40
-printed parts. Wheels win on speed by a factor of about 3.6 and on efficiency
-too: the most efficient roller has a cost of transport of 0.5, the most
-efficient walker 4.1. The cost-of-transport axis keeps walkers that are slow
-but cheap in the archive next to fast rollers (right panel of the map below).
+28 types move forward (fitness above 0.05), 15 of them with legs carrying most
+of the ground contact. 8 of the 43 buildable elites use a TPU spring, 2 a
+spike, 1 a skid and 1 a caster; no tail survived. The most efficient legged
+robot has a cost of transport of 1.8, slightly better than the most efficient
+roller (1.9).
 
-How the versions compare, each trained on the same terrains for 6 batches:
+The free-form body against the fixed catalogue, same terrains, same 6 batches:
 
-| | Leg pairs | Tree bodies | Tree bodies + cost of transport (current) |
-|---|---|---|---|
-| Archive | body shape grid | ~300 cells, 3 descriptors | ~500 cells, 4 descriptors |
-| Robot types | 20 | 50 | 51 |
-| Types that move forward | 14 | 25 | 21 |
-| Unbuildable elites | 5 | 1 | 3 |
-| Servo counts | 4 to 22 | 1 to 16 | 1 to 16 |
-| Best rolling robot | 1.27 | 0.95 | 0.91 |
-| Best legged robot | 0.40 | 0.39 | 0.25 |
+| | Catalogue (links of 60 to 120 mm, fixed elbow) | Free form |
+|---|---|---|
+| Robot types | 51 | 46 |
+| Types that move forward | 21 | 28 |
+| ... of them legged | 8 | 15 |
+| Unbuildable elites | 3 | 3 |
+| Best rolling robot | 0.91 | 1.01 |
+| Best legged robot | 0.25 | 0.15 |
+| Best cost of transport, rolling | 0.5 | 1.9 |
+| Best cost of transport, legged | 4.1 | 1.8 |
 
-Tree bodies brought two and a half times as many robot types. The fourth
-descriptor spreads the same number of evaluations over more cells, so in a
-short run each cell gets fewer improvements and the best legged robot is
-slower; longer runs should close that gap.
+Free form found fewer cells but far more robots that actually move, nearly
+twice as many legged ones, and legged gaits more than twice as efficient.
+The fastest robots are still wheeled. Link lengths stayed between 60 and
+124 mm, close to the catalogue the initial bodies start from: six batches
+are too few for the continuous genes to drift far, so longer runs are the
+next step.
+
+Earlier versions, same terrains and batches:
+
+| | Leg pairs | Tree bodies | Tree + cost of transport | Free form (current) |
+|---|---|---|---|---|
+| Robot types | 20 | 50 | 51 | 46 |
+| Types that move forward | 14 | 25 | 21 | 28 |
+| Best rolling robot | 1.27 | 0.95 | 0.91 | 1.01 |
+| Best legged robot | 0.40 | 0.39 | 0.25 | 0.15 |
 
 ![Evolved body plans](docs/img/robots.png)
-
-![Best wheel-less gait](docs/img/gait.gif)
 
 ![MAP-Elites archive](docs/img/archive_map.png)
 
@@ -432,15 +478,22 @@ list, not in any single robot.
 
 ## Known limitations
 
-- Wheels still lead: the best rolling robot covers about 2.4 times the
-  distance of the best legged one, and the top of the archive is mostly `roll`.
+- Wheels still lead on speed: the best rolling robot covers about 6 times the
+  distance of the best legged one in a short run, and the top of the archive
+  is mostly `roll`. Legged gaits match wheels on efficiency.
 - The firmware is half done: `firmware/core/` runs the controller math in portable C++ and a test proves it matches the Python controller tick by tick (`tests/test_firmware_parity.py`). The ESP32 layer (servo bus, load reading, calibration) waits for real hardware.
 - Randomised training (`--variants`) is CPU only.
 - The only feedback is the servo load. The controller never sees the world, so
   tasks that need steering or reacting (finding a doorway, avoiding a wall) are
   out of scope.
-- A body whose parts overlap at spawn is not buildable and scores `UNSTABLE_SCORE`
-  without being simulated (common among random trees).
+- A body whose parts overlap at spawn, whose parts exceed the 220 mm print bed
+  or whose links bend beyond 25 MPa under the servo stall torque is not
+  buildable and scores `UNSTABLE_SCORE` without being simulated (common among
+  random trees).
+- Results so far come from short runs (6 batches); the continuous genes need
+  longer runs to drift away from the starting sizes. Spring stiffness comes from a
+  TPU modulus that is not verified, and the printability stress check is a
+  cantilever estimate, not a finite-element analysis.
 
 ## Project structure
 

@@ -37,13 +37,20 @@ produz. No DarwinBot:
 
 - o genótipo é um vetor de números entre 0 e 1;
 - o fenótipo é o corpo do robô: uma árvore de módulos (tronco, juntas com
-  servo, links, rodas, pés).
+  servo, links, molas de TPU, rodas, pés, caudas, patins, espetos e rodas
+  livres).
 
 ![Do genoma ao corpo](img/guide/genome_pt.png)
 
 O vetor é dividido em blocos, um por "vaga" de módulo. Cada bloco diz se a
 vaga está ativa, quem é o pai, em que encaixe ela se prende, que tipo de
 módulo é, o eixo da junta, o comprimento do link e assim por diante.
+
+As medidas são contínuas: o comprimento do link vai de 40 a 200 mm, a seção
+de 12 a 30 mm por 3 a 10 mm, o cotovelo tem distância e ângulo próprios, o
+encaixe gira em qualquer ângulo e pode ficar em qualquer ponto da borda do
+tronco. Cada bloco tem 13 genes. Os módulos passivos (mola, cauda com
+contrapeso, patim, espeto, roda livre) não têm servo.
 
 **No código:** `darwinbot/morphology.py`, funções `decode` (genoma para
 corpo) e `encode` (corpo para genoma).
@@ -60,9 +67,9 @@ O DarwinBot usa seis operadores, sorteados com pesos diferentes:
 
 | Operador | O que faz | Chance |
 |---|---|---|
-| `param` | muda uma medida (comprimento, eixo, raio da roda) | 35% |
+| `param` | ajusta um pouco uma medida contínua (comprimento, seção, cotovelo, rotação, raio) | 35% |
 | `add` | acrescenta um módulo num encaixe livre | 20% |
-| `type` | troca o tipo de um módulo (junta vira link, por exemplo) | 15% |
+| `type` | troca o tipo de um módulo (junta vira link, mola, cauda, patim, espeto ou roda livre, por exemplo) | 15% |
 | `mirror` | copia um membro para o lado oposto, espelhado | 15% |
 | `remove` | tira um membro inteiro | 10% |
 | `copy` | copia um membro para outro encaixe | 5% |
@@ -184,6 +191,14 @@ verdade. O DarwinBot usa três defesas:
    Um movimento que só funciona numa física exata não sobrevive.
 3. **Validação:** `experiments/validate.py` testa o robô em 50 físicas
    variadas e aprova se ele perde menos de 30% do desempenho.
+
+Há ainda uma quarta defesa, a **seleção natural pela impressora**: um corpo
+só é construível se cada peça couber numa mesa de 220 mm, se cada link
+aguentar o torque de travamento do servo (1,91 N*m) com tensão de flexão de
+no máximo 25 MPa (metade do que o PLA suporta) e se nenhuma peça se
+sobrepuser. O tronco não tem limite: é cortado em placas do tamanho da mesa,
+unidas por placas de emenda. Corpo que quebra uma regra é pontuado como não
+construível e nunca é simulado.
 
 ![Física variada](img/guide/randomize_pt.png)
 

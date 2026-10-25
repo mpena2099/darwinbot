@@ -17,7 +17,7 @@ Parts are real: every joint is a Feetech STS3215 (7.4 V) with the torque and
 speed limits of its data sheet, minus a safety margin. Each servo adds a 60 g
 box, the torso carries a payload (ESP32, 2S LiPo, regulator), and links are
 printed. A child on a side slot of a link hangs from a printed elbow plate that
-bridges the ELBOW offset, so no module floats. See docs/hardware-dados.md.
+bridges the child's elbow offset, so no module floats. See docs/hardware-dados.md.
 
 Self-collision is ON: robot geoms (contype 2, conaffinity 3) touch each other
 and the terrain (1, 1). MuJoCo already skips parent/child pairs. A body whose
@@ -29,12 +29,16 @@ from typing import Tuple
 import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
-from darwinbot.morphology import (AXIS_LOCAL, ELBOW, FOOT_RADIUS, LINK_RADIUS,
-                                  SERVO_BOX, TORSO_HEIGHT, Actuator,
-                                  ActuatorLayout, Morphology)
+from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
+                                  SERVO_BOX, SKID_SIZE, SPIKE_LENGTH,
+                                  SPIKE_RADIUS, SPRING_DAMPING, TAIL_BAR_SIZE,
+                                  TAIL_TIP_RADIUS, TORSO_HEIGHT, Actuator,
+                                  ActuatorLayout, Morphology, elbow_distance,
+                                  plate_thick, spring_stiffness)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
+LINK_DENSITY   = 1240.0  # kg/m^3, solid PLA printed link
 PAYLOAD_MASS   = 0.13    # kg: ESP32 + 2S LiPo + regulator
 SERVO_MASS     = 0.060   # kg
 ROBOT_FRICTION = "1.0 0.02 0.001"
@@ -45,11 +49,18 @@ JOINT_DAMPING  = 0.56
 JOINT_FRICTION = 0.068
 JOINT_ARMATURE = 0.027
 JOINT_KP       = 13.37
+SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
 WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
 WHEEL_DAMPING  = 0.05         # wheel spins freely, unlike a position servo
+CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
 ROBOT_GEOM = f'contype="2" conaffinity="3" friction="{ROBOT_FRICTION}"'
 SERVO_GEOM = f'mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" {ROBOT_GEOM}'
+# priority 2 beats the terrain (priority 1), so these frictions win the contact
+SKID_GEOM = 'contype="2" conaffinity="3" priority="2" friction="0.15 0.02 0.001"'
+SPIKE_GEOM = 'contype="2" conaffinity="3" priority="2" friction="1.6 0.02 0.001"'
+LINK_RGBA  = "0.55 0.60 0.70 1"
+SPRING_RGBA = "0.95 0.50 0.10 1"   # orange: a passive flexure, no servo
 
 
 def _f(*values) -> str:
@@ -71,20 +82,21 @@ def _servo_box() -> str:
     return f'<geom type="box" size="{half}" {SERVO_GEOM}/>'
 
 
-def _link_geom(length: float) -> str:
-    return (f'<geom type="capsule" fromto="{_f(0, 0, 0, length, 0, 0)}" '
-            f'size="{LINK_RADIUS:.4f}" density="{LIMB_DENSITY}" '
-            f'rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+def _link_geom(node, rgba: str = LINK_RGBA) -> str:
+    return (f'<geom type="box" pos="{_f(node.length / 2, 0, 0)}" '
+            f'size="{_f(node.length / 2, node.width / 2, plate_thick(node) / 2)}" '
+            f'density="{LINK_DENSITY}" rgba="{rgba}" {ROBOT_GEOM}/>')
 
 
-def _elbow_geom(length: float, slot: int, child: int) -> str:
+def _elbow_geom(parent, child, slot: int) -> str:
     """Printed elbow plate from the link tip to the side slot `slot` (1 left,
     2 right), where the child module is mounted."""
     side = 1.0 if slot == 1 else -1.0
-    return (f'<geom name="elbow{child}" type="box" '
-            f'pos="{_f(length, side * ELBOW / 2, 0)}" '
-            f'size="{_f(LINK_RADIUS, ELBOW / 2, LINK_RADIUS)}" '
-            f'density="{LIMB_DENSITY}" rgba="0.55 0.60 0.70 1" {ROBOT_GEOM}/>')
+    d = elbow_distance(child)
+    return (f'<geom name="elbow{child.id}" type="box" '
+            f'pos="{_f(parent.length, side * d / 2, 0)}" '
+            f'size="{_f(parent.width / 2, d / 2, plate_thick(parent) / 2)}" '
+            f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>')
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
@@ -102,9 +114,17 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_link_geom(node.length)}')
+                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_link_geom(node)}')
     elif node.kind == "link":
-        inner = _link_geom(node.length)
+        inner = _link_geom(node)
+    elif node.kind == "spring":
+        sign = -1.0 if node.flip else 1.0
+        axis = sign * np.array(AXIS_LOCAL[node.axis])
+        inner = (f'<joint name="s{i}" type="hinge" axis="{_f(*axis)}" '
+                 f'stiffness="{spring_stiffness(node):.8g}" '
+                 f'damping="{SPRING_DAMPING}" '
+                 f'range="{-SPRING_RANGE} {SPRING_RANGE}"/>\n'
+                 f'{_link_geom(node, SPRING_RGBA)}')
     elif node.kind == "wheel":
         pos, rot = frames[i]
         name = f"w{i}"
@@ -123,11 +143,42 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                   size="{node.wheel_rad:.4f}" density="{LIMB_DENSITY}"
                   rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
           </body>"""
+    elif node.kind == "caster":
+        pos, rot = frames[i]
+        name = f"c{i}"
+        hub = morph.caster_hub(node, pos, rot)
+        half_t = CASTER_WHEEL_T / 2
+        axle = np.array([0.0, morph.wheel_axis_sign(rot), 0.0])
+        inner = f"""<geom name="fork{i}" type="box" size="{_f(*(np.array(CASTER_FORK_SIZE) / 2))}"
+              density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>
+          <body name="{name}" pos="{_f(*hub)}">
+            <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{CASTER_DAMPING}"/>
+            <geom type="cylinder" fromto="{_f(0, -half_t, 0, 0, half_t, 0)}"
+                  size="{node.wheel_rad:.4f}" density="{LIMB_DENSITY}"
+                  rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
+          </body>"""
     elif node.kind == "foot":
-        inner = (f'<geom type="sphere" size="{FOOT_RADIUS:.4f}" density="{LIMB_DENSITY}" '
+        inner = (f'<geom type="sphere" size="{node.foot_rad:.4f}" density="{LIMB_DENSITY}" '
                  f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
-    if node.kind in ("joint", "link"):
-        inner += "".join(f"\n{_elbow_geom(node.length, slot, c)}"
+    elif node.kind == "tail":
+        mass = max(node.tail_mass, 1e-6)   # a zero-mass geom would be degenerate
+        inner = (f'<geom name="tail{i}" type="box" pos="{_f(node.length / 2, 0, 0)}" '
+                 f'size="{_f(node.length / 2, TAIL_BAR_SIZE[0] / 2, TAIL_BAR_SIZE[1] / 2)}" '
+                 f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>\n'
+                 f'        <geom name="tailtip{i}" type="sphere" '
+                 f'pos="{_f(node.length, 0, 0)}" size="{TAIL_TIP_RADIUS:.4f}" '
+                 f'mass="{mass:.6f}" rgba="0.15 0.15 0.15 1" {ROBOT_GEOM}/>')
+    elif node.kind == "skid":
+        inner = (f'<geom name="skid{i}" type="box" '
+                 f'size="{_f(*(np.array(SKID_SIZE) / 2))}" '
+                 f'density="{LINK_DENSITY}" rgba="0.2 0.25 0.30 1" {SKID_GEOM}/>')
+    elif node.kind == "spike":
+        inner = (f'<geom name="spike{i}" type="capsule" '
+                 f'fromto="{_f(0, 0, 0, SPIKE_LENGTH, 0, 0)}" '
+                 f'size="{SPIKE_RADIUS:.4f}" density="{LINK_DENSITY}" '
+                 f'rgba="{SPRING_RGBA}" {SPIKE_GEOM}/>')
+    if node.kind in ("joint", "link", "spring"):
+        inner += "".join(f"\n{_elbow_geom(node, morph.nodes[c], slot)}"
                          for slot, c in sorted(children.get(i, {}).items()) if slot)
     # Actuators follow the depth first order of Morphology.order.
     below = "".join(

@@ -49,6 +49,54 @@ def test_no_yaw_leg_has_one_fewer_actuator():
     assert no_yaw.model.nu == len(no_yaw.layout)
 
 
+def test_spring_is_a_passive_hinge():
+    """A spring adds a joint and no actuator, with the flexure stiffness."""
+    morph = mo.template(1)
+    i = max(morph.nodes) + 1
+    morph.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, axis="pitch",
+                             length=0.09, width=0.020, thick=0.006)
+    episode = Episode(morph, te.flat(), seconds=1.0)
+    model = episode.model
+    assert len(episode.layout) == morph.n_servos
+    assert morph.n_joints + morph.n_springs == len(episode.layout) + 1
+    assert not any(a.slot == i for a in episode.layout)
+    assert episode.buildable
+    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"s{i}")
+    assert model.jnt_stiffness[jid] == pytest.approx(
+        mo.spring_stiffness(morph.nodes[i]))
+
+
+def _terminal_body(kind, tail_mass=0.0):
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, kind, 0, 0, 0.0, length=0.10, tail_mass=tail_mass)
+    m.nodes[2] = mo.Node(2, "joint", 0, 3, 3 * np.pi / 2, "pitch", 0.10)
+    return m
+
+
+@pytest.mark.parametrize("kind", ("tail", "skid", "spike"))
+def test_terminal_module_is_a_passive_buildable_body(kind):
+    morph = _terminal_body(kind)
+    episode = Episode(morph, te.flat(), seconds=1.0)
+    assert episode.buildable
+    assert len(episode.layout) == morph.n_servos
+    assert episode.model.nu == len(episode.layout)
+    assert kind not in {a.kind for a in episode.layout}
+
+
+@pytest.mark.parametrize("kind,friction", (("skid", 0.15), ("spike", 1.6)))
+def test_terminal_friction_lives_on_its_own_geom(kind, friction):
+    episode = Episode(_terminal_body(kind), te.flat(), seconds=1.0)
+    gid = mujoco.mj_name2id(episode.model, mujoco.mjtObj.mjOBJ_GEOM, f"{kind}1")
+    assert gid >= 0
+    assert episode.model.geom_friction[gid, 0] == pytest.approx(friction)
+
+
+def test_tail_counterweight_adds_its_mass():
+    light = Episode(_terminal_body("tail", 0.02), te.flat(), seconds=1.0)
+    heavy = Episode(_terminal_body("tail", 0.08), te.flat(), seconds=1.0)
+    assert heavy.mass - light.mass == pytest.approx(0.06)
+
+
 def test_layout_matches_model_order():
     morph = mo.template(2, wheels=True, yaw=True)
     episode = Episode(morph, te.flat(), seconds=1.0)
@@ -97,6 +145,14 @@ def test_side_modules_hang_from_an_elbow_plate():
     for i in side:
         g = ep.model.geom(f"elbow{i}")
         assert g.bodyid[0] == ep.model.body(f"n{morph.nodes[i].parent}").id
+
+
+def test_printability_violation_is_not_buildable():
+    morph = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    morph.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", 0.10,
+                             width=0.012, thick=0.003)
+    assert mo.violations(morph)
+    assert not Episode(morph, te.flat(), seconds=1.0).buildable
 
 
 def test_unbuildable_body_scores_unstable_without_simulating():
@@ -274,3 +330,28 @@ def test_cost_of_transport_is_clipped_and_charges_standing_still():
     idle = Metrics(0.0, 0.0, 0.0, False, False, 5.0, 1.0)
     assert cost_of_transport(idle) == COT_MIN
     assert cost_of_transport(Metrics(0.0, 0.0, 1e6, False, False, 5.0, 1.0)) == COT_MAX
+
+
+def test_skid_and_spike_friction_beats_the_terrain():
+    morph = mo.template(2)
+    for kind in ("skid", "spike"):
+        i = max(morph.nodes) + 1
+        morph.nodes[i] = mo.Node(i, kind, 0, 0 if kind == "skid" else 1, 0.0)
+    ep = Episode(morph, te.flat(), seconds=1.0)
+    floor = max(ep.model.geom_priority[g] for g in range(ep.model.ngeom)
+                if ep.model.geom_contype[g] != 2)
+    for name in ("skid", "spike"):
+        g = next(g for g in range(ep.model.ngeom) if (ep.model.geom(g).name or "").startswith(name))
+        assert ep.model.geom_priority[g] > floor
+
+
+def test_caster_is_a_free_wheel_without_actuator():
+    morph = mo.template(2)
+    i = max(morph.nodes) + 1
+    morph.nodes[i] = mo.Node(i, "caster", 0, 1, 0.0, wheel_rad=0.025)
+    assert morph.n_servos == mo.template(2).n_servos
+    ep = Episode(morph, te.flat(), seconds=1.0)
+    assert ep.buildable
+    hinges = sum(ep.model.jnt_type == mujoco.mjtJoint.mjJNT_HINGE)
+    assert hinges == ep.model.nu + 1
+    assert mo.decode(mo.encode(morph)).nodes[i].kind == "caster"

@@ -23,7 +23,7 @@ from mujoco import mjx
 
 from darwinbot.builder import build_mjcf
 from darwinbot.controller import (CTRL_LENGTH, RAMP_TIME, SERVO_TORQUE, Params)
-from darwinbot.morphology import Morphology
+from darwinbot.morphology import Morphology, violations
 from darwinbot.sim import (EPISODE_SECONDS, UPRIGHT_MIN, Metrics, behaviour,
                            control_hold, is_buildable, terminal_geoms)
 from darwinbot.terrain import Terrain
@@ -37,7 +37,7 @@ class BatchEpisode:
         xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world)
         model = mujoco.MjModel.from_xml_string(xml)
         self.dt = float(model.opt.timestep)
-        self.buildable = is_buildable(model)
+        self.buildable = is_buildable(model) and not violations(morph)
         self.mass = float(model.body_subtreemass[
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso")])
         if not self.buildable:

@@ -16,6 +16,9 @@ exported as printable parts, a bill of materials and a control file for an ESP32
 
 ## Resumo em português
 
+Quem está começando com algoritmos evolutivos pode ler antes o
+[guia em português](docs/guia-evolucao.md).
+
 O DarwinBot inventa robôs e ensina cada um a andar, numa simulação física
 (MuJoCo). A evolução decide o corpo, uma árvore de módulos: quantas pernas, de que
 tamanho, em que direção cada junta gira e se a perna termina numa roda. Para cada
@@ -39,6 +42,15 @@ the rhythm of joint movements that carries it farthest forward in a few simulate
 seconds. The run does not keep a single winner: it keeps the best robot for each
 *behaviour* (crawling low with few servos, trotting tall with many, rolling...),
 so at the end you can browse a catalogue of different solutions.
+
+## New to evolutionary algorithms?
+
+Read the beginner guide: [English](docs/evolution-guide.md) ·
+[Português](docs/guia-evolucao.md). It explains genomes, mutation, fitness,
+CMA-ES, MAP-Elites, novelty search and the reality gap, each with pointers to
+the code and small experiments to run on a laptop.
+
+![The evolutionary loop](docs/img/guide/cycle_en.png)
 
 ## How it works
 

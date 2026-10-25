@@ -237,3 +237,26 @@ def test_validate_runs_on_tiny_archive(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode in (0, 1), r.stderr
     assert "mean loss" in r.stdout
+
+
+def test_lineage_tool_orders_ancestors_oldest_first():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("lineage", "experiments/lineage.py")
+    lineage = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lineage)
+
+    a = evolve.Archive(terrains="flat")
+    rng = np.random.default_rng(1)
+    morph = mo.encode(mo.template(2))
+    pid = None
+    for batch, beh in enumerate(([0.9, 0.3, 8.0, 0.0, 1.0], [0.6, 0.3, 8.0, 0.0, 1.0],
+                                 [0.3, 0.3, 8.0, 0.0, 1.0])):
+        e = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.1 * batch,
+                         [0.1 * batch], batch, np.array(beh))
+        assert a.insert(e, parent=pid)
+        pid = evolve.elite_id(e.morph, e.ctrl)
+    steps = lineage.chain(a, e)
+    assert [b for b, _, _ in steps] == [0, 1, 2]
+    assert [t.split("-")[-1] for _, _, t in steps] == ["crawl", "walk", "trot"]
+    rows = lineage.overview(a)
+    assert rows[:, 1].max() == 3

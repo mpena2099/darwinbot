@@ -119,6 +119,10 @@ python experiments/export.py --type 8servos-mid-trot
 # Plot the behaviour scatter and the progress curves
 python experiments/plot_archive.py
 python experiments/plot_archive.py --show
+
+# Family tree: ancestors of one robot, or ancestor variety against fitness
+python experiments/lineage.py --type 8servos-mid-trot
+python experiments/lineage.py
 ```
 
 Training writes `checkpoints/archive.pkl` after every batch. `replay.py` reads

@@ -36,6 +36,7 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 - `sim.py`: `Episode` compila uma vez e roda muitos controladores; mede os descritores de comportamento (duty, altura); `theta` é estado da simulação; controle a 50 Hz (alvo segurado entre atualizações, como no ESP32); corpo com peças sobrepostas no spawn não é construível.
 - `sim_gpu.py`: mesma coisa em lote com MJX. **Qualquer mudança de física ou controle em `sim.py` precisa ser espelhada aqui**; `tests/test_sim_gpu.py` compara os dois (roda só no venv-gpu, ~3 min na 940MX local).
 - `randomize.py`: variações de física (atrito, massa, torque, rigidez, folga, atraso) para o treino e o `validate.py`.
+- `experiments/lineage.py`: genealogia gravada em `Archive.lineage` (pai de cada elite, inclusive os substituídos).
 - `inner.py`: CMA-ES por corpo; `evolve.py`: arquivo CVT do pyribs (~500 células; descritores duty, altura do tronco sobre o alcance, nº de servos e custo de transporte em escala log, medidos no terreno plano nominal), seleção de pais por novidade (`--parent-selection novelty|uniform`), nomes de tipo (`8servos-mid-trot`: servos, faixa de altura `low/mid/high`, marcha `crawl/walk/trot/roll`), laço externo, checkpoints.
 - `parts.py`, `control_file.py`, `export.py`: peças build123d, JSON do firmware (formato 2, `docs/formato-controle.md`), pacote de exportação que percorre a árvore (um STL por peça distinta, uma linha de montagem por servo na ordem do layout).
 

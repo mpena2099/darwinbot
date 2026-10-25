@@ -420,6 +420,25 @@ and payload are stored in the archive, so `replay.py`, `validate.py` and
 `export.py` use the same conditions the robot was trained under (`replay.py
 --list` prints them in a header line when they are not the default).
 
+Ready-made tasks run with `--preset`, one after the other, each in its own
+folder (`checkpoints/<preset>`), so they never overwrite the main archive:
+
+| Preset | Task | Terrain | Payload |
+|---|---|---|---|
+| `forward` | walk forward | flat, rough, steps | none |
+| `turn` | turn in place | flat | none |
+| `step` | walk forward | one 3 cm step | none |
+| `payload` | walk forward | flat, rough, steps | 0.3 kg |
+
+```bash
+# All three extra tasks overnight, 5 batches each (about 2 h 20 min per preset)
+python experiments/train.py --preset turn,step,payload --batches 5 --workers 3
+# The same command again continues each preset from where it stopped
+python experiments/replay.py --archive checkpoints/turn/archive.pkl --list
+```
+
+Ctrl+C saves the preset being trained and skips the rest.
+
 ## Fitness
 
 Per episode, from `darwinbot/fitness.py`:

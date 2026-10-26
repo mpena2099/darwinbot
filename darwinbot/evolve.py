@@ -6,9 +6,11 @@ Outer loop: quality diversity over body plans.
 The archive is a pyribs CVTArchive (about 500 cells) over four behaviour and
 cost descriptors, all measured on the nominal flat-terrain episode of the
 body's best controller: duty (fraction of time the terminal points touch the
-ground), height (mean torso height over the body's reach), cost (number of
-servos) and cost of transport (work per weight and distance, log scale), which
-lets an efficient walker keep its cell next to a faster but hungrier roller. Each cell keeps the best body found there, together with the
+ground), height (mean torso height over the body's reach), number of legs
+(limbs on the torso with a joint and no wheel, so a hexapod never competes with
+a two-legged crawler for a cell) and cost of transport (work per weight and
+distance, log scale), which lets an efficient walker keep its cell next to a
+faster but hungrier roller. Each cell keeps the best body found there, together with the
 controller CMA-ES learned for it. Instead of converging on one design, the run
 ends with a map of the fastest crawler, the fastest roller, the best tall
 trotter, and so on.
@@ -41,7 +43,7 @@ from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 9                      # bump when the genome meaning changes
+BODY_MODEL = 10                     # bump when the genome meaning changes
 N_CELLS    = 500                    # CVT cells
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
@@ -62,9 +64,9 @@ N_DESCRIPTORS = 4
 def normalise(behaviour) -> np.ndarray:
     """Descriptor in [0, 1]^4 from a behaviour vector, so that every axis
     weighs the same. Cost of transport spans decades, so it is taken in log."""
-    duty, height, servos, _, cot = np.asarray(behaviour, dtype=float)[:5]
+    duty, height, _, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
     cot = np.log(np.clip(cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS, cot], 0.0, 1.0)
+    return np.clip([duty, height / HEIGHT_MAX, legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
 
 
 @lru_cache(maxsize=1)
@@ -75,7 +77,7 @@ def _centroids() -> np.ndarray:
 
 
 def cell_of(behaviour) -> Cell:
-    """CVT cell of a behaviour vector (duty, height, servos, wheel share, cot)."""
+    """CVT cell of a behaviour vector (duty, height, servos, wheel share, cot, legs)."""
     point = normalise(behaviour)
     return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
 
@@ -117,13 +119,14 @@ class Elite:
     fitness: float
     scores:  List[float]
     born:    int          # batch index
-    # (duty, height, servos, wheel share, cot); None: a body never simulated
+    # (duty, height, servos, wheel share, cot, legs); None: a body never simulated
     behaviour: Optional[np.ndarray] = None
 
     def __post_init__(self):
         if self.behaviour is None:
+            m = morpho.decode(self.morph)
             self.behaviour = np.array(
-                [0.0, 0.0, float(morpho.decode(self.morph).n_servos), 0.0, COT_MAX])
+                [0.0, 0.0, float(m.n_servos), 0.0, COT_MAX, float(m.n_legs)])
         self.behaviour = np.asarray(self.behaviour, dtype=float)
 
 
@@ -162,7 +165,7 @@ class Archive:
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
                     "scores": ((n_scores,), np.float64),
                     "born": ((), np.int64),
-                    "behaviour": ((5,), np.float64),
+                    "behaviour": ((6,), np.float64),
                 },
             )
         return self._grid
@@ -288,13 +291,25 @@ def _ignore_sigint():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
+BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
+BUDGET_SCALE_MAX = 3.0
+
+
+def scaled_budget(budget: int, morph) -> int:
+    """CMA-ES evaluations for a body: every joint adds six controller genes, so
+    a body with many joints gets up to BUDGET_SCALE_MAX times the base budget
+    to learn a coordinated gait instead of losing its cell to a simpler one."""
+    scale = min(max(morph.n_joints / BUDGET_JOINTS, 1.0), BUDGET_SCALE_MAX)
+    return int(round(budget * scale))
+
+
 def _work(job):
     """Pool worker: optimise one body's controller. Runs in a subprocess."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
      device, popsize, variants, parent, task, payload) = job
     morph = morpho.decode(morph_genes)
     res = optimise_controller(morph, get_terrains(terrains), x0=x0,
-                              budget=budget, sigma0=sigma0, seed=seed,
+                              budget=scaled_budget(budget, morph), sigma0=sigma0, seed=seed,
                               seconds=seconds, device=device, popsize=popsize,
                               variants=variants, task=task, payload=payload)
     return (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,

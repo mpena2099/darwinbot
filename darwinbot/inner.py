@@ -65,14 +65,15 @@ def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
 
 def behaviour_vector(morph: Morphology, m: Optional[Metrics],
                      task: str = "forward") -> np.ndarray:
-    """(duty, height, servos, wheel share, cost of transport) of a body from its
-    nominal flat episode. A body never simulated, or whose episode blew up or
+    """(duty, height, servos, wheel share, cost of transport, legs) of a body
+    from its nominal flat episode. A body never simulated, or whose episode blew up or
     gave non-finite numbers, gets the same fallback vector (never NaN)."""
-    fallback = np.array([0.0, 0.0, float(morph.n_servos), 0.0, COT_MAX])
+    fallback = np.array([0.0, 0.0, float(morph.n_servos), 0.0, COT_MAX,
+                         float(morph.n_legs)])
     if m is None or m.unstable:
         return fallback
     vec = np.array([m.duty, m.height, float(morph.n_servos), m.wheel_share,
-                    cost_of_transport(m, task)])
+                    cost_of_transport(m, task), float(morph.n_legs)])
     return vec if np.isfinite(vec).all() else fallback
 
 

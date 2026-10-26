@@ -59,6 +59,7 @@ import numpy as np
 
 MAX_NODES  = 20
 MAX_SERVOS = 16
+MAX_LEGS   = 8          # one limb per torso slot
 MAX_DEPTH  = 5      # core is depth 0
 
 LENGTH_RANGE = (0.04, 0.20)               # m, joint / link length
@@ -251,6 +252,22 @@ class Morphology:
     @property
     def n_servos(self) -> int:
         return self.n_joints + self.n_wheels
+
+    @property
+    def n_legs(self) -> int:
+        """Limbs on the torso that have a servo joint and no wheel."""
+        kids: Dict[int, list] = {}
+        for i, n in self.nodes.items():
+            kids.setdefault(n.parent, []).append(i)
+
+        def kinds(i):
+            yield self.nodes[i].kind
+            for j in kids.get(i, []):
+                yield from kinds(j)
+
+        root = next(i for i, n in self.nodes.items() if n.parent < 0)
+        limbs = [set(kinds(i)) for i in kids.get(root, [])]
+        return sum("joint" in k and "wheel" not in k for k in limbs)
 
     def layout(self) -> ActuatorLayout:
         out = []

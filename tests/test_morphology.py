@@ -228,6 +228,19 @@ def test_n_servos_counts_joints_and_wheels_only():
     assert m.n_nodes == 5
 
 
+def test_n_legs_counts_torso_limbs_with_a_joint_and_no_wheel():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "link", 0, 0)        # leg: link, joint, foot
+    m.nodes[2] = mo.Node(2, "joint", 1, 0)
+    m.nodes[3] = mo.Node(3, "foot", 2, 0)
+    m.nodes[4] = mo.Node(4, "joint", 0, 1)       # wheeled limb: not a leg
+    m.nodes[5] = mo.Node(5, "wheel", 4, 0)
+    m.nodes[6] = mo.Node(6, "tail", 0, 2)        # passive, no joint: not a leg
+    m.nodes[7] = mo.Node(7, "joint", 0, 3)       # bare joint: a leg
+    assert m.n_legs == 2
+    assert mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")}).n_legs == 0
+
+
 def test_brick_gets_a_servo():
     assert mo.decode(np.zeros(mo.MORPH_LENGTH)).n_servos == 1
 

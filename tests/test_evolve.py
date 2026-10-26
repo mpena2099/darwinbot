@@ -24,14 +24,14 @@ def _elite(fitness, behaviour, genes=GENES, born=0):
 
 
 def test_cell_of_is_deterministic_and_in_range():
-    cell = evolve.cell_of([0.5, 0.7, 8, 0.0, 1.0])
-    assert cell == evolve.cell_of([0.5, 0.7, 8, 0.0, 1.0])
+    cell = evolve.cell_of([0.5, 0.7, 8, 0.0, 1.0, 2])
+    assert cell == evolve.cell_of([0.5, 0.7, 8, 0.0, 1.0, 2])
     assert 0 <= cell < evolve.N_CELLS
-    assert 0 <= evolve.cell_of([5.0, 9.0, 99, 0.0, 1.0]) < evolve.N_CELLS   # clipped
+    assert 0 <= evolve.cell_of([5.0, 9.0, 99, 0.0, 1.0, 2]) < evolve.N_CELLS   # clipped
 
 
 def test_insert_keeps_best_per_cell():
-    behaviour = [0.9, 0.3, 8, 0.0, 1.0]
+    behaviour = [0.9, 0.3, 8, 0.0, 1.0, 2]
     cell = evolve.cell_of(behaviour)
     archive = evolve.Archive(terrains="flat")
 
@@ -53,7 +53,7 @@ def test_run_writes_archive(tmp_path):
     path = tmp_path / "archive.pkl"
     assert path.exists()
     assert archive.cells
-    assert all(len(e.behaviour) == 5 for e in archive.cells.values())
+    assert all(len(e.behaviour) == 6 for e in archive.cells.values())
     assert len(archive.history) == 2
     with open(path, "rb") as f:
         loaded = pickle.load(f)
@@ -70,7 +70,7 @@ def test_lineage_survives_parent_eviction():
     a = evolve.Archive(terrains="flat")
     rng = np.random.default_rng(0)
     morph = mo.encode(mo.template(2))
-    beh = np.array([0.6, 0.3, 8.0, 0.0, 1.0])
+    beh = np.array([0.6, 0.3, 8.0, 0.0, 1.0, 2.0])
     old = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.1, [0.1], 0, beh)
     new = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.5, [0.5], 1, beh)
     pid = evolve.elite_id(old.morph, old.ctrl)
@@ -96,7 +96,7 @@ def test_names_round_trip_with_parse():
     for i in range(40):
         archive.insert(_elite(float(i), [rng.uniform(), rng.uniform(0, 1.5),
                                          int(rng.integers(4, 17)), rng.choice([0.0, 1.0]),
-                                         rng.uniform(0.1, 100)]))
+                                         rng.uniform(0.1, 100), int(rng.integers(0, 9))]))
     names = archive.names()
     assert len(set(names.values())) == len(names)          # unique
     for cell, name in names.items():
@@ -108,9 +108,9 @@ def test_names_round_trip_with_parse():
 
 def _at(i):
     """Behaviour vector sitting on the centroid of cell i."""
-    duty, height, cost, cot = evolve._centroids()[i]
-    return [duty, height * evolve.HEIGHT_MAX, round(cost * mo.MAX_SERVOS), 0.0,
-            evolve.COT_MIN * (evolve.COT_MAX / evolve.COT_MIN) ** cot]
+    duty, height, legs, cot = evolve._centroids()[i]
+    return [duty, height * evolve.HEIGHT_MAX, 8, 0.0,
+            evolve.COT_MIN * (evolve.COT_MAX / evolve.COT_MIN) ** cot, legs * mo.MAX_LEGS]
 
 
 def test_name_collision_appends_cell_index():
@@ -249,8 +249,8 @@ def test_lineage_tool_orders_ancestors_oldest_first():
     rng = np.random.default_rng(1)
     morph = mo.encode(mo.template(2))
     pid = None
-    for batch, beh in enumerate(([0.9, 0.3, 8.0, 0.0, 1.0], [0.6, 0.3, 8.0, 0.0, 1.0],
-                                 [0.3, 0.3, 8.0, 0.0, 1.0])):
+    for batch, beh in enumerate(([0.9, 0.3, 8.0, 0.0, 1.0, 2.0], [0.6, 0.3, 8.0, 0.0, 1.0, 2.0],
+                                 [0.3, 0.3, 8.0, 0.0, 1.0, 2.0])):
         e = evolve.Elite(morph, rng.random(evolve.ctrl.CTRL_LENGTH), 0.1 * batch,
                          [0.1 * batch], batch, np.array(beh))
         assert a.insert(e, parent=pid)
@@ -303,7 +303,7 @@ def test_train_presets_run_in_sequence_and_resume(tmp_path):
 
 def test_insert_records_no_self_loop_in_lineage():
     a = evolve.Archive(terrains="flat")
-    e = _elite(1.0, [0.6, 0.3, 8.0, 0.0, 1.0])
+    e = _elite(1.0, [0.6, 0.3, 8.0, 0.0, 1.0, 2.0])
     uid = evolve.elite_id(e.morph, e.ctrl)
     assert a.insert(e, parent=uid)
     assert a.lineage[uid][0] is None
@@ -321,7 +321,7 @@ def test_unbuildable_results_never_enter_the_archive(monkeypatch, tmp_path):
         if calls["n"] <= 3:                       # the whole first batch
             return (genes, CTRL, -5.0, [-5.0], 0, np.zeros(5), job[10])
         return (genes, CTRL, 1.0, [1.0], 3,
-                np.array([0.6, 0.3, 8.0, 0.0, 1.0]), job[10])
+                np.array([0.6, 0.3, 8.0, 0.0, 1.0, 2.0]), job[10])
 
     class FakePool:
         def __init__(self, *a): pass
@@ -336,3 +336,21 @@ def test_unbuildable_results_never_enter_the_archive(monkeypatch, tmp_path):
     assert archive.cells
     assert all(e.fitness == 1.0 for e in archive.cells.values())
     assert all(rec[2] == 1.0 for rec in archive.lineage.values())
+
+
+def test_budget_grows_with_joints_up_to_a_cap():
+    few, many = mo.template(1), mo.template(2)
+    assert evolve.scaled_budget(100, few) == 100 * max(1, few.n_joints / evolve.BUDGET_JOINTS) \
+        or few.n_joints > evolve.BUDGET_JOINTS
+    big = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    for i in range(1, 17):
+        big.nodes[i] = mo.Node(i, "joint", 0 if i <= 8 else i - 8, 0 if i <= 8 else 0)
+    assert evolve.scaled_budget(100, big) == round(100 * evolve.BUDGET_SCALE_MAX)
+    one = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core"), 1: mo.Node(1, "joint", 0, 0)})
+    assert evolve.scaled_budget(100, one) == 100
+    assert evolve.scaled_budget(100, many) >= evolve.scaled_budget(100, one)
+
+
+def test_legs_axis_separates_leg_counts():
+    base = [0.5, 0.1, 8.0, 0.0, 5.0]
+    assert evolve.cell_of(base + [2.0]) != evolve.cell_of(base + [6.0])

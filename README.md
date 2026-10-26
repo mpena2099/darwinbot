@@ -74,8 +74,9 @@ Two nested loops:
 1. **Outer loop, MAP-Elites over behaviour.** The archive is a pyribs
    CVTArchive with about 500 cells over four descriptors measured in the nominal
    flat-floor episode: `duty` (fraction of time the ground-touching tips are on
-   the floor), `height` (mean torso height over the body reach), `cost`
-   (number of servos) and `cot`, the cost of transport (mechanical work per
+   the floor), `height` (mean torso height over the body reach), `legs`
+   (limbs on the torso with a joint and no wheel, so a hexapod never competes
+   with a two-legged crawler for a cell) and `cot`, the cost of transport (mechanical work per
    weight and distance, on a log scale). The last one lets an efficient walker
    keep its own cell next to a faster but hungrier roller. Each cell keeps the best body found there, so a run ends
    with a map of specialists instead of a single design. Parents are drawn with
@@ -208,7 +209,7 @@ machine is about 12x slower.
 ### Viewing the different robot types
 
 The archive keeps one robot per **cell** of the behaviour map: the best one found
-with that duty, height, number of servos and cost of transport (four descriptors). A new robot only replaces the one in
+with that duty, height, number of legs and cost of transport (four descriptors). A new robot only replaces the one in
 its own cell, and only if it scores higher, so slow crawlers survive next to
 fast rollers.
 
@@ -217,7 +218,7 @@ A type is a short name derived from the cell, `<servos>servos-<height>-<gait>`
 
 | Part | Values | Meaning |
 |------|--------|---------|
-| `servos` | 1 to 16 | number of servos, the cost of the robot |
+| `servos` | 1 to 16 | number of servos, the cost of the robot (shown in the name, not a map axis) |
 | `height` | `low`, `mid`, `high` | mean torso height over body reach: below 0.4, below 0.8, above |
 | `gait` | `crawl`, `walk`, `trot`, `belly`, `roll` | duty, the share of time the tips touch the ground: above 0.8, 0.5 to 0.8, 0.15 to 0.5, below 0.15 (sliding on the body); `roll` when wheels carry more than half of the contact time |
 

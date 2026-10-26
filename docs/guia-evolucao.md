@@ -150,7 +150,7 @@ DarwinBot, os eixos do mapa são:
 
 - `duty`: quanto tempo as pontas ficam no chão (rastejar, andar, trotar);
 - `height`: altura do tronco;
-- `cost`: número de servos;
+- `legs`: número de pernas (membros com junta e sem roda);
 - `cot`: custo de transporte (energia por peso e distância).
 
 ![Um vencedor contra um mapa](img/guide/map_pt.png)

@@ -153,7 +153,7 @@ DarwinBot, the axes of the map are:
 
 - `duty`: how long the feet stay on the ground (crawling, walking, trotting);
 - `height`: trunk height;
-- `cost`: number of servos;
+- `legs`: number of legs (limbs with a joint and no wheel);
 - `cot`: cost of transport (energy per weight and distance).
 
 ![One winner versus a map](img/guide/map_en.png)

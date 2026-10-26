@@ -573,6 +573,11 @@ list, not in any single robot.
 - **Getting up** (`--task getup`): the robot starts upside down and scores by
   ending upright, so a fall no longer ends the episode. Bodies that can right
   themselves look very different from bodies that only walk.
+- **Steering on command**: a direction input from -1 (left) to +1 (right)
+  modulates each joint's amplitude and phase (and each wheel's speed), the way
+  animals steer by making one side stronger. Every robot is scored on going
+  straight and on turning when asked, so a body that only does one of them falls
+  behind.
 - **Free-form printed shapes**: a torso of any outline or in several segments,
   curved links, blade, paw or claw feet, mounts on any face.
 

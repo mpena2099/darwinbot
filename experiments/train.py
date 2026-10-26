@@ -43,7 +43,9 @@ def main():
     p.add_argument("--budget-child", type=int, default=120,
                    help="CMA-ES evaluations for a body with an inherited controller")
     p.add_argument("--workers", type=int, default=None)
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=None,
+                   help="random seed (default: a new one every run, printed so "
+                        "the run can be repeated)")
     p.add_argument("--out", default="checkpoints")
     p.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
                    help="simulate on the CPU (default) or with MJX on the GPU")
@@ -76,6 +78,9 @@ def main():
             raise SystemExit("--device gpu needs JAX and MJX: "
                              "pip install -e '.[gpu]'")
 
+    if a.seed is None:
+        a.seed = int.from_bytes(os.urandom(4), "little") >> 1
+    print(f"[darwinbot] seed={a.seed}")
     variants = a.variants if a.variants is not None else (2 if a.device == "cpu" else 0)
     common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
                   budget_init=a.budget_init, budget_child=a.budget_child,

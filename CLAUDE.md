@@ -42,6 +42,11 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 - `firmware/core`: o mesmo CPG em C++17 sem dependências (`darwin_control`), que divide a carga por `load_full_scale` e dá a volta na fase a cada tick; `tests/test_firmware_parity.py` compila e compara alvos e velocidades de roda com `controller.py`.
 - `parts.py`, `control_file.py`, `export.py`: peças build123d com as medidas de cada robô, JSON do firmware (formato 2, com `load_full_scale`, `docs/formato-controle.md`), pacote de exportação que percorre a árvore: um STL por tamanho distinto (`link_{L}x{W}x{T}`, `elbow_{D}mm_{A}deg_{W}x{T}`, `foot_{R}`, `spring_{W}x{B}`, `tail_{L}`, `skid`, `spike`, `caster_wheel_{R}`, `caster_fork`), tronco em placas do tamanho da mesa (`torso_tile_{i}`, ou `torso_plate` se couber) com placas de emenda (`splice_plate_{span}`), e uma linha de montagem por servo na ordem do layout.
 
+## Planejado
+
+- Tarefa `getup` (levantar-se): o robô nasce de cabeça para baixo, a queda não encerra o episódio e a pontuação mede se ele termina em pé. Mexe em `sim.py` e `sim_gpu.py` (orientação do spawn e detecção de queda) e em `fitness.py`.
+- Forma livre das peças impressas (camada 3): tronco com contorno livre ou segmentado, links curvos, pés variados, encaixes em qualquer face.
+
 ## Convenções e armadilhas
 
 - Mudou o genoma ou a física de forma incompatível: incrementar `BODY_MODEL` em `evolve.py`; arquivos antigos passam a ser recusados com mensagem clara.

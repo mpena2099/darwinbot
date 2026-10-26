@@ -568,6 +568,14 @@ list, not in any single robot.
   TPU modulus that is not verified, and the printability stress check is a
   cantilever estimate, not a finite-element analysis.
 
+## Planned
+
+- **Getting up** (`--task getup`): the robot starts upside down and scores by
+  ending upright, so a fall no longer ends the episode. Bodies that can right
+  themselves look very different from bodies that only walk.
+- **Free-form printed shapes**: a torso of any outline or in several segments,
+  curved links, blade, paw or claw feet, mounts on any face.
+
 ## Project structure
 
 ```

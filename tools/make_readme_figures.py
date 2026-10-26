@@ -85,22 +85,25 @@ SHOWCASE = (
                                     for x in m.nodes.values())),
 )
 MIN_SHOWCASE_SERVOS = 3      # a one-servo brick is a valid elite but a dull picture
+SHOWCASE_NEAR_BEST = 0.9     # within this share of a slot's best, show the simplest body
 
 
 def pick_distinct(items, n=6):
     """
-    One robot per SHOWCASE slot (best fitness first, each robot used once,
-    bodies with fewer than MIN_SHOWCASE_SERVOS skipped); empty slots are
-    filled with the next best robots.
+    One robot per SHOWCASE slot (each robot used once, bodies with fewer than
+    MIN_SHOWCASE_SERVOS skipped): among the robots of a slot that reach
+    SHOWCASE_NEAR_BEST of its best fitness, the one with the fewest parts, so a
+    tidy body is shown instead of a sprawling one that is barely faster. Empty
+    slots are filled with the next best robots.
     """
     decoded = [(cell, e, morpho.decode(e.morph)) for cell, e in items]
     pool = [d for d in decoded if d[2].n_servos >= MIN_SHOWCASE_SERVOS] or decoded
     chosen = []
     for _, wanted in SHOWCASE:
-        for d in pool:                         # items are sorted: first = best
-            if d not in chosen and wanted(d[2], d[0]):
-                chosen.append(d)
-                break
+        fits = [d for d in pool if d not in chosen and wanted(d[2], d[0])]
+        if fits:                               # items are sorted: first = best
+            near = [d for d in fits if d[1].fitness >= SHOWCASE_NEAR_BEST * fits[0][1].fitness]
+            chosen.append(min(near, key=lambda d: len(d[2].nodes)))
     chosen += [d for d in pool if d not in chosen][:max(0, n - len(chosen))]
     return sorted([(c, e) for c, e, _ in chosen[:n]], key=lambda kv: -kv[1].fitness)
 

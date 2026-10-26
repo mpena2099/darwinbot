@@ -399,7 +399,7 @@ sources and the values still to be checked are in `docs/hardware-dados.md`.
 | `flat` | flat floor |
 | `rough` | smoothed random bumps, flat near the spawn |
 | `steps` | ascending staircase starting at x = 0.6 m |
-| `step` | one 3 cm high box step across the path, 0.30 m ahead of the spawn, 1 m deep |
+| `step` | one 3 cm high box step across the path, 0.50 m ahead of the spawn, 1 m deep |
 | `slope` | 8 degree ramp starting at x = 0.5 m |
 | `slippery` | floor with friction 0.2 |
 
@@ -462,51 +462,36 @@ fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 
 ## Results
 
-A short run on a 4-core laptop (`--terrains terrain --batches 5 --workers 3`,
-about 22,000 episodes in 2 h 20 min) filled 46 of the ~500 cells:
+A 30-batch run on a 4-core laptop (`--terrains terrain --batches 30 --workers 3`,
+about 84,000 episodes in 13 hours) filled 98 of the ~500 cells, every one of
+them buildable:
 
 | Gait | Types | Best fitness |
 |------|-------|--------------|
-| `roll` | 14 | 1.01 |
-| `trot` | 12 | 0.15 |
-| `crawl` | 7 | 0.15 |
-| `walk` | 3 | 0.08 |
-| `belly` | 10 | 0.12 |
+| `roll` | 35 | 1.03 |
+| `walk` | 12 | 0.25 |
+| `trot` | 28 | 0.24 |
+| `belly` | 14 | 0.16 |
+| `crawl` | 9 | 0.13 |
 
-28 types move forward (fitness above 0.05), 15 of them with legs carrying most
-of the ground contact. 8 of the 43 buildable elites use a TPU spring, 2 a
-spike, 1 a skid and 1 a caster; no tail survived. The most efficient legged
-robot has a cost of transport of 1.8, slightly better than the most efficient
-roller (1.9).
+64 types move forward (fitness above 0.05), 30 of them with legs carrying most
+of the ground contact. Passive modules are common: 22 elites use a TPU spring,
+6 a tail, 4 a caster, 2 a skid and 1 a spike. The most efficient roller has a
+cost of transport of 1.6, the most efficient legged robot 1.8. The fastest
+robots are still wheeled, and the best one (1.03) appeared by batch 3; the
+later batches mostly widened the map. Link lengths stayed between 40 and
+125 mm, well inside the 40 to 200 mm the genome allows.
 
-The free-form body against the fixed catalogue, same terrains, same 6 batches:
+Earlier versions ran 6 batches on the same terrains, before the physics review
+that fixed hidden simulator resets and passive joint friction, so the
+comparison with this run is only rough:
 
-| | Catalogue (links of 60 to 120 mm, fixed elbow) | Free form |
-|---|---|---|
-| Robot types | 51 | 46 |
-| Types that move forward | 21 | 28 |
-| ... of them legged | 8 | 15 |
-| Unbuildable elites | 3 | 3 |
-| Best rolling robot | 0.91 | 1.01 |
-| Best legged robot | 0.25 | 0.15 |
-| Best cost of transport, rolling | 0.5 | 1.9 |
-| Best cost of transport, legged | 4.1 | 1.8 |
-
-Free form found fewer cells but far more robots that actually move, nearly
-twice as many legged ones, and legged gaits more than twice as efficient.
-The fastest robots are still wheeled. Link lengths stayed between 60 and
-124 mm, close to the catalogue the initial bodies start from: six batches
-are too few for the continuous genes to drift far, so longer runs are the
-next step.
-
-Earlier versions, same terrains and batches:
-
-| | Leg pairs | Tree bodies | Tree + cost of transport | Free form (current) |
-|---|---|---|---|---|
-| Robot types | 20 | 50 | 51 | 46 |
-| Types that move forward | 14 | 25 | 21 | 28 |
-| Best rolling robot | 1.27 | 0.95 | 0.91 | 1.01 |
-| Best legged robot | 0.40 | 0.39 | 0.25 | 0.15 |
+| | Leg pairs | Tree bodies | Tree + cost of transport | Free form | Free form, 30 batches |
+|---|---|---|---|---|---|
+| Robot types | 20 | 50 | 51 | 46 | 98 |
+| Types that move forward | 14 | 25 | 21 | 28 | 64 |
+| Best rolling robot | 1.27 | 0.95 | 0.91 | 1.01 | 1.03 |
+| Best legged robot | 0.40 | 0.39 | 0.25 | 0.15 | 0.25 |
 
 ![Evolved body plans](docs/img/robots.png)
 
@@ -541,8 +526,8 @@ list, not in any single robot.
   or whose links bend beyond 25 MPa under the servo stall torque is not
   buildable and scores `UNSTABLE_SCORE` without being simulated (common among
   random trees).
-- Results so far come from short runs (6 batches); the continuous genes need
-  longer runs to drift away from the starting sizes. Spring stiffness comes from a
+- Even after 30 batches the continuous genes stay near the starting sizes
+  (links of 40 to 125 mm), and legged gaits lag far behind wheels. Spring stiffness comes from a
   TPU modulus that is not verified, and the printability stress check is a
   cantilever estimate, not a finite-element analysis.
 

@@ -143,6 +143,10 @@ class Params:
             self.sigma[a]  = _scale(g[SIGMA],  *SIGMA_RANGE)
             self.steer_gain[a]  = _scale(g[STEER_GAIN], *STEER_GAIN_RANGE)
             self.steer_shift[a] = _scale(g[STEER_SHIFT], *STEER_SHIFT_RANGE)
+        # as decoded, before steering and the speed clip: what the firmware
+        # receives, so it can steer and clip on the robot the same way
+        self.amp1_base, self.amp2_base = self.amp1.copy(), self.amp2.copy()
+        self.offset_base = self.offset.copy()
         steer(self, command)
         # A servo cannot follow a signal whose peak speed exceeds its own.
         peak = (self.amp1 + 2.0 * self.amp2) * self.omega

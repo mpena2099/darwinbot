@@ -271,6 +271,23 @@ systemd-inhibit --what=sleep python experiments/train.py --terrains terrain --ba
 # detach with Ctrl+b d, reattach with: tmux attach -t darwin
 ```
 
+## Training on Kaggle
+
+A long run keeps a laptop busy for a day. Two notebooks in `tools/kaggle/` run
+on Kaggle's free sessions instead:
+
+- `train_cpu.ipynb`: trains on a 4-core CPU session of up to 12 hours with the
+  browser closed. The archive lands in the notebook output; adding that output
+  as an input to the next session resumes the run.
+- `benchmark_gpu.ipynb`: measures episodes per second on the CPU and on a free
+  GPU (MJX) for the same body and batch sizes from 16 to 1024. A GPU only helps
+  when it simulates hundreds of copies at once and every new body costs it a
+  compile, so this tells whether it pays off here. The same comparison runs
+  locally with `python tools/kaggle/bench_gpu.py`.
+
+Upload a notebook with *Create > New Notebook > File > Import Notebook*. While
+the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.
+
 ## Exporting a robot to build
 
 `experiments/export.py --type <type>` writes `exports/<type>/`:

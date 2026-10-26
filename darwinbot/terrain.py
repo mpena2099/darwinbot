@@ -10,10 +10,14 @@ floor would never feel slippery.
 
 Features start close to the spawn point (x = 0): a typical evolved gait
 covers 1 to 3 m per episode, so anything farther out would rarely be reached.
+
+Random terrains (rough, rubble) take a seed. Training draws a new one for every
+body, so a lineage cannot memorise one set of bumps; replay and validation use
+the fixed default, so the same robot always sees the same ground there.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -26,11 +30,20 @@ class Terrain:
     assets: str = ""
     world:  str = ""
     friction: float = 1.0   # ground friction; skids and spikes scale with it
+    spawn_z:  float = 0.0   # ground height under the spawn point
 
 
-def _plane(friction: float = 1.0) -> str:
+def _plane(friction: float = 1.0, extra: str = "") -> str:
     return (f'<geom name="floor" type="plane" size="30 30 0.1" material="grid" '
-            f'friction="{friction} 0.02 0.001" {GROUND}/>')
+            f'friction="{friction} 0.02 0.001" {GROUND} {extra}/>')
+
+
+def _box(x: float, y: float, z: float, sx: float, sy: float, sz: float,
+         rgba: str = "0.75 0.65 0.55 1", yaw: float = 0.0) -> str:
+    """Box ground geom from its centre and half sizes (m), yaw in radians."""
+    return (f'<geom type="box" pos="{x:.3f} {y:.3f} {z:.3f}" '
+            f'size="{sx:.3f} {sy:.3f} {sz:.3f}" euler="0 0 {yaw:.3f}" '
+            f'rgba="{rgba}" friction="1.0 0.02 0.001" {GROUND}/>')
 
 
 def flat() -> Terrain:
@@ -101,22 +114,82 @@ def slippery(friction: float = 0.2) -> Terrain:
     return Terrain("slippery", world=_plane(friction), friction=friction)
 
 
+def rubble(seed: int = 11, count: int = 40, low: float = 0.03,
+           high: float = 0.07) -> Terrain:
+    """Scattered rocks 3 to 7 cm high, taller than many wheels can climb: a
+    field that rewards stepping over things instead of rolling into them."""
+    rng = np.random.default_rng(seed)
+    geoms = [_plane()]
+    for _ in range(count):
+        h = rng.uniform(low, high)
+        geoms.append(_box(rng.uniform(0.6, 4.0), rng.uniform(-0.6, 0.6), h / 2,
+                          rng.uniform(0.02, 0.06), rng.uniform(0.02, 0.06), h / 2,
+                          "0.55 0.52 0.50 1", rng.uniform(0, np.pi)))
+    return Terrain("rubble", world="".join(geoms))
+
+
+def ledges(rise: float = 0.06, run: float = 0.6, count: int = 4) -> Terrain:
+    """Staircase of 6 cm steps, twice the old ones: too tall to roll up."""
+    return Terrain("ledges", world=steps(rise, run, count).world)
+
+
+def soft(friction: float = 1.0) -> Terrain:
+    """Yielding ground like sand or carpet: soft contacts let feet sink one or two
+    centimetres and rolling friction (condim 6) drags on wheels."""
+    return Terrain("soft", friction=friction, world=(
+        f'<geom name="floor" type="plane" size="30 30 0.1" material="grid" '
+        f'friction="{friction} 0.02 0.02" priority="1" condim="6" '
+        f'solref="0.08 1" solimp="0.2 0.9 0.03"/>'))
+
+
+def downhill(degrees: float = 10.0, start: float = 0.5, length: float = 1.5) -> Terrain:
+    """Spawn on a plateau, then a slope down to the floor: descending without
+    tumbling. The plateau is as high as the slope drops."""
+    a = np.radians(degrees)
+    top = length * np.sin(a)
+    h = 0.05
+    along = np.array([np.cos(a), 0, -np.sin(a)])
+    normal = np.array([np.sin(a), 0, np.cos(a)])
+    centre = np.array([start, 0, top]) + along * length / 2 - normal * h
+    plateau = _box(start - 1.5, 0, top / 2, 1.5, 2, top / 2, "0.60 0.75 0.60 1")
+    return Terrain("downhill", spawn_z=float(top), world=_plane() + plateau + (
+        f'<geom type="box" pos="{centre[0]:.4f} 0 {centre[2]:.4f}" '
+        f'size="{length / 2} 2 {h}" euler="0 {a:.4f} 0" '
+        f'rgba="0.60 0.75 0.60 1" friction="1.0 0.02 0.001" {GROUND}/>'))
+
+
+def steep(degrees: float = 15.0) -> Terrain:
+    """The slope at 15 degrees instead of 8."""
+    return Terrain("steep", world=slope(degrees).world)
+
+
 TERRAINS = {
     "flat": flat, "rough": rough, "steps": steps, "step": step,
-    "slope": slope, "slippery": slippery,
+    "slope": slope, "slippery": slippery, "rubble": rubble, "ledges": ledges,
+    "soft": soft, "downhill": downhill, "steep": steep,
 }
+SEEDED = ("rough", "rubble")    # terrains drawn anew for every body in training
 
 PRESETS: Dict[str, List[str]] = {
     "flat":    ["flat"],
-    "terrain": ["flat", "rough", "steps"],
-    "all":     ["flat", "rough", "steps", "slope", "slippery"],
+    "terrain": ["flat", "rough", "steps", "rubble"],
+    "all":     ["flat", "rough", "steps", "rubble", "ledges", "slope", "steep",
+                "downhill", "slippery", "soft"],
 }
 
 
-def get_terrains(spec: str) -> List[Terrain]:
+def get_terrains(spec: str, seed: Optional[int] = None) -> List[Terrain]:
+    """Terrains from a preset name or a comma list. With a seed, the random
+    terrains (SEEDED) are drawn from it; without, they use their fixed default."""
     names = PRESETS.get(spec, [n.strip() for n in spec.split(",")])
     unknown = [n for n in names if n not in TERRAINS]
     if unknown:
         raise ValueError(f"Unknown terrain(s) {unknown}. "
                          f"Available: {list(TERRAINS)}; presets: {list(PRESETS)}")
-    return [TERRAINS[n]() for n in names]
+    out = []
+    for k, n in enumerate(names):
+        if seed is not None and n in SEEDED:
+            out.append(TERRAINS[n](seed=(seed + 7919 * k) % 2**31))
+        else:
+            out.append(TERRAINS[n]())
+    return out

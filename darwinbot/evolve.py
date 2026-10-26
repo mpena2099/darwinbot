@@ -309,7 +309,7 @@ def _work(job):
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
      device, popsize, variants, parent, task, payload) = job
     morph = morpho.decode(morph_genes)
-    res = optimise_controller(morph, get_terrains(terrains), x0=x0,
+    res = optimise_controller(morph, get_terrains(terrains, seed=seed), x0=x0,
                               budget=scaled_budget(budget, morph), sigma0=sigma0, seed=seed,
                               seconds=seconds, device=device, popsize=popsize,
                               variants=variants, task=task, payload=payload)

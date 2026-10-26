@@ -123,11 +123,14 @@ pip install -e ".[gpu]"        # MJX backend (jax with CUDA 12)
 # Evolve on the flat floor with the default settings
 python experiments/train.py
 
-# Flat, rough and steps, with more batches and workers
+# Flat, rough, steps and rubble, with more batches and workers
 python experiments/train.py --terrains terrain --batches 60 --workers 8
 
 # Learn to turn in place instead of walking forward
 python experiments/train.py --task turn
+
+# Only some environments (see "Choosing the environments")
+python experiments/train.py --terrains rubble,soft
 
 # Climb a 3 cm step, or carry 0.3 kg on the torso
 python experiments/train.py --terrains step
@@ -397,19 +400,47 @@ and self-collision between limbs. Link mass comes from the PLA geometry, and a
 link must keep its bending stress under the servo stall torque at or below 25 MPa. The
 sources and the values still to be checked are in `docs/hardware-dados.md`.
 
-## Terrains
+## Choosing the environments
 
-| Name | Description |
-|------|-------------|
+Every robot is scored on each environment of the run, and its fitness mixes the
+average with the worst one (`0.7 * mean + 0.3 * min`), so the search favours
+robots that cope with all of them. Pick the environments with `--terrains`:
+
+```bash
+python experiments/train.py --terrains rubble            # one environment only
+python experiments/train.py --terrains flat,soft,steep   # your own list
+python experiments/train.py --terrains terrain           # a ready set (below)
+```
+
+Fewer environments make a specialist (the best robot for sand, or for a
+staircase); more make a generalist. The choice is saved in the archive, so
+`replay`, `validate` and `export` use the same ones.
+
+| Name | What the robot faces |
+|------|----------------------|
 | `flat` | flat floor |
-| `rough` | smoothed random bumps, flat near the spawn |
-| `steps` | ascending staircase starting at x = 0.6 m |
-| `step` | one 3 cm high box step across the path, 0.50 m ahead of the spawn, 1 m deep |
-| `slope` | 8 degree ramp starting at x = 0.5 m |
-| `slippery` | floor with friction 0.2 |
+| `rough` | smoothed random bumps up to 4 cm, flat near the spawn |
+| `rubble` | 40 scattered rocks 3 to 7 cm high, taller than many wheels can climb |
+| `steps` | staircase of six 3 cm steps from x = 0.6 m |
+| `ledges` | staircase of four 6 cm steps, too tall to roll up |
+| `step` | one 3 cm step, 0.50 m ahead of the spawn, 1 m deep |
+| `slope` | 8 degree ramp up from x = 0.5 m |
+| `steep` | the same ramp at 15 degrees |
+| `downhill` | spawn on a plateau, then a 10 degree slope down to the floor |
+| `slippery` | floor with friction 0.2, like ice |
+| `soft` | yielding floor like sand: feet sink 1 to 2 cm and wheels feel rolling drag |
 
-Presets: `flat` (flat), `terrain` (flat, rough, steps) and `all` (all five).
-`--terrains` also accepts a comma separated list of names.
+Ready sets:
+
+| Set | Environments |
+|-----|--------------|
+| `flat` | flat |
+| `terrain` | flat, rough, steps, rubble |
+| `all` | all of the above except `step` |
+
+`rough` and `rubble` are random. Training draws new bumps and rocks for every
+body, so a family of robots cannot memorise one layout; `replay` and `validate`
+use one fixed layout, so a robot always meets the same ground there.
 
 ## Tasks
 
@@ -430,10 +461,10 @@ folder (`checkpoints/<preset>`), so they never overwrite the main archive:
 
 | Preset | Task | Terrain | Payload |
 |---|---|---|---|
-| `forward` | walk forward | flat, rough, steps | none |
+| `forward` | walk forward | the `terrain` set | none |
 | `turn` | turn in place | flat | none |
 | `step` | walk forward | one 3 cm step | none |
-| `payload` | walk forward | flat, rough, steps | 0.3 kg |
+| `payload` | walk forward | the `terrain` set | 0.3 kg |
 
 ```bash
 # All three extra tasks overnight, 5 batches each (about 2 h 20 min per preset)
@@ -468,6 +499,7 @@ fitness = 0.7 * mean(scores) + 0.3 * min(scores)
 ## Results
 
 A 30-batch run on a 4-core laptop (`--terrains terrain --batches 30 --workers 3`,
+when that set was flat, rough and steps;
 about 84,000 episodes in 13 hours) filled 98 of the ~500 cells, every one of
 them buildable:
 

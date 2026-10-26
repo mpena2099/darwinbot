@@ -129,6 +129,7 @@ class Episode:
                  seconds: float = EPISODE_SECONDS, payload: float = 0.0):
         xml, self.layout = build_mjcf(morph, terrain.assets, terrain.world,
                                       payload=payload,
+                                      ground_z=terrain.spawn_z,
                                       terrain_friction=terrain.friction)
         self.model = mujoco.MjModel.from_xml_string(xml)
         self.data  = mujoco.MjData(self.model)

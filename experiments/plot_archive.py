@@ -32,7 +32,7 @@ def heatmap(archive):
     elites = [e for e in archive.cells.values() if e.fitness > UNSTABLE_SCORE]
     if not elites:
         raise SystemExit("archive has no buildable elites to plot")
-    duty, height, servos, wheel, cot = np.array([e.behaviour for e in elites]).T
+    duty, height, servos, wheel, cot = np.array([e.behaviour[:5] for e in elites]).T
     fits = np.array([e.fitness for e in elites])
 
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 4.6))

@@ -109,7 +109,7 @@ def main():
         if not ep.buildable:
             print(f"skip {name}: not buildable")
             continue
-        duty, height, servos, wheels, cot = (float(v) for v in elite.behaviour[:5])
+        duty, height, servos, wheels, cot, legs = (float(v) for v in elite.behaviour[:6])
         fname = f"{name}.json"
         data = {"name": name, "fps": FPS, "nbody": int(ep.model.nbody),
                 "geoms": geometry(ep.model), "frames": record(ep, elite.ctrl)}
@@ -117,7 +117,8 @@ def main():
             json.dump(data, f, separators=(",", ":"))
         index.append({"name": name, "fitness": round(float(elite.fitness), 4),
                       "duty": round(duty, 4), "height": round(height, 4),
-                      "servos": int(round(servos)), "wheels": round(wheels, 4),
+                      "servos": int(round(servos)), "legs": int(round(legs)),
+                      "wheels": round(wheels, 4),
                       "cot": round(cot, 4), "file": fname})
         print(f"{name}: {len(data['frames'])} frames, {len(data['geoms'])} geoms")
     with open(os.path.join(args.out, "data", "index.json"), "w") as f:

@@ -125,11 +125,11 @@ def main():
         names = archive.names()
         if archive.task != "forward" or archive.payload:
             print(f"task: {archive.task}, payload {archive.payload:g} kg")
-        print("type                       fitness  duty  height  servos    cot")
+        print("type                       fitness  duty  height  servos  legs    cot")
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
-            duty, height, servos, _, cot = e.behaviour
+            duty, height, servos, _, cot, legs = e.behaviour
             print(f"{names[cell]:26s} {e.fitness:7.2f}  {duty:4.2f}  {height:6.2f}  "
-                  f"{int(servos):6d}  {cot:5.1f}")
+                  f"{int(servos):6d}  {int(legs):4d}  {cot:5.1f}")
         return
 
     archive, elite = load(a.archive, a.cell)

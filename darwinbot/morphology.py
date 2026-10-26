@@ -658,24 +658,28 @@ def mirror_slot(kind: str, slot: int) -> int:
 
 
 def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
-                 mirror: bool = False) -> Optional[int]:
+                 mirror: bool = False,
+                 source: Optional[Morphology] = None) -> Optional[int]:
     """
     Copy the subtree under `root` onto a free slot of `parent`, breadth first,
     stopping where a limit is hit (so a partial copy is still a valid body).
     mirror=True reflects it across the XZ plane: sides swapped, rolls
-    negated, pitch and roll axes flipped. Returns the new root id or None.
+    negated, pitch and roll axes flipped. `source` is the body the subtree
+    comes from (default: `morph` itself; another body for a graft). Returns
+    the new root id or None.
     """
+    source = morph if source is None else source
     if (parent, slot) in {(n.parent, n.slot) for n in morph.nodes.values()}:
         return None
-    base = morph.depth(parent) + 1 - morph.depth(root)
-    cm = morph.child_map()
+    base = morph.depth(parent) + 1 - source.depth(root)
+    cm = source.child_map()
     queue = [(root, parent, slot)]
     new_root = None
     while queue:
         src, par, sl = queue.pop(0)
-        node = morph.nodes[src]
+        node = source.nodes[src]
         i = _free_id(morph)
-        if i is None or base + morph.depth(src) > MAX_DEPTH:
+        if i is None or base + source.depth(src) > MAX_DEPTH:
             continue
         if node.kind in ("joint", "wheel") and morph.n_servos >= MAX_SERVOS:
             continue
@@ -736,8 +740,8 @@ def _random_seed(rng: np.random.Generator) -> Morphology:
     while n_pairs > 1 and 2 * n_pairs * (2 + yaw + wheels) > MAX_SERVOS:
         n_pairs -= 1
     return template(n_pairs, wheels, yaw,
-                    thigh=round(float(rng.uniform(0.06, 0.12)), 6),
-                    shin=round(float(rng.uniform(0.06, 0.12)), 6),
+                    thigh=round(float(rng.uniform(*LENGTH_RANGE)), 6),
+                    shin=round(float(rng.uniform(*LENGTH_RANGE)), 6),
                     wheel_rad=round(float(rng.uniform(0.03, 0.05)), 6),
                     body_length=round(float(rng.uniform(
                         0.30 if n_pairs > 1 else 0.15, 0.40)), 6),
@@ -755,7 +759,7 @@ def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
                   if kind == "joint" else "yaw")
         n.flip = bool(rng.random() < 0.5)
     if kind in ("joint", "link", "spring", "tail"):
-        n.length = round(float(rng.uniform(0.06, 0.12)), 6)
+        n.length = round(float(rng.uniform(*LENGTH_RANGE)), 6)
     if kind == "spring":
         n.thick = round(float(rng.uniform(*SPRING_BLADE_RANGE)), 6)
     if kind == "tail":
@@ -823,9 +827,15 @@ def random_morphology(rng: np.random.Generator) -> np.ndarray:
     return encode(prune(morph))
 
 
+BIG_STEP_P = 0.2      # share of parameter steps that are large jumps
+SMALL_STEP, BIG_STEP = 0.1, 0.4     # step sizes in normalised gene units
+
+
 def _jitter(value: float, lo: float, hi: float, rng) -> float:
-    """Gaussian step in normalised units, clipped to the gene range."""
-    u = _unscale(value, lo, hi) + rng.normal(0.0, 0.1)
+    """Gaussian step in normalised units, clipped to the gene range; one step
+    in five is a large jump, so sizes can leave the neighbourhood they start in."""
+    sigma = BIG_STEP if rng.random() < BIG_STEP_P else SMALL_STEP
+    u = _unscale(value, lo, hi) + rng.normal(0.0, sigma)
     return round(_scale(float(np.clip(u, 0.0, 1.0)), lo, hi), 6)
 
 
@@ -965,8 +975,26 @@ def _op_copy(morph, rng):
         copy_subtree(morph, i, p, s)
 
 
-MUTATIONS = ((_op_param, 0.35), (_op_type, 0.15), (_op_add, 0.2),
-             (_op_remove, 0.1), (_op_mirror, 0.15), (_op_copy, 0.05))
+def _op_scale(morph, rng):
+    """Stretch or shrink a whole limb: every length in a subtree times one
+    factor between 1/2 and 2, so long-legged and stubby bodies are one step
+    away instead of many."""
+    cand = [i for i in morph.nodes if i != 0]
+    if not cand:
+        return
+    factor = float(np.exp(rng.uniform(-np.log(2), np.log(2))))
+    cm = morph.child_map()
+    stack = [int(rng.choice(cand))]
+    while stack:
+        n = morph.nodes[stack.pop()]
+        stack.extend(cm.get(n.id, {}).values())
+        if n.kind in ("joint", "link", "spring", "tail"):
+            n.length = round(float(np.clip(n.length * factor, *LENGTH_RANGE)), 6)
+
+
+MUTATIONS = ((_op_param, 0.30), (_op_type, 0.15), (_op_add, 0.2),
+             (_op_remove, 0.1), (_op_mirror, 0.15), (_op_copy, 0.05),
+             (_op_scale, 0.05))
 
 
 def mutate(genes: np.ndarray, rng: np.random.Generator,
@@ -979,6 +1007,30 @@ def mutate(genes: np.ndarray, rng: np.random.Generator,
         op(morph, rng)
         prune(morph)
     return encode(morph)
+
+
+def graft(genes: np.ndarray, donor: np.ndarray,
+          rng: np.random.Generator) -> np.ndarray:
+    """
+    Crossover between two bodies: a limb of `donor` (a whole subtree) is copied
+    onto a free slot of `genes`, mirrored onto the opposite torso side as well
+    when that side is free, as in Sims (1994). Cutting two trees in half and
+    swapping the halves would mostly give broken bodies; a graft keeps both
+    pieces whole. Returns `genes` unchanged when no limb or slot fits.
+    """
+    morph, other = decode(genes), decode(donor)
+    limbs = [i for i in other.nodes if i != 0]
+    free = [fs for fs in morph.free_slots() if morph.depth(fs[0]) < MAX_DEPTH]
+    if not limbs or not free:
+        return encode(morph)
+    root = int(rng.choice(limbs))
+    p, s = free[int(rng.integers(len(free)))]
+    new = copy_subtree(morph, root, p, s, source=other)
+    if new is not None and p == 0 and rng.random() < 0.5:
+        ms = mirror_slot("core", s)
+        if ms != s:
+            copy_subtree(morph, new, 0, ms, mirror=True)
+    return encode(prune(morph))
 
 
 # --------------------------------------------------------------------------

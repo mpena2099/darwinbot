@@ -414,3 +414,37 @@ def test_ensure_servo_with_every_core_slot_taken():
     slots = [(n.parent, n.slot) for n in m.nodes.values() if n.parent >= 0]
     assert len(slots) == len(set(slots))
     assert all(n.parent in m.nodes for n in m.nodes.values() if n.id)
+
+
+def test_graft_copies_a_donor_limb_into_a_valid_body():
+    rng = np.random.default_rng(0)
+    host, donor = mo.encode(mo.template(1)), mo.encode(mo.template(2, wheels=True))
+    grown = 0
+    for _ in range(30):
+        child = mo.graft(host, donor, rng)
+        m = mo.decode(child)
+        assert m.n_servos <= mo.MAX_SERVOS and m.n_nodes <= mo.MAX_NODES
+        assert np.array_equal(mo.encode(m), child)          # already repaired
+        grown += m.n_nodes > mo.template(1).n_nodes
+        assert m.n_wheels <= mo.template(2, wheels=True).n_wheels
+    assert grown > 15
+
+
+def test_graft_without_room_returns_the_host():
+    rng = np.random.default_rng(1)
+    full = mo.encode(mo.template(3, wheels=True, yaw=True))
+    lone = mo.encode(mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")}))
+    assert mo.decode(mo.graft(full, lone, rng)).n_nodes == mo.decode(full).n_nodes
+
+
+def test_scale_stretches_a_limb_within_range():
+    rng = np.random.default_rng(2)
+    seen = set()
+    for _ in range(40):
+        m = mo.template(2)
+        mo._op_scale(m, rng)
+        for n in m.nodes.values():
+            if n.kind == "joint":
+                assert mo.LENGTH_RANGE[0] <= n.length <= mo.LENGTH_RANGE[1]
+                seen.add(round(n.length, 3))
+    assert max(seen) > 0.15 and min(seen) < 0.07

@@ -291,6 +291,7 @@ def _ignore_sigint():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
+GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
 
@@ -380,7 +381,11 @@ def run(
                               device, popsize, archive.variants, None,
                               archive.task, archive.payload))
             else:
-                child = morpho.mutate(parents["solution"][i], rng)
+                if rng.random() < GRAFT_P:        # crossover with another elite
+                    donor = parents["solution"][(i + 1) % batch_size]
+                    child = morpho.graft(parents["solution"][i], donor, rng)
+                else:
+                    child = morpho.mutate(parents["solution"][i], rng)
                 tasks.append((child, parents["ctrl"][i], terrains,
                               budget_child, 0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,

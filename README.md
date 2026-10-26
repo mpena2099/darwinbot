@@ -87,7 +87,7 @@ Two nested loops:
    therefore judged by the best gait it can learn, not by a lucky random
    controller.
 
-Children are mutated copies of elites. The child starts its inner loop from the
+Children are mutated copies of elites, or grafts of two elites. The child starts its inner loop from the
 parent controller, so learned gaits are inherited along with the body
 (Lamarckian inheritance). Controller genes are indexed by the stable slot id of
 each module, so a mutation that keeps a module keeps its control. Only the genes
@@ -339,9 +339,13 @@ body within `MAX_NODES`, `MAX_SERVOS = 16` and depth 5: blocks that are
 inactive, unreachable, clash on a slot or break a limit are dropped. A joint or
 link with no child ends in an implicit foot.
 
-Mutation works on the decoded tree: nudge a continuous measure, change a module type (including into a passive kind),
-add a module or small subtree, remove a subtree, duplicate a subtree mirrored on
-the opposite slot, or copy it to another free slot. The initial population mixes
+Mutation works on the decoded tree: nudge a continuous measure (one step in five
+is a large jump), stretch or shrink a whole limb, change a module type (including
+into a passive kind), add a module or small subtree, remove a subtree, duplicate
+a subtree mirrored on the opposite slot, or copy it to another free slot. One
+child in five is instead a graft: a whole limb of a second elite is attached to
+a free slot of the parent, mirrored when the opposite torso side is free, the
+crossover Sims (1994) used for his creatures. The initial population mixes
 small random trees with seeds that reproduce mirrored leg pairs, with and
 without wheels.
 

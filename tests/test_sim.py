@@ -375,8 +375,8 @@ def test_episode_yaw_follows_spin_and_sign(spin):
     ep.model.opt.gravity[:] = 0.0            # no ground friction: the spin lasts
     reset = ep.reset
 
-    def spun(ctrl, model=None):
-        c = reset(ctrl, model)
+    def spun(ctrl, model=None, command=0.0):
+        c = reset(ctrl, model, command)
         ep.data.qvel[5] = spin               # angular velocity about world Z
         return c
 
@@ -512,3 +512,31 @@ def test_skid_and_spike_friction_follows_the_terrain(terrain, ground):
         gid = mujoco.mj_name2id(episode.model, mujoco.mjtObj.mjOBJ_GEOM, f"{kind}1")
         assert episode.model.geom_friction[gid, 0] == pytest.approx(factor * ground)
         assert episode.model.geom_priority[gid] == 2
+
+
+def test_steer_score_rewards_turning_the_way_asked():
+    straight = _metrics(dx=1.0)
+    left, right = _metrics(yaw=2.0), _metrics(yaw=-2.0)       # yaw > 0 is a left turn
+    both = fitness.task_score([straight, left, right], "steer")
+    wrong = fitness.task_score([straight, right, left], "steer")
+    only_straight = fitness.task_score([straight, straight, straight], "steer")
+    assert both > only_straight > wrong
+    assert fitness.task_score([straight], "forward") == fitness.score(straight)
+    assert fitness.commands("steer") == (0.0, -1.0, 1.0)
+    assert fitness.task_score([straight, _metrics(unstable=True), right],
+                              "steer") == fitness.UNSTABLE_SCORE
+
+
+def test_steering_command_turns_a_robot_both_ways():
+    """A wheeled body whose wheels answer the command turns each way."""
+    morph = mo.template(2, wheels=True)
+    ep = Episode(morph, te.flat(), seconds=2.0)
+    ctrl = np.full(co.CTRL_LENGTH, 0.5)
+    for act in ep.layout:                 # legs held still: a plain car
+        ctrl[co.node_base(act.slot) + co.AMP1] = ctrl[co.node_base(act.slot) + co.AMP2] = 0.0
+    wheels = [act for act in ep.layout if act.kind == "wheel"]
+    for act in wheels:
+        ctrl[co.node_base(act.slot) + co.OFFSET] = 0.6
+    ctrl[co.node_base(wheels[0].slot) + co.STEER_SHIFT] = 0.6   # one wheel steers
+    left, straight, right = (ep.run(ctrl, None, c).yaw for c in (-1.0, 0.0, 1.0))
+    assert (left - straight) * (right - straight) < 0   # opposite commands, opposite turns

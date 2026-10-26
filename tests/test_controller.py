@@ -24,7 +24,7 @@ def _genes(slot, **kw):
 
 def test_ctrl_length():
     assert co.CTRL_LENGTH == 1 + mo.MAX_NODES * co.CTRL_PER_NODE
-    assert co.CTRL_PER_NODE == 6
+    assert co.CTRL_PER_NODE == 8
 
 
 def test_active_genes_follow_actuators():
@@ -127,3 +127,25 @@ def test_starts_at_zero_and_ramps():
     half = c.targets(co.RAMP_TIME / 2)
     full = c.targets(co.RAMP_TIME)
     assert np.allclose(half, 0.5 * full)
+
+
+def test_steering_command_scales_amplitude_and_shifts_offset():
+    ctrl = _genes(1, amp1=0.4, offset=0.5, amp2=0.2)
+    b = co.node_base(1)
+    ctrl[b + co.STEER_GAIN], ctrl[b + co.STEER_SHIFT] = 1.0, 1.0   # gain +1, shift +0.4
+    ctrl[0] = 0.0                       # slowest rhythm: no speed clip in the way
+    straight = co.Params(ctrl, [JOINT])
+    right = co.Params(ctrl, [JOINT], command=1.0)
+    left = co.Params(ctrl, [JOINT], command=-1.0)
+    assert right.amp1[0] > straight.amp1[0] > left.amp1[0] == 0.0
+    assert np.isclose(right.offset[0] - straight.offset[0], co.STEER_SHIFT_RANGE[1])
+    assert (right.amp1[0] + 2 * right.amp2[0]) * right.omega <= co.SERVO_SPEED + 1e-9
+
+
+def test_steering_changes_wheel_speed_within_range():
+    ctrl = _genes(2, offset=1.0)
+    ctrl[co.node_base(2) + co.STEER_SHIFT] = 0.0                  # full negative change
+    fast = co.Params(ctrl, [WHEEL]).offset[0]
+    slowed = co.Params(ctrl, [WHEEL], command=1.0).offset[0]
+    assert slowed < fast and slowed >= co.WHEEL_RANGE[0]
+    assert co.Params(ctrl, [WHEEL], command=-1.0).offset[0] == co.WHEEL_RANGE[1]

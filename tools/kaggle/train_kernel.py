@@ -9,9 +9,12 @@ with
     kaggle datasets download <PROGRESS_DATASET> -p progress
     unzip -o progress/*.zip -d progress
 
-Setup, once: add a Kaggle secret KAGGLE_API_TOKEN holding your API token and
-attach it to this kernel (open it in the editor, Add-ons > Secrets). Without
-it the run trains as usual and only skips publishing.
+Publishing needs an API token. Kaggle hands secrets (Add-ons > Secrets) only to
+runs started from its website, not to versions pushed with `kaggle kernels
+push`, so the kernel also reads token.txt from a private dataset attached as a
+data source (TOKEN_DATASET). Use a token made only for this, so it can be
+revoked on its own. Without either the run trains as usual and only skips
+publishing.
 
 The code comes from a private dataset holding `git archive` of the repository
 (Kaggle may unpack it). Edit TRAIN_ARGS and PROGRESS_DATASET before pushing.
@@ -27,6 +30,7 @@ import threading
 
 TRAIN_ARGS = "--preset steer --batches 5"
 PROGRESS_DATASET = "your-user/darwinbot-progress"
+TOKEN_DATASET = "darwinbot-secret"   # slug of the private dataset with token.txt
 PUBLISH_EVERY = 900        # s
 TIME_LIMIT = 41000         # s, under the 12 h session limit
 
@@ -56,9 +60,15 @@ def api_token() -> bool:
             "KAGGLE_API_TOKEN")
         return True
     except Exception as e:
-        print(f"no KAGGLE_API_TOKEN secret ({type(e).__name__}): "
-              "progress is not published")
-        return False
+        reason = type(e).__name__
+    files = glob.glob(f"/kaggle/input/**/{TOKEN_DATASET}/**/token.txt",
+                      recursive=True)
+    if files:
+        os.environ["KAGGLE_API_TOKEN"] = open(files[0]).read().strip()
+        return True
+    print(f"no KAGGLE_API_TOKEN secret ({reason}) and no {TOKEN_DATASET} "
+          "dataset: progress is not published")
+    return False
 
 
 def last_batch() -> str:

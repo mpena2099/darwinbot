@@ -297,7 +297,9 @@ it trains, push `tools/kaggle/train_kernel.py` as a script kernel instead (with
 the code uploaded as a private dataset, see its docstring): every 15 minutes it
 publishes `train.log` and `archive.pkl` as a new version of a private dataset,
 which `kaggle datasets download <user>/darwinbot-progress -p progress` (then unzip)
-fetches. It needs a Kaggle secret `KAGGLE_API_TOKEN` attached to the kernel.
+fetches. It needs an API token: Kaggle secrets reach only runs started from the
+website, so for pushed versions the kernel reads it from a private dataset
+(`darwinbot-secret`, a `token.txt` with a token made only for this).
 
 ## Exporting a robot to build
 

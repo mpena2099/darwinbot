@@ -1421,6 +1421,10 @@ def summary(m: Morphology) -> str:
                 desc += f" r={n.wheel_rad * 1000:.0f}mm"
             elif n.kind == "tail":
                 desc += f" {n.length * 1000:.0f}mm {n.tail_mass * 1000:.0f}g"
+            elif n.kind == "foot":
+                desc += f" {n.foot_shape} r={n.foot_rad * 1000:.0f}mm"
+            if n.kind in ("joint", "link", "spring") and n.profile != "straight":
+                desc += f" {n.profile} {np.degrees(n.bend):+.0f}deg"
             desc += f" (slot {n.slot}, roll {np.degrees(n.rot):.0f} deg)"
         lines.append("  " * indent + f"#{i} {desc}")
         for s in sorted(cm.get(i, {})):

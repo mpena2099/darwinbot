@@ -210,6 +210,17 @@ def spring(width_mm: float = LINK_W, blade_mm: float = 4.0) -> Part:
     return part
 
 
+def _socketed(shape: Part, back_x: float) -> Part:
+    """Add the shin socket to a foot shape: a hub on its back face (x = back_x,
+    the side the limb comes from) drilled for the same socket as the sphere."""
+    wall = FOOT_SOCKET_D / 2 + 2
+    hub = Pos(back_x, 0, 0) * Rot(Y=-90) * Cylinder(
+        wall, 12, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    hole = Pos(back_x - 12, 0, 0) * Rot(Y=90) * Cylinder(
+        FOOT_SOCKET_D / 2, 9, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return shape + hub - hole
+
+
 def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
     """TPU tip in one of the FOOT_SHAPES. The sphere is the rounded cap over a
     socket for the shin. The blade is a long thin box, the pad a disc with its
@@ -219,9 +230,9 @@ def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
     stays at least 2 mm."""
     r = max(radius_mm, FOOT_MIN_R)
     if shape == "blade":
-        return Box(2 * r, r / 3, r)
+        return _socketed(Box(2 * r, r / 3, r), -r)
     if shape == "pad":
-        return Rot(Y=90) * Cylinder(r, r / 3)
+        return _socketed(Rot(Y=90) * Cylinder(r, r / 3), -r / 6)
     if shape == "claw":
         part = None
         for a in (-30.0, 0.0, 30.0):
@@ -231,7 +242,7 @@ def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
                       1.5 * r * math.sin(math.radians(a)), 0) * Sphere(r / 5)
             toe += end
             part = toe if part is None else part + toe
-        return part
+        return _socketed(part, 0.0)
     with BuildPart() as b:
         Sphere(r)
     dome = b.part - Pos(0, 0, -r) * Box(4 * r, 4 * r, 2 * r)

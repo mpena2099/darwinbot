@@ -6,7 +6,8 @@ Kaggle only hands over a kernel's output once the session ends. To follow a run
 from outside, this kernel uploads train.log and archive.pkl as a new version of
 PROGRESS_DATASET every PUBLISH_EVERY seconds and once more at the end; fetch it
 with
-    kaggle datasets download <PROGRESS_DATASET> -p progress --unzip
+    kaggle datasets download <PROGRESS_DATASET> -p progress
+    unzip -o progress/*.zip -d progress
 
 Setup, once: add a Kaggle secret KAGGLE_API_TOKEN holding your API token and
 attach it to this kernel (open it in the editor, Add-ons > Secrets). Without
@@ -54,8 +55,9 @@ def api_token() -> bool:
         os.environ["KAGGLE_API_TOKEN"] = UserSecretsClient().get_secret(
             "KAGGLE_API_TOKEN")
         return True
-    except Exception:
-        print("no KAGGLE_API_TOKEN secret: progress is not published")
+    except Exception as e:
+        print(f"no KAGGLE_API_TOKEN secret ({type(e).__name__}): "
+              "progress is not published")
         return False
 
 

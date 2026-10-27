@@ -296,7 +296,7 @@ Kaggle hands over a session's output only when it ends. To follow a run while
 it trains, push `tools/kaggle/train_kernel.py` as a script kernel instead (with
 the code uploaded as a private dataset, see its docstring): every 15 minutes it
 publishes `train.log` and `archive.pkl` as a new version of a private dataset,
-which `kaggle datasets download <user>/darwinbot-progress -p progress --unzip`
+which `kaggle datasets download <user>/darwinbot-progress -p progress` (then unzip)
 fetches. It needs a Kaggle secret `KAGGLE_API_TOKEN` attached to the kernel.
 
 ## Exporting a robot to build

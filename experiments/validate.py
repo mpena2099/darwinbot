@@ -10,10 +10,13 @@ latency) and compare with the nominal model.
   python experiments/validate.py --archive checkpoints/archive.pkl --workers 4
 
 The archive's task and payload are used, so the robot is checked under the
-conditions it was trained for (turn: |yaw| instead of dx).
+conditions it was trained for (turn: |yaw| instead of dx). A steer robot is
+checked under every steering command: straight (dx), left and right (radians
+turned the way asked). A command the robot does not follow even on the nominal
+model has no loss to measure and is left out of the mean.
 
-Prints PASS (exit 0) when the mean distance loss across terrains is below 30%
-else FAIL (exit 1).
+Prints PASS (exit 0) when the mean loss across terrains and commands is below
+30% else FAIL (exit 1).
 """
 
 import argparse
@@ -24,6 +27,7 @@ import numpy as np
 
 from darwinbot import morphology as morpho
 from darwinbot import randomize
+from darwinbot.fitness import commands
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
@@ -33,24 +37,31 @@ from replay import load  # noqa: E402
 MAX_LOSS = 0.30
 
 
-def progress(m, task):
-    """What the task is after: metres forward, or radians turned either way."""
-    return abs(m.yaw) if task == "turn" else m.dx
+COMMAND_NAMES = {0.0: "straight", -1.0: "left", 1.0: "right"}
+
+
+def progress(m, task, command=0.0):
+    """What the task is after: metres forward, radians turned either way
+    (turn), or radians turned the way asked (a steering command)."""
+    if task == "turn":
+        return abs(m.yaw)
+    return m.dx if command == 0.0 else -command * m.yaw
 
 
 def validate_terrain(task):
-    """Pool worker: nominal and randomised runs of one terrain."""
-    genes, ctrl, terrain, n, seconds, seed, payload, task = task
+    """Pool worker: nominal and randomised runs of one terrain and command.
+    Every command of a terrain meets the same variants (same seed)."""
+    genes, ctrl, terrain, n, seconds, seed, payload, task, command = task
     ep = Episode(morpho.decode(genes), terrain, seconds, payload)
-    nominal = ep.run(ctrl)
+    nominal = ep.run(ctrl, None, command)
     rng = np.random.default_rng(seed)
-    runs = [ep.run(ctrl, randomize.perturb(ep.model, rng)) for _ in range(n)]
-    prog = np.array([progress(r, task) for r in runs])
+    runs = [ep.run(ctrl, randomize.perturb(ep.model, rng), command) for _ in range(n)]
+    prog = np.array([progress(r, task, command) for r in runs])
     fell = np.array([r.fell or r.unstable for r in runs])
-    base = progress(nominal, task)
+    base = progress(nominal, task, command)
     loss = 1.0 - prog.mean() / base if base > 1e-6 else float("nan")
-    return terrain.name, base, float(prog.mean()), float(prog.min()), \
-        float(fell.mean()), loss
+    return terrain.name, COMMAND_NAMES.get(command, f"{command:+g}"), base, \
+        float(prog.mean()), float(prog.min()), float(fell.mean()), loss
 
 
 def main():
@@ -66,20 +77,23 @@ def main():
     archive, elite = load(a.archive, a.cell)
     print(morpho.summary(morpho.decode(elite.morph)))
     terrains = get_terrains(archive.terrains)
-    tasks = [(elite.morph, elite.ctrl, t, a.n, archive.seconds, a.seed + i, archive.payload, archive.task)
-             for i, t in enumerate(terrains)]
+    tasks = [(elite.morph, elite.ctrl, t, a.n, archive.seconds, a.seed + i,
+              archive.payload, archive.task, c)
+             for i, t in enumerate(terrains) for c in commands(archive.task)]
     if a.workers > 1:
         with multiprocessing.Pool(a.workers) as pool:
             rows = pool.map(validate_terrain, tasks)
     else:
         rows = [validate_terrain(t) for t in tasks]
 
-    what, unit = ("|yaw|", "rad") if archive.task == "turn" else ("dx", "m")
-    print(f"\n{a.n} variants per terrain, task {archive.task} ({what} in {unit})")
-    print(f"terrain    nominal {what}  mean {what}  worst {what}  fall rate  loss")
-    for name, nom, mean, worst, fall, loss in rows:
-        print(f"{name:9s} {nom:10.2f} {mean:8.2f} {worst:9.2f} {fall:9.0%} {loss:6.0%}")
-    losses = [r[5] for r in rows if not np.isnan(r[5])]
+    units = {"turn": "|yaw| in rad", "steer": "straight: dx in m, left/right: "
+             "yaw the way asked in rad"}.get(archive.task, "dx in m")
+    print(f"\n{a.n} variants per terrain, task {archive.task} ({units})")
+    print("terrain   command   nominal    mean   worst  fall rate  loss")
+    for name, cmd, nom, mean, worst, fall, loss in rows:
+        shown = "   -  (does not follow it)" if np.isnan(loss) else f"{loss:6.0%}"
+        print(f"{name:9s} {cmd:8s} {nom:8.2f} {mean:7.2f} {worst:7.2f} {fall:9.0%} {shown}")
+    losses = [r[6] for r in rows if not np.isnan(r[6])]
     mean_loss = float(np.mean(losses)) if losses else float("nan")
     ok = bool(losses) and mean_loss < MAX_LOSS
     print(f"\nmean loss {mean_loss:.0%} (limit {MAX_LOSS:.0%}): {'PASS' if ok else 'FAIL'}")

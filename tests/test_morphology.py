@@ -620,3 +620,41 @@ def test_nothing_hangs_on_segment_slot_one(seed):
                 assert n.slot != 1
         assert all(not (m.nodes[i].kind == "segment" and s == 1)
                    for i, s in m.free_slots())
+
+
+def _face_body(slots=(8, 9, 10, 11)):
+    m = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    for k, slot in enumerate(slots, start=1):
+        m.nodes[k] = mo.Node(k, "joint", 0, slot, 0.0, angle=0.25 + 0.1 * k,
+                             offset=0.3 + 0.1 * k)
+    return m
+
+
+def test_face_slots_round_trip():
+    m = _face_body()
+    _same(m, mo.decode(mo.encode(m)))
+    assert mo.mirror_slot("core", 9) == 9
+    assert mo.N_SLOTS["segment"] == 8
+
+
+def test_face_slot_frame_points_up_and_down():
+    m = _face_body()
+    for k, slot in enumerate((8, 9, 10, 11), start=1):
+        n = m.nodes[k]
+        off, rot = m.slot_frame(m.nodes[0], slot, n)
+        up = 1.0 if slot < 10 else -1.0
+        assert off[2] == pytest.approx(up * mo.TORSO_HEIGHT / 2)
+        assert rot[:, 0] == pytest.approx([0, 0, up])
+        assert np.allclose(rot @ rot.T, np.eye(3)) and np.linalg.det(rot) > 0
+        assert abs(rot[2, 1]) < 1e-9 and abs(rot[2, 2]) < 1e-9   # Y and Z horizontal
+        yaw = (2 * n.angle - 1) * np.pi
+        assert rot[:, 1] == pytest.approx([-np.sin(yaw), np.cos(yaw), 0])
+        assert off[0] == pytest.approx(0.5 * m.torso_polygon()[0 if slot % 2 == 0 else 4][0])
+        assert abs(off[1]) <= mo.FACE_Y * m.body_width / 2 + 1e-9
+
+
+def test_bottom_mount_on_a_short_torso_is_buildable():
+    # the servo hangs outside the plate, so it never meets the electronics
+    short = mo.Morphology(0.15, 0.20, {0: mo.Node(0, "core"),
+                                       1: mo.Node(1, "joint", 0, 10, 0.0)})
+    assert not mo.violations(short)

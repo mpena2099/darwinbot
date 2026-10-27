@@ -7,7 +7,11 @@ Modules
   core   root, torso plate + ESP32 + LiPo. The torso is an 8-vertex star-shaped
          polygon extruded to TORSO_HEIGHT, one vertex per old box direction
          (front, corners and side midpoints). 8 slots sit on the contour:
-         0 front, 1 back, 2..4 left side (front, middle, rear), 5..7 right side
+         0 front, 1 back, 2..4 left side (front, middle, rear), 5..7 right side.
+         4 more sit on the flat faces: 8 top-front, 9 top-rear, 10 bottom-front,
+         11 bottom-rear. A face child points straight up or down and ANGLE
+         yaws it about the vertical by +/-180 degrees; OFFSET slides it across
+         the torso (a bottom mount may not sit over the electronics)
   segment a spine servo (a hinge like a joint) at the node origin followed by a
          second torso plate, a LENGTH x WIDTH x SEGMENT_HEIGHT box. Its 8 slots
          use the core placement rule on that plate; slot 1 faces the parent and
@@ -55,8 +59,9 @@ of an L or arc link in BEND_RANGE (whole degrees in the genome, radians in
 code); both are ignored by other kinds. For a foot, the otherwise unused AXIS
 gene picks the foot shape. OFFSET and ANGLE are attachment fractions in
 [0, 1] whose meaning depends on the parent:
-  * core: OFFSET slides the mount along the contour by +/-30% of the edge to
-    the next or previous vertex and ANGLE yaws it by up to +/-60 degrees;
+  * core contour slots: OFFSET slides the mount along the contour by +/-30%
+    of the edge to the next or previous vertex and ANGLE yaws it by up to
+    +/-60 degrees; face slots: see core above;
   * joint/link tip: OFFSET and ANGLE are ignored;
   * joint/link sides (elbow): OFFSET sets the elbow distance (25..80 mm) and
     ANGLE the elbow angle (30..150 degrees), so 0.5 is a 90 degree elbow.
@@ -76,7 +81,7 @@ import numpy as np
 
 MAX_NODES  = 20
 MAX_SERVOS = 16
-MAX_LEGS   = 8          # one limb per torso slot
+MAX_LEGS   = 8          # descriptor scale of n_legs (normalise clips)
 MAX_DEPTH  = 5      # core is depth 0
 MAX_SEGMENTS = 2    # spine plates per body
 
@@ -145,7 +150,13 @@ CONTOUR_GENES = (PARENT, SLOT, ROT, TYPE, AXIS, FLIP, WIDTH, THICK)
 # Core slot -> contour vertex. Slot 0 is front (+X), then counter-clockwise.
 CORE_VERTEX = {0: 0, 2: 1, 3: 2, 4: 3, 1: 4, 7: 5, 6: 6, 5: 7}
 
-N_SLOTS = {"core": 8, "joint": 3, "link": 3, "wheel": 0, "foot": 0,
+# Core face slots (top-front, top-rear, bottom-front, bottom-rear) follow the
+# 8 contour slots. FACE_X is the fraction of the front or rear vertex radius.
+FACE_SLOTS = {8: (1.0, 1.0), 9: (-1.0, 1.0), 10: (1.0, -1.0), 11: (-1.0, -1.0)}
+FACE_X = 0.5
+FACE_Y = 0.8            # fraction of the half width at the mount's x
+
+N_SLOTS = {"core": 12, "joint": 3, "link": 3, "wheel": 0, "foot": 0,
            "spring": 3, "tail": 0, "skid": 0, "spike": 0, "caster": 0,
            "segment": 8}
 
@@ -203,9 +214,25 @@ def _rz(a: float) -> np.ndarray:
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=float)
 
 
+def _ry(a: float) -> np.ndarray:
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=float)
+
+
 def _rx(a: float) -> np.ndarray:
     c, s = np.cos(a), np.sin(a)
     return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=float)
+
+
+def _half_width(poly: List[Tuple[float, float]], x: float) -> float:
+    """Half width of the torso contour at `x`: the smaller |y| of the polygon
+    edge crossings of that x, so a star-shaped contour never puts a face mount
+    past its own edge. 0 when the line misses the polygon."""
+    ys = []
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+        if (x1 - x) * (x2 - x) <= 0 and x1 != x2:
+            ys.append(abs(y1 + (y2 - y1) * (x - x1) / (x2 - x1)))
+    return min(ys) if ys else 0.0
 
 
 def section_radius(node: Node) -> float:
@@ -427,6 +454,18 @@ class Morphology:
         offset = 0.5 if child is None else child.offset
         angle = 0.5 if child is None else child.angle
         yaw = (2.0 * angle - 1.0) * np.radians(60.0)
+        if parent.kind == "core" and slot in FACE_SLOTS:
+            # Face mount: the child's X points straight up (top) or down
+            # (bottom), then ANGLE yaws it about the vertical. The take-X-to-
+            # +-Z turn is a rotation about Y, which keeps local Y horizontal,
+            # and local Z horizontal too, so the joint frame stays defined.
+            side, up = FACE_SLOTS[slot]
+            poly = self.torso_polygon()
+            x = FACE_X * poly[0 if side > 0 else 4][0]
+            y = (2.0 * offset - 1.0) * FACE_Y * _half_width(poly, x)
+            turn = _ry(-up * np.pi / 2)
+            return (np.array([x, y, up * TORSO_HEIGHT / 2]),
+                    _rz((2.0 * angle - 1.0) * np.pi) @ turn)
         if parent.kind in ("core", "segment"):
             if parent.kind == "core":
                 poly, base = self.torso_polygon(), np.zeros(3)
@@ -834,7 +873,7 @@ def _ensure_servo(morph: Morphology):
     if morph.n_servos:
         return
     taken = morph.child_map().get(0, {})
-    if len(taken) == 8:
+    if len(taken) == N_SLOTS["core"]:
         _drop_subtree(morph, taken[min(taken)])
         taken = morph.child_map().get(0, {})
     if _free_id(morph) is None:
@@ -842,7 +881,7 @@ def _ensure_servo(morph: Morphology):
         _drop_subtree(morph, max(k for k in morph.nodes if k != 0 and k not in parents))
         taken = morph.child_map().get(0, {})
     i = _free_id(morph)
-    slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1) if s not in taken)
+    slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1, 8, 9, 10, 11) if s not in taken)
     morph.nodes[i] = Node(i, "joint", 0, slot, 3 * np.pi / 2)
 
 
@@ -873,6 +912,8 @@ def prune(morph: Morphology) -> Morphology:
 def mirror_slot(kind: str, slot: int) -> int:
     """Slot on the other side of the XZ plane."""
     if kind in ("core", "segment"):
+        if slot >= 8:                   # face slots lie on the mid plane
+            return slot
         return slot + 3 if 2 <= slot <= 4 else slot - 3 if slot >= 5 else slot
     return {1: 2, 2: 1}.get(slot, slot)
 

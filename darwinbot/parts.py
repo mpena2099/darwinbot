@@ -313,11 +313,18 @@ def caster_fork() -> Part:
 
 def _mount(m, width_mm: float):
     """(x, y, yaw in degrees) of a torso mount. A mount given as (x, y) is
-    turned to face outward: 90 degrees on a side edge, otherwise 0."""
-    if len(m) == 3:
+    turned to face outward: 90 degrees on a side edge, otherwise 0. A fourth
+    element True marks a face mount (see _face)."""
+    if len(m) >= 3:
         return float(m[0]), float(m[1]), float(m[2])
     x, y = m
     return float(x), float(y), 90.0 if abs(abs(y) - width_mm / 2) < 1e-3 else 0.0
+
+
+def _face(m) -> bool:
+    """True for a mount on the top or bottom face of the torso: drilled through
+    the plate with the mounting pattern, no edge tab."""
+    return len(m) > 3 and bool(m[3])
 
 
 def _footprint(yaw_deg: float):
@@ -334,7 +341,8 @@ def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
     under its servo bracket and the common mounting pattern. A mount is
     (x, y, yaw_deg): the slot position in mm and the yaw of the child on the
     core (its attachment angle), which turns both the tab footprint and the
-    pattern. A plain (x, y) is turned 90 degrees on a side edge and 0
+    pattern; a fourth element True (a face mount) drills the pattern only,
+    with no tab. A plain (x, y) is turned 90 degrees on a side edge and 0
     elsewhere. The bracket is centred on the slot as in the simulation, so part
     of it overhangs the edge and the tab carries it. `electronics=False` skips
     the board holes and battery strap, for a segment plate."""
@@ -347,6 +355,8 @@ def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
     ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
     feet = []                                   # bracket footprints (x, y, extent x, extent y)
     for m in mounts:
+        if _face(m):
+            continue
         x, y, yaw = _mount(m, width_mm)
         fx, fy = _footprint(yaw)
         feet.append((x, y, fx, fy))
@@ -384,6 +394,8 @@ def _plate_bounds(polygon, mounts):
     y1 = max(float(y) for _, y in polygon)
     width_mm = y1 - y0
     for m in mounts:
+        if _face(m):
+            continue
         x, y, yaw = _mount(m, width_mm)
         fx, fy = _footprint(yaw)
         x0, x1 = min(x0, x - fx / 2), max(x1, x + fx / 2)

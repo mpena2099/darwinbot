@@ -284,3 +284,19 @@ def test_segment_plate_and_spine_servo_row(tmp_path):
     assert text.count("spine servo") >= 1
     ctl = read_control_file(out / "control.json")
     assert len(ctl["servos"]) == morph.n_servos
+
+
+def test_face_mounts_export(tmp_path):
+    m = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 8, 0.0, angle=0.7)
+    m.nodes[2] = mo.Node(2, "joint", 0, 11, 0.0)
+    m.nodes[3] = mo.Node(3, "joint", 0, 3, 3 * np.pi / 2)
+    pos = mount_positions_mm(m)
+    assert [len(p) for p in pos] == [3, 4, 4]       # side slot 3, then 8 and 11
+    assert "top front" in parent_chain(m, 1) and "bottom rear" in parent_chain(m, 2)
+    pytest.importorskip("build123d")
+    out = tmp_path / "robot"
+    export_robot(_elite(m), out, "face-robot")
+    assert any(s.startswith("torso_") for s in os.listdir(out / "parts"))
+    text = (out / "assembly.md").read_text()
+    assert "top front" in text and "bottom rear" in text

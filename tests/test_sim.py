@@ -611,3 +611,16 @@ def test_spine_segment_builds_and_moves():
         swing = max(swing, abs(float(
             episode.data.qpos[episode.model.jnt_qposadr[jid]])))
     assert swing > 0.02
+
+
+def test_legs_on_the_bottom_face_build_and_simulate():
+    morph = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    for k, (slot, rot) in enumerate(((10, 0.0), (11, 0.0), (3, 3 * np.pi / 2),
+                                     (6, 3 * np.pi / 2)), start=1):
+        morph.nodes[k] = mo.Node(k, "joint", 0, slot, rot)
+    morph = mo.decode(mo.encode(morph))
+    assert morph.n_legs == 4 and morph.lowest_z() < -mo.TORSO_HEIGHT / 2
+    episode = Episode(morph, te.flat(), seconds=0.6)
+    assert episode.buildable
+    metrics = episode.run(_ctrl(morph, amp=0.3))
+    assert np.isfinite([metrics.dx, metrics.dy, metrics.energy]).all()

@@ -26,7 +26,8 @@ from darwinbot.controller import Controller
 from darwinbot.terrain import get_terrains
 
 CORE_SLOTS = ("front", "back", "left-front", "left-middle", "left-rear",
-              "right-front", "right-middle", "right-rear")
+              "right-front", "right-middle", "right-rear",
+              "top front", "top rear", "bottom front", "bottom rear")
 ELBOW_SLOTS = {1: "left elbow", 2: "right elbow"}
 
 
@@ -64,12 +65,18 @@ def screw_length(stack_mm):
 def mount_positions_mm(morph):
     """(x, y, yaw in degrees) on the torso plate of every used core slot, in
     mm. The yaw is the attachment angle of the child on the core, in the
-    frame of the slot; it turns the tab footprint and the mounting pattern."""
+    frame of the slot; it turns the tab footprint and the mounting pattern.
+    A face mount (top or bottom) has the yaw about the vertical and a fourth
+    element True: it is drilled through the plate, with no edge tab."""
     out = []
     for slot, child in sorted(morph.child_map().get(0, {}).items()):
         off, rot = morph.slot_frame(morph.nodes[0], slot, morph.nodes[child])
-        out.append((float(off[0]) * 1000, float(off[1]) * 1000,
-                    float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))))
+        x, y = float(off[0]) * 1000, float(off[1]) * 1000
+        if slot in morpho.FACE_SLOTS:      # local X is vertical: read the yaw off Y
+            out.append((x, y, float(np.degrees(np.arctan2(-rot[0, 1], rot[1, 1]))),
+                        True))
+        else:
+            out.append((x, y, float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))))
     return out
 
 

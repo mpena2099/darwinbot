@@ -36,7 +36,10 @@ Amplitudes are clipped so no servo is asked to move faster than SERVO_SPEED:
 (amp1 + 2 * amp2) * omega <= SERVO_SPEED, scaling both down proportionally.
 """
 
+import math
+
 import numpy as np
+from numba import njit
 
 from darwinbot.morphology import MAX_NODES, ActuatorLayout, Morphology
 
@@ -100,6 +103,20 @@ def normalised_load(force):
 def phase_rate(theta, omega, sigma, force):
     """dtheta/dt of one joint (or an array of them)."""
     return omega - sigma * normalised_load(force) * np.cos(theta)
+
+
+@njit(cache=True)
+def advance_phases(theta, omega, sigma, force, dt):
+    """theta += dt * phase_rate(theta, omega, sigma, force), in place, compiled:
+    the physics loop calls it every step. Same operations in the same order as
+    phase_rate, so the phases match the NumPy version bit for bit."""
+    for i in range(theta.shape[0]):
+        n = force[i] / SERVO_TORQUE
+        if n > 1.0:
+            n = 1.0
+        elif n < -1.0:
+            n = -1.0
+        theta[i] += dt * (omega - sigma[i] * n * math.cos(theta[i]))
 
 
 def servo_targets(theta, t, p: "Params"):
@@ -184,8 +201,7 @@ class Controller:
 
     def advance(self, dt: float, load: np.ndarray) -> None:
         """Integrate the phases over one physics step (explicit Euler)."""
-        self.theta += dt * phase_rate(self.theta, self.omega,
-                                      self.params.sigma, load)
+        advance_phases(self.theta, self.omega, self.params.sigma, load, dt)
 
     def step(self, t: float, dt: float, load: np.ndarray) -> np.ndarray:
         """Targets at time t, then the phases advanced by dt under this load."""

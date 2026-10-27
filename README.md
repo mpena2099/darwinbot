@@ -311,6 +311,10 @@ angle, every servo one bracket, every wheel, caster, tail, skid, spike and foot
 get one STL per distinct size. Springs and spikes are printed in TPU, the rest in
 PLA. The bill of materials counts everything from the tree.
 
+`python tools/parts_sheet.py exports/<type>` draws every STL of the export on
+one image (`exports/<type>/parts.png`), with its bounding box in mm, to check
+the parts before slicing.
+
 Servo dimensions in `darwinbot/parts.py` (horn and mounting holes, body size)
 are placeholders marked "measure a real STS3215 and update": check them
 against a real servo before printing.

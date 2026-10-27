@@ -253,7 +253,9 @@ Without `--type`, `replay.py` shows the best robot overall.
 rotates the camera, right drag pans, scroll zooms, double click selects a
 body and Ctrl + double click makes the camera follow it, space pauses, Tab
 hides the side panels. `--speed 0.25` plays in slow motion (the window has
-no speed control of its own). The simulation does not reset, so the robot eventually
+no speed control of its own). The arrow keys steer the robot while it runs
+(left and right turn, up or down go straight), and `--command -1` or `1` starts
+it turning, also for `--record`. The simulation does not reset, so the robot eventually
 leaves the terrain.
 
 ### Long runs

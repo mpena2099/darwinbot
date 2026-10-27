@@ -12,6 +12,8 @@ Código, comentários e README em inglês; `docs/` e este arquivo em português.
 
 Rodar da raiz, com o venv ativo (`venv/`, Python 3.10).
 
+A documentação vive em `docs/` como site MkDocs Material (`mkdocs serve` para ver; `pip install -e ".[docs]"`). O README é só a página de entrada: mudança de conteúdo vai para a página correspondente em `docs/`, não para o README. Planos privados em `docs/plano-*.md` ficam fora do site (`exclude_docs`).
+
 ```bash
 pip install -e ".[video,cad]"                 # gpu: venv separado (venv-gpu) com ".[gpu]"
 pytest tests -q                               # testes, ~1 min; os de GPU se pulam sem jax

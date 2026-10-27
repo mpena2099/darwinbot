@@ -1,0 +1,59 @@
+site_name: DarwinBot
+site_url: https://mpena2099.github.io/darwinbot/
+repo_url: https://github.com/mpena2099/darwinbot
+docs_dir: docs
+exclude_docs: |
+  plano-*.md
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Install: install.md
+      - First run: first-run.md
+  - How it works:
+      - Overview: overview.md
+      - Evolution for beginners: evolution-guide.md
+      - Guia (português): guia-evolucao.md
+      - Body genome: genome.md
+      - Controller and steering: controller.md
+      - Fitness and tasks: fitness-tasks.md
+  - Training:
+      - Environments and presets: environments.md
+      - Long runs, GPU and Kaggle: long-runs.md
+  - Building a robot:
+      - Exporting a robot: exporting.md
+      - Real parts: real-parts.md
+      - Control file format: formato-controle.md
+      - Hardware data: hardware-dados.md
+  - Results and gallery:
+      - Results: results.md
+      - Gallery: gallery.md
+  - Roadmap: roadmap.md
+  - About: about.md

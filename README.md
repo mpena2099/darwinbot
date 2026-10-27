@@ -292,6 +292,13 @@ on Kaggle's free sessions instead:
 Upload a notebook with *Create > New Notebook > File > Import Notebook*. While
 the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.
 
+Kaggle hands over a session's output only when it ends. To follow a run while
+it trains, push `tools/kaggle/train_kernel.py` as a script kernel instead (with
+the code uploaded as a private dataset, see its docstring): every 15 minutes it
+publishes `train.log` and `archive.pkl` as a new version of a private dataset,
+which `kaggle datasets download <user>/darwinbot-progress -p progress --unzip`
+fetches. It needs a Kaggle secret `KAGGLE_API_TOKEN` attached to the kernel.
+
 ## Exporting a robot to build
 
 `experiments/export.py --type <type>` writes `exports/<type>/`:

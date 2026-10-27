@@ -613,6 +613,15 @@ list, not in any single robot.
   topology optimisation of every printed part after evolution, under the servo stall torque and the loads seen in
   simulation, removing material where nothing is carried. The parts come out
   bone-like and lighter while the evolved body and its interfaces stay the same.
+- **Elastic tendons across joints**: printed TPU tendons that span one or two
+  joints and store energy, as a kangaroo bounces on its tendons and a
+  hamstring moves hip and knee together (MuJoCo simulates tendons natively).
+- **Direction-dependent friction**: printed scales that slide forwards and
+  grip backwards, the way a snake's belly scales push it along.
+- **Coupled oscillators**: each joint's oscillator also feels its neighbours'
+  phases, the way the spinal circuits of each leg synchronise a gait, instead
+  of coordinating only through the body and the phase genes. Control only, no
+  new part.
 - **Closed loops grown by evolution**: a "ligament" gene that pins the tip of
   one part to another part of the body, so linkages such as four-bar
   mechanisms can arise on their own (a wrasse's jaw and the crossed ligaments of

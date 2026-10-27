@@ -329,14 +329,15 @@ def _footprint(yaw_deg: float):
     return ol * c + ow * s, ol * s + ow * c
 
 
-def torso_plate(polygon, mounts) -> Part:
+def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
     """Extruded contour polygon (mm); each used core slot in `mounts` gets a tab
     under its servo bracket and the common mounting pattern. A mount is
     (x, y, yaw_deg): the slot position in mm and the yaw of the child on the
     core (its attachment angle), which turns both the tab footprint and the
     pattern. A plain (x, y) is turned 90 degrees on a side edge and 0
     elsewhere. The bracket is centred on the slot as in the simulation, so part
-    of it overhangs the edge and the tab carries it."""
+    of it overhangs the edge and the tab carries it. `electronics=False` skips
+    the board holes and battery strap, for a segment plate."""
     t = PLATE_T
     pts = [(float(x), float(y)) for x, y in polygon]
     part = extrude(Polygon(*pts, align=None), amount=t)
@@ -354,6 +355,8 @@ def torso_plate(polygon, mounts) -> Part:
     for m in mounts:
         x, y, yaw = _mount(m, width_mm)
         part -= Pos(x, y, 0) * _mount_holes(t, yaw)
+    if not electronics:
+        return part
     # ESP32 board hole pattern, centred behind the origin.
     # PLACEHOLDER: 58 x 23 mm is a guess. Check it against your board
     # (candidates in docs/hardware-dados.md) before printing.

@@ -34,12 +34,13 @@ import numpy as np
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
-                                  ELECTRONICS_BOX, SERVO_BOX, SKID_SIZE,
-                                  SPIKE_LENGTH, SPIKE_RADIUS, SPRING_DAMPING,
-                                  TAIL_BAR_SIZE, TAIL_TIP_RADIUS, TORSO_HEIGHT,
-                                  Actuator, ActuatorLayout, Morphology,
-                                  elbow_distance, link_path, link_tip,
-                                  plate_thick, spring_stiffness)
+                                  ELECTRONICS_BOX, SEGMENT_HEIGHT, SERVO_BOX,
+                                  SKID_SIZE, SPIKE_LENGTH, SPIKE_RADIUS,
+                                  SPRING_DAMPING, TAIL_BAR_SIZE, TAIL_TIP_RADIUS,
+                                  TORSO_HEIGHT, Actuator, ActuatorLayout,
+                                  Morphology, elbow_distance, link_path,
+                                  link_tip, plate_thick, segment_box,
+                                  spring_stiffness)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
@@ -101,6 +102,15 @@ def _torso(morph: Morphology) -> Tuple[str, str]:
         geoms.append(f'<geom type="mesh" mesh="torso{k}" mass="{mass:.6f}" '
                      f'rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>')
     return "\n    ".join(assets), "\n      ".join(geoms)
+
+
+def _segment_geoms(node) -> str:
+    """Second torso plate of a segment, centred after its spine servo."""
+    centre, half = segment_box(node)
+    mass = SHELL_DENSITY * node.length * node.width * SEGMENT_HEIGHT
+    return (f'<geom name="segment{node.id}" type="box" pos="{_f(*centre)}" '
+            f'size="{_f(*half)}" mass="{mass:.6f}" '
+            f'rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>')
 
 
 def _frame_attrs(morph: Morphology, node) -> str:
@@ -218,6 +228,18 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
                  f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_servo_dress(AXIS_LOCAL[node.axis])}\n'
                  f'{_link_geoms(node)}')
+    elif node.kind == "segment":
+        name = f"j{i}"
+        rng = JOINT_RANGE[node.axis]
+        sign = -1.0 if node.flip else 1.0
+        axis = sign * np.array(AXIS_LOCAL[node.axis])
+        actuators.append(
+            f'<position name="{name}" joint="{name}" kp="{JOINT_KP}" kv="0" '
+            f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
+        layout.append(Actuator(i, "joint", node.axis))
+        inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
+                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n'
+                 f'{_servo_dress(AXIS_LOCAL[node.axis])}\n{_segment_geoms(node)}')
     elif node.kind == "link":
         inner = _link_geoms(node)
     elif node.kind == "spring":

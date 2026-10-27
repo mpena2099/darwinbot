@@ -583,3 +583,31 @@ def test_steering_command_turns_a_robot_both_ways():
     ctrl[co.node_base(wheels[0].slot) + co.STEER_SHIFT] = 0.6   # one wheel steers
     left, straight, right = (ep.run(ctrl, None, c).yaw for c in (-1.0, 0.0, 1.0))
     assert (left - straight) * (right - straight) < 0   # opposite commands, opposite turns
+
+
+def test_spine_segment_builds_and_moves():
+    morph = mo.template(2)
+    first = max(morph.nodes) + 1
+    morph.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
+                                 length=0.12, width=0.10)
+    morph.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0,
+                                     axis="pitch", length=0.08)
+    morph = mo.decode(mo.encode(morph))
+    episode = Episode(morph, te.flat(), seconds=0.6)
+    assert episode.buildable
+    assert episode.model.nu == len(episode.layout) == morph.n_servos
+    ctrl = _ctrl(morph, amp=0.4)
+    metrics = episode.run(ctrl)
+    assert not metrics.unstable
+    for value in (metrics.dx, metrics.dy, metrics.energy, metrics.mass,
+                  metrics.duty, metrics.height, metrics.yaw):
+        assert np.isfinite(value)
+    jid = mujoco.mj_name2id(episode.model, mujoco.mjtObj.mjOBJ_JOINT,
+                            f"j{first}")
+    controller = episode.reset(ctrl)
+    swing = 0.0
+    for _ in range(episode.n_steps):
+        episode.step(controller)
+        swing = max(swing, abs(float(
+            episode.data.qpos[episode.model.jnt_qposadr[jid]])))
+    assert swing > 0.02

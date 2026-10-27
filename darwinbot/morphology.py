@@ -8,6 +8,11 @@ Modules
          polygon extruded to TORSO_HEIGHT, one vertex per old box direction
          (front, corners and side midpoints). 8 slots sit on the contour:
          0 front, 1 back, 2..4 left side (front, middle, rear), 5..7 right side
+  segment a spine servo (a hinge like a joint) at the node origin followed by a
+         second torso plate, a LENGTH x WIDTH x SEGMENT_HEIGHT box. Its 8 slots
+         use the core placement rule on that plate; slot 1 faces the parent and
+         is never used. Segments attach only to core or segment slots 0 and 1,
+         at most MAX_SEGMENTS per body, and carry no electronics
   joint  one STS3215 servo + a printed link. Slots: 0 tip, 1 left, 2 right
          (the side slots are an elbow at the end of the link)
   link   passive printed link, same slots as the joint
@@ -73,6 +78,7 @@ MAX_NODES  = 20
 MAX_SERVOS = 16
 MAX_LEGS   = 8          # one limb per torso slot
 MAX_DEPTH  = 5      # core is depth 0
+MAX_SEGMENTS = 2    # spine plates per body
 
 LENGTH_RANGE = (0.04, 0.20)               # m, joint / link length
 LINK_WIDTH_RANGE = (0.012, 0.030)         # m, link width
@@ -99,6 +105,9 @@ TORSO_HEIGHT = 0.06                       # m
 CONTOUR_RANGE = (0.4, 1.4)                # contour factor of a torso vertex
 ELECTRONICS_BOX = (0.10, 0.06)            # m, ESP32 + LiPo footprint, centred
 SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
+SEGMENT_LENGTH_RANGE = (0.08, 0.22)      # m, spine plate length
+SEGMENT_WIDTH_RANGE = (0.08, 0.22)       # m, spine plate width
+SEGMENT_HEIGHT = 0.03                    # m, spine plate thickness
 ELBOW_OFFSET = (0.04 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
 
 # Printability: a part must print on a common bed and survive the servo stall torque.
@@ -114,7 +123,8 @@ SPRING_FLEX_LEN = 0.012  # m, free blade length
 SPRING_DAMPING = 0.02    # N*m*s/rad
 
 TYPE_KINDS = ("joint", "link", "wheel", "foot", "spring",
-              "tail", "skid", "spike", "caster")             # from the TYPE gene
+              "tail", "skid", "spike", "caster", "segment")    # from the TYPE gene
+SERVO_JOINT_KINDS = ("joint", "segment")   # modules driven like a joint
 AXES = ("pitch", "yaw", "roll")
 AXIS_LOCAL = {"pitch": (0.0, 0.0, 1.0), "yaw": (0.0, 1.0, 0.0),
               "roll": (1.0, 0.0, 0.0)}
@@ -136,7 +146,24 @@ CONTOUR_GENES = (PARENT, SLOT, ROT, TYPE, AXIS, FLIP, WIDTH, THICK)
 CORE_VERTEX = {0: 0, 2: 1, 3: 2, 4: 3, 1: 4, 7: 5, 6: 6, 5: 7}
 
 N_SLOTS = {"core": 8, "joint": 3, "link": 3, "wheel": 0, "foot": 0,
-           "spring": 3, "tail": 0, "skid": 0, "spike": 0, "caster": 0}
+           "spring": 3, "tail": 0, "skid": 0, "spike": 0, "caster": 0,
+           "segment": 8}
+
+
+def is_joint(kind: str) -> bool:
+    """True for every module driven as a position servo joint."""
+    return kind in SERVO_JOINT_KINDS
+
+
+def segment_center(node: "Node") -> np.ndarray:
+    """Centre of a segment plate in the node frame."""
+    return np.array([SERVO_BOX[0] / 2 + node.length / 2, 0.0, 0.0])
+
+
+def segment_box(node: "Node") -> Tuple[np.ndarray, np.ndarray]:
+    """Centre and half extents of a segment plate in the node frame."""
+    return segment_center(node), np.array(
+        [node.length / 2, node.width / 2, SEGMENT_HEIGHT / 2])
 
 
 class Actuator(NamedTuple):
@@ -308,7 +335,8 @@ class Morphology:
     def free_slots(self) -> List[Tuple[int, int]]:
         taken = {(n.parent, n.slot) for n in self.nodes.values() if n.parent >= 0}
         return [(i, s) for i, n in self.nodes.items()
-                for s in range(N_SLOTS[n.kind]) if (i, s) not in taken]
+                for s in range(N_SLOTS[n.kind])
+                if (i, s) not in taken and not (n.kind == "segment" and s == 1)]
 
     def copy(self) -> "Morphology":
         return Morphology(self.body_length, self.body_width,
@@ -322,11 +350,15 @@ class Morphology:
 
     @property
     def n_joints(self) -> int:
-        return sum(n.kind == "joint" for n in self.nodes.values())
+        return sum(is_joint(n.kind) for n in self.nodes.values())
 
     @property
     def n_wheels(self) -> int:
         return sum(n.kind == "wheel" for n in self.nodes.values())
+
+    @property
+    def n_segments(self) -> int:
+        return sum(n.kind == "segment" for n in self.nodes.values())
 
     @property
     def n_springs(self) -> int:
@@ -338,7 +370,8 @@ class Morphology:
 
     @property
     def n_legs(self) -> int:
-        """Limbs on the torso that have a servo joint and no wheel."""
+        """Limbs on the torso (core and every segment) that have a servo joint
+        and no wheel. A segment itself is a spine joint, not a limb."""
         kids: Dict[int, list] = {}
         for i, n in self.nodes.items():
             kids.setdefault(n.parent, []).append(i)
@@ -348,15 +381,21 @@ class Morphology:
             for j in kids.get(i, []):
                 yield from kinds(j)
 
-        root = next(i for i, n in self.nodes.items() if n.parent < 0)
-        limbs = [set(kinds(i)) for i in kids.get(root, [])]
-        return sum("joint" in k and "wheel" not in k for k in limbs)
+        limbs = []
+        for i, n in self.nodes.items():
+            if n.kind not in ("core", "segment"):
+                continue
+            for c in kids.get(i, []):
+                if self.nodes[c].kind != "segment":
+                    limbs.append(set(kinds(c)))
+        return sum(any(is_joint(k) for k in s) and "wheel" not in s
+                   for s in limbs)
 
     def layout(self) -> ActuatorLayout:
         out = []
         for i in self.order:
             n = self.nodes[i]
-            if n.kind == "joint":
+            if is_joint(n.kind):
                 out.append(Actuator(i, "joint", n.axis))
             elif n.kind == "wheel":
                 out.append(Actuator(i, "wheel", "wheel"))
@@ -373,6 +412,14 @@ class Morphology:
         return [(float(factor * x), float(factor * y))
                 for factor, (x, y) in zip(self.contour, box)]
 
+    def segment_polygon(self, node: Node) -> List[Tuple[float, float]]:
+        """The 8 contour vertices of a segment plate in its own frame, with
+        the core numbering and all contour factors 1."""
+        l, w = node.length / 2, node.width / 2
+        box = [(l, 0.0), (l, w), (0.0, w), (-l, w),
+               (-l, 0.0), (-l, -w), (0.0, -w), (l, -w)]
+        return [(float(x), float(y)) for x, y in box]
+
     def slot_frame(self, parent: Node, slot: int,
                    child: Optional[Node] = None) -> Tuple[np.ndarray, np.ndarray]:
         """Offset and rotation of a slot in the frame of its parent. The
@@ -380,15 +427,18 @@ class Morphology:
         offset = 0.5 if child is None else child.offset
         angle = 0.5 if child is None else child.angle
         yaw = (2.0 * angle - 1.0) * np.radians(60.0)
-        if parent.kind == "core":
-            poly = self.torso_polygon()
+        if parent.kind in ("core", "segment"):
+            if parent.kind == "core":
+                poly, base = self.torso_polygon(), np.zeros(3)
+            else:
+                poly, base = self.segment_polygon(parent), segment_center(parent)
             k = CORE_VERTEX[slot]
             t = (2.0 * offset - 1.0) * 0.3
             a = poly[k]
             b = poly[(k + 1) % 8] if t >= 0 else poly[(k - 1) % 8]
             f = abs(t)
             x, y = a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])
-            return (np.array([x, y, 0]),
+            return (base + np.array([x, y, 0]),
                     _rz(float(np.arctan2(y, x)) + yaw))
         if slot == 0:
             tip, rot = link_tip(parent)
@@ -465,6 +515,9 @@ class Morphology:
             elif n.kind == "spike":
                 out.append((i, pos + rot @ np.array([SPIKE_LENGTH, 0, 0]),
                             SPIKE_RADIUS))
+            elif n.kind == "segment":
+                out.append((i, pos + rot @ segment_center(n),
+                            SEGMENT_HEIGHT / 2))
             elif n.kind in ("joint", "link", "spring") and i not in cm:
                 tip, _ = link_tip(n)
                 out.append((i, pos + rot @ tip, section_radius(n)))
@@ -486,6 +539,12 @@ class Morphology:
                 for p in link_path(n):
                     r = max(r, float(np.linalg.norm(pos + rot @ p))
                             + section_radius(n))
+            elif n.kind == "segment":
+                centre, half = segment_box(n)
+                corners = np.array([[sx, sy, sz] for sx in (-1, 1)
+                                    for sy in (-1, 1) for sz in (-1, 1)]) * half
+                r = max(r, max(float(np.linalg.norm(pos + rot @ (centre + c)))
+                               for c in corners))
         for _, p, rad in self.terminal_points():
             r = max(r, float(np.linalg.norm(p)) + rad)
         return r
@@ -497,8 +556,13 @@ class Morphology:
                             for sz in (-1, 1)]) * (np.array(SERVO_BOX) / 2)
         for i, (pos, rot) in self.frames().items():
             n = self.nodes[i]
-            if n.kind in ("joint", "wheel"):
+            if n.kind in ("joint", "wheel", "segment"):
                 low = min(low, float((pos + corners @ rot.T)[:, 2].min()))
+            if n.kind == "segment":
+                centre, half = segment_box(n)
+                box = np.array([[sx, sy, sz] for sx in (-1, 1)
+                                for sy in (-1, 1) for sz in (-1, 1)]) * half
+                low = min(low, float((pos + (centre + box) @ rot.T)[:, 2].min()))
             if n.kind in ("joint", "link", "spring"):
                 r = section_radius(n)
                 for p in link_path(n):
@@ -572,6 +636,12 @@ def violations(morph: Morphology) -> List[str]:
     if not all(_inside(x, y, poly) for x, y in probes):
         out.append("torso contour does not hold the electronics")
     for i, n in morph.nodes.items():
+        if n.kind == "segment":
+            extent = max(n.length, n.width)
+            if extent > BED + 1e-9:
+                out.append(f"#{i} segment: {extent * 1000:.0f} mm plate does "
+                           f"not fit the {BED * 1000:.0f} mm bed")
+            continue
         if n.kind not in ("joint", "link", "spring"):
             continue
         modulus = n.width * plate_thick(n) ** 2 / 6.0
@@ -598,6 +668,11 @@ def violations(morph: Morphology) -> List[str]:
     return out
 
 
+def _segment_slot(kind: str, slot: int) -> bool:
+    """True where a segment may attach: front or back of the core or a segment."""
+    return kind in ("core", "segment") and slot in (0, 1)
+
+
 def decode(genes: np.ndarray) -> Morphology:
     """Genome -> body. Total: any vector in [0, 1] gives a valid body."""
     genes = np.asarray(genes, dtype=float)
@@ -613,7 +688,9 @@ def decode(genes: np.ndarray) -> Morphology:
     for i in range(1, MAX_NODES):
         kinds[i] = TYPE_KINDS[_pick(blocks[i, TYPE], len(TYPE_KINDS))]
 
-    # Who claims which slot: the lowest block id wins a clash.
+    # Who claims which slot: the lowest block id wins a clash. A segment only
+    # claims the front or back of the core or of another segment, and no child
+    # ever claims slot 1 of a segment (it faces the parent).
     claims: Dict[Tuple[int, int], int] = {}
     for i in range(1, MAX_NODES):
         b = blocks[i]
@@ -622,22 +699,31 @@ def decode(genes: np.ndarray) -> Morphology:
         p = _pick(b[PARENT], MAX_NODES)
         if p == i or N_SLOTS[kinds[p]] == 0:
             continue
-        claims.setdefault((p, _pick(b[SLOT], N_SLOTS[kinds[p]])), i)
+        s = _pick(b[SLOT], N_SLOTS[kinds[p]])
+        if kinds[p] == "segment" and s == 1:
+            continue
+        if kinds[i] == "segment" and not _segment_slot(kinds[p], s):
+            continue
+        claims.setdefault((p, s), i)
     kids: Dict[int, List[Tuple[int, int]]] = {}
     for (p, s), i in claims.items():
         kids.setdefault(p, []).append((s, i))
 
-    servos = 0
+    servos, segments = 0, 0
     frontier = [0]
     for _ in range(MAX_DEPTH):
         nxt = []
         for p in frontier:
             for s, i in sorted(kids.get(p, [])):
                 kind = kinds[i]
-                if kind in ("joint", "wheel"):
+                if is_joint(kind) or kind == "wheel":
                     if servos >= MAX_SERVOS:
                         continue
                     servos += 1
+                if kind == "segment":
+                    if segments >= MAX_SEGMENTS:
+                        continue
+                    segments += 1
                 morph.nodes[i] = _node_from_block(i, kind, p, s, blocks[i])
                 nxt.append(i)
         frontier = nxt
@@ -657,6 +743,11 @@ def _node_from_block(i, kind, parent, slot, b) -> Node:
         # a spring always bends about its blade's thin axis (local Y)
         n.axis = AXES[_pick(b[AXIS], 3)] if kind == "joint" else "yaw"
         n.flip = bool(b[FLIP] > 0.5)
+    if kind == "segment":
+        n.axis = AXES[_pick(b[AXIS], 3)]
+        n.flip = bool(b[FLIP] > 0.5)
+        n.length = round(_scale(b[LENGTH], *SEGMENT_LENGTH_RANGE), 6)
+        n.width = round(_scale(b[WIDTH], *SEGMENT_WIDTH_RANGE), 6)
     if kind in ("joint", "link", "spring"):
         n.profile = PROFILES[_pick(b[PROFILE], len(PROFILES))]
         n.bend = round(float(np.radians(_scale(b[BEND], *BEND_RANGE))), 6)
@@ -693,7 +784,8 @@ def encode(morph: Morphology) -> np.ndarray:
         b[TYPE] = _bin(TYPE_KINDS.index(n.kind), len(TYPE_KINDS))
         b[AXIS] = (_bin(FOOT_SHAPES.index(n.foot_shape), len(FOOT_SHAPES))
                    if n.kind == "foot" else _bin(AXES.index(n.axis), 3))
-        b[LENGTH] = _unscale(n.length, *LENGTH_RANGE)
+        b[LENGTH] = _unscale(n.length, *(SEGMENT_LENGTH_RANGE
+                                         if n.kind == "segment" else LENGTH_RANGE))
         if n.kind in ("joint", "link", "spring"):
             b[PROFILE] = _bin(PROFILES.index(n.profile), len(PROFILES))
             b[BEND] = _unscale(float(np.degrees(n.bend)), *BEND_RANGE)
@@ -706,7 +798,8 @@ def encode(morph: Morphology) -> np.ndarray:
         else:
             b[WHEEL] = _unscale(n.wheel_rad, *WHEEL_RANGE_M)
         b[FLIP] = 0.75 if n.flip else 0.25
-        b[WIDTH] = _unscale(n.width, *LINK_WIDTH_RANGE)
+        b[WIDTH] = _unscale(n.width, *(SEGMENT_WIDTH_RANGE
+                                      if n.kind == "segment" else LINK_WIDTH_RANGE))
         b[THICK] = _unscale(n.thick, *(SPRING_BLADE_RANGE if n.kind == "spring"
                                        else LINK_THICK_RANGE))
         b[OFFSET] = _unscale(n.offset, 0.0, 1.0)
@@ -763,7 +856,8 @@ def prune(morph: Morphology) -> Morphology:
         elif morph.n_nodes > MAX_NODES:
             drop = leaves
         elif morph.n_servos > MAX_SERVOS:
-            drop = [i for i in leaves if morph.nodes[i].kind in ("joint", "wheel")]
+            drop = [i for i in leaves if is_joint(morph.nodes[i].kind)
+                    or morph.nodes[i].kind == "wheel"]
             drop = drop or leaves
         else:
             break
@@ -778,7 +872,7 @@ def prune(morph: Morphology) -> Morphology:
 
 def mirror_slot(kind: str, slot: int) -> int:
     """Slot on the other side of the XZ plane."""
-    if kind == "core":
+    if kind in ("core", "segment"):
         return slot + 3 if 2 <= slot <= 4 else slot - 3 if slot >= 5 else slot
     return {1: 2, 2: 1}.get(slot, slot)
 
@@ -797,6 +891,8 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
     source = morph if source is None else source
     if (parent, slot) in {(n.parent, n.slot) for n in morph.nodes.values()}:
         return None
+    if morph.nodes[parent].kind == "segment" and slot == 1:
+        return None
     base = morph.depth(parent) + 1 - source.depth(root)
     cm = source.child_map()
     queue = [(root, parent, slot)]
@@ -807,18 +903,27 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
         i = _free_id(morph)
         if i is None or base + source.depth(src) > MAX_DEPTH:
             continue
-        if node.kind in ("joint", "wheel") and morph.n_servos >= MAX_SERVOS:
+        parent_kind = morph.nodes[par].kind
+        if parent_kind == "segment" and sl == 1:
+            continue
+        if node.kind == "segment" and (
+                not _segment_slot(parent_kind, sl)
+                or morph.n_segments >= MAX_SEGMENTS):
+            continue
+        if (is_joint(node.kind) or node.kind == "wheel") \
+                and morph.n_servos >= MAX_SERVOS:
             continue
         new = Node(**vars(node))
         new.id, new.parent, new.slot = i, par, sl
         if mirror:
             new.rot = (-node.rot) % (2 * np.pi)
             new.bend = -node.bend
-            if par == 0:
+            if par == 0 or morph.nodes[par].kind == "segment":
                 # contour position and yaw mirror around the torso
                 new.offset = round(1.0 - node.offset, 6)
                 new.angle = round(1.0 - node.angle, 6)
-            if node.kind in ("joint", "spring") and node.axis != "yaw":
+            if node.kind in ("joint", "spring", "segment") \
+                    and node.axis != "yaw":
                 new.flip = not node.flip
         morph.nodes[i] = new
         new_root = i if new_root is None else new_root
@@ -892,12 +997,19 @@ def _random_seed(rng: np.random.Generator) -> Morphology:
 
 def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
     n = Node(0, kind, parent, slot, float(rng.uniform(0, 2 * np.pi)))
-    if kind in ("joint", "spring"):
-        n.axis = (str(rng.choice(AXES, p=[0.6, 0.25, 0.15]))
-                  if kind == "joint" else "yaw")
+    if kind in ("joint", "spring", "segment"):
+        if kind == "joint":
+            n.axis = str(rng.choice(AXES, p=[0.6, 0.25, 0.15]))
+        elif kind == "segment":
+            n.axis = str(rng.choice(AXES))
+        else:
+            n.axis = "yaw"
         n.flip = bool(rng.random() < 0.5)
     if kind in ("joint", "link", "spring", "tail"):
         n.length = round(float(rng.uniform(*LENGTH_RANGE)), 6)
+    if kind == "segment":
+        n.length = round(float(rng.uniform(*SEGMENT_LENGTH_RANGE)), 6)
+        n.width = round(float(rng.uniform(*SEGMENT_WIDTH_RANGE)), 6)
     if kind in ("joint", "link", "spring"):
         n.profile = str(rng.choice(PROFILES, p=[0.6, 0.2, 0.2]))
         if n.profile != "straight":
@@ -920,12 +1032,26 @@ def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     i = _free_id(morph)
     if i is None or morph.depth(p) + 1 > MAX_DEPTH:
         return None
-    kind = str(rng.choice(TYPE_KINDS,
+    kinds = tuple(k for k in TYPE_KINDS if k != "segment")
+    kind = str(rng.choice(kinds,
                           p=[0.45, 0.14, 0.10, 0.18, 0.05, 0.03, 0.02,
                              0.02, 0.01]))
-    if kind in ("joint", "wheel") and morph.n_servos >= MAX_SERVOS:
+    if (is_joint(kind) or kind == "wheel") and morph.n_servos >= MAX_SERVOS:
         kind = "link" if rng.random() < 0.5 else "foot"
     node = _random_node(rng, kind, p, s)
+    node.id = i
+    morph.nodes[i] = node
+    return i
+
+
+def _add_segment(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
+    """A segment on a core or segment front/back slot, within the limit."""
+    i = _free_id(morph)
+    if (i is None or morph.n_segments >= MAX_SEGMENTS
+            or not _segment_slot(morph.nodes[p].kind, s)
+            or morph.depth(p) + 1 > MAX_DEPTH):
+        return None
+    node = _random_node(rng, "segment", p, s)
     node.id = i
     morph.nodes[i] = node
     return i
@@ -954,6 +1080,10 @@ def _random_tree(rng: np.random.Generator) -> Morphology:
     morph = Morphology(round(float(rng.uniform(*BODY_BOUNDS[0])), 6),
                        round(float(rng.uniform(*BODY_BOUNDS[1])), 6),
                        {0: Node(0, "core")}, _random_contour(rng))
+    if rng.random() < 0.1:          # one spine segment in about one body in ten
+        slots = [s for s in (0, 1) if s not in morph.child_map().get(0, {})]
+        if slots:
+            _add_segment(morph, rng, 0, slots[int(rng.integers(len(slots)))])
     for _ in range(int(rng.integers(1, 4))):
         slot = int(rng.choice([2, 3, 4, 0, 1], p=[.25, .15, .25, .2, .15]))
         if slot in morph.child_map().get(0, {}):
@@ -1001,6 +1131,8 @@ def _op_param(morph, rng):
         choices += ["length"] * 2 + ["width", "thick", "profile"]
         if n.profile != "straight":
             choices += ["bend"]
+    if n.kind == "segment":
+        choices += ["length"] * 2 + ["width", "axis", "flip"]
     if n.kind == "tail":
         choices += ["length"] * 2 + ["tail_mass"]
     if n.kind == "joint":
@@ -1015,9 +1147,11 @@ def _op_param(morph, rng):
     if what == "rot":
         n.rot = _jitter(n.rot, 0.0, 2 * np.pi, rng) % (2 * np.pi)
     elif what == "length":
-        n.length = _jitter(n.length, *LENGTH_RANGE, rng)
+        span = SEGMENT_LENGTH_RANGE if n.kind == "segment" else LENGTH_RANGE
+        n.length = _jitter(n.length, *span, rng)
     elif what == "width":
-        n.width = _jitter(n.width, *LINK_WIDTH_RANGE, rng)
+        span = SEGMENT_WIDTH_RANGE if n.kind == "segment" else LINK_WIDTH_RANGE
+        n.width = _jitter(n.width, *span, rng)
     elif what == "thick":
         n.thick = _jitter(n.thick, *(SPRING_BLADE_RANGE if n.kind == "spring"
                                      else LINK_THICK_RANGE), rng)
@@ -1053,7 +1187,8 @@ def _op_type(morph, rng):
     """Swap the type of a limb segment, or of a leaf (also wheel and foot)."""
     parents = {n.parent for n in morph.nodes.values()}
     cand = [i for i, n in morph.nodes.items() if i != 0
-            and (n.kind in ("joint", "link", "spring") or i not in parents)]
+            and (n.kind in ("joint", "link", "spring", "segment")
+                 or i not in parents)]
     if not cand:
         return
     i = int(rng.choice(cand))
@@ -1061,8 +1196,14 @@ def _op_type(morph, rng):
     kinds = ["joint", "link", "spring"] + (
         ["wheel", "foot", "tail", "skid", "spike", "caster"]
         if i not in parents else [])
+    if n.kind == "segment":
+        kinds.append("segment")
+    elif (morph.n_segments < MAX_SEGMENTS
+          and _segment_slot(morph.nodes[n.parent].kind, n.slot)):
+        kinds.append("segment")
     kind = str(rng.choice([k for k in kinds if k != n.kind]))
-    if kind in ("joint", "wheel") and n.kind not in ("joint", "wheel") \
+    if (is_joint(kind) or kind == "wheel") \
+            and not (is_joint(n.kind) or n.kind == "wheel") \
             and morph.n_servos >= MAX_SERVOS:
         return
     new = _random_node(rng, kind, n.parent, n.slot)
@@ -1077,12 +1218,23 @@ def _op_type(morph, rng):
         range_ = SPRING_BLADE_RANGE if kind == "spring" else LINK_THICK_RANGE
         new.thick = round(float(np.clip(n.thick, *range_)), 6)
     morph.nodes[i] = new
+    kids = morph.child_map().get(i, {})
+    bad = [c for s, c in kids.items()
+           if (s == 1 if kind == "segment" else s >= N_SLOTS[kind])]
+    for c in bad:
+        _drop_subtree(morph, c)
 
 
 def _op_add(morph, rng):
-    """A new module, sometimes with one more behind it, in a free slot."""
+    """A new module, sometimes with one more behind it, in a free slot. About
+    one add in ten is a spine segment when a front or back slot is free."""
     free = [fs for fs in morph.free_slots() if morph.depth(fs[0]) < MAX_DEPTH]
     if not free:
+        return
+    seg = [fs for fs in free
+           if _segment_slot(morph.nodes[fs[0]].kind, fs[1])]
+    if seg and morph.n_segments < MAX_SEGMENTS and rng.random() < 0.1:
+        _add_segment(morph, rng, *seg[int(rng.integers(len(seg)))])
         return
     p, s = free[int(rng.integers(len(free)))]
     i = _add_random(morph, rng, p, s)
@@ -1150,7 +1302,10 @@ def _op_scale(morph, rng):
     while stack:
         n = morph.nodes[stack.pop()]
         stack.extend(cm.get(n.id, {}).values())
-        if n.kind in ("joint", "link", "spring", "tail"):
+        if n.kind == "segment":
+            n.length = round(float(np.clip(
+                n.length * factor, *SEGMENT_LENGTH_RANGE)), 6)
+        elif n.kind in ("joint", "link", "spring", "tail"):
             n.length = round(float(np.clip(n.length * factor, *LENGTH_RANGE)), 6)
 
 
@@ -1218,6 +1373,9 @@ def summary(m: Morphology) -> str:
                 desc += f" {n.axis}{'-' if n.flip else ''} {n.length * 1000:.0f}mm"
             elif n.kind == "link":
                 desc += f" {n.length * 1000:.0f}mm"
+            elif n.kind == "segment":
+                desc += (f" {n.axis}{'-' if n.flip else ''} "
+                         f"{n.length * 1000:.0f}x{n.width * 1000:.0f}mm")
             elif n.kind in ("wheel", "caster"):
                 desc += f" r={n.wheel_rad * 1000:.0f}mm"
             elif n.kind == "tail":

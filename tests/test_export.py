@@ -261,3 +261,26 @@ def test_bent_links_and_foot_shapes_export_non_empty_stls(tmp_path):
             "foot_claw_18.stl"} <= stls
     for name in stls:
         assert (out / "parts" / name).stat().st_size > 0
+
+
+def test_segment_plate_and_spine_servo_row(tmp_path):
+    m = mo.template(2)
+    first = max(m.nodes) + 1
+    m.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
+                             length=0.12, width=0.10)
+    m.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0, axis="pitch",
+                                 length=0.08)
+    elite = _elite(m)
+    morph = mo.decode(elite.morph)
+    seg = next(i for i, n in morph.nodes.items() if n.kind == "segment")
+    rows = {item: q for item, q, _ in bom_rows(morph)}
+    assert rows["segment_plate_120x100.stl"] == 1
+    assert rows["Feetech STS3215 servo, 7.4 V"] == morph.n_servos
+    assert "spine servo" in parent_chain(morph, seg)
+    out = tmp_path / "robot"
+    export_robot(elite, out, "spine", stl=True)
+    assert (out / "parts" / "segment_plate_120x100.stl").stat().st_size > 0
+    text = (out / "assembly.md").read_text()
+    assert text.count("spine servo") >= 1
+    ctl = read_control_file(out / "control.json")
+    assert len(ctl["servos"]) == morph.n_servos

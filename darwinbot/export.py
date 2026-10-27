@@ -8,8 +8,9 @@ The body is a module tree (darwinbot/morphology.py), so everything is read by
 walking the tree: one STL per distinct part (the extruded torso contour plate
 or its tiles, one per link size and profile, elbow size, wheel radius, caster
 wheel radius, foot shape and radius and spring flexure, servo bracket, splice
-plates), and one assembly row per servo in layout order. Mount positions on
-the plate are the core slot offsets of Morphology.slot_frame, in mm.
+plates, one plate per spine segment size), and one assembly row per servo in
+layout order. Mount positions on the plate are the core slot offsets of
+Morphology.slot_frame, in mm.
 """
 
 import csv
@@ -69,6 +70,35 @@ def mount_positions_mm(morph):
         off, rot = morph.slot_frame(morph.nodes[0], slot, morph.nodes[child])
         out.append((float(off[0]) * 1000, float(off[1]) * 1000,
                     float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))))
+    return out
+
+
+def segment_mounts_mm(morph, seg_id):
+    """(x, y, yaw in degrees) mounts on the plate of one segment, in mm and in
+    the frame of the plate: the spine servo at its near end, then every used
+    slot. Slot offsets of Morphology.slot_frame minus the plate centre."""
+    node = morph.nodes[seg_id]
+    centre = morpho.segment_center(node)
+    out = [(-node.length * 500.0, 0.0, 180.0)]
+    for slot, child in sorted(morph.child_map().get(seg_id, {}).items()):
+        off, rot = morph.slot_frame(node, slot, morph.nodes[child])
+        out.append(((float(off[0]) - centre[0]) * 1000,
+                    (float(off[1]) - centre[1]) * 1000,
+                    float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))))
+    return out
+
+
+def segment_parts(morph):
+    """{(length mm, width mm): mounts} of the spine plates, one entry per size;
+    equal sizes share one STL carrying the mounts of all of them."""
+    out = {}
+    for i, n in morph.nodes.items():
+        if n.kind == "segment":
+            mounts = out.setdefault((_mm(n.length), _mm(n.width)), [])
+            for m in segment_mounts_mm(morph, i):
+                if all(max(abs(a - b) for a, b in zip(m, k)) > 0.5
+                       for k in mounts):
+                    mounts.append(m)
     return out
 
 
@@ -150,6 +180,11 @@ def bom_rows(morph):
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
     size = torso_size_mm(morph)
     rows += [(name, 1, f"PLA, {size[0]:.0f} x {size[1]:.0f} mm") for name in torso]
+    sizes = Counter((_mm(s.length), _mm(s.width))
+                    for s in morph.nodes.values() if s.kind == "segment")
+    for (length, width), q in sorted(sizes.items()):
+        rows.append((f"segment_plate_{length}x{width}.stl", q,
+                     "PLA, second torso plate behind a spine servo"))
     for (length, width, thick, profile, bend), q in sorted(links.items()):
         rows.append((f"{link_name(profile, bend, length, width, thick)}.stl",
                      q, "PLA"))
@@ -210,8 +245,8 @@ def screw_counts(morph, elbows, springs, splices):
         q, w = use.get(L, (0, []))
         use[L] = (q + n, w + [what] if what not in w else w)
     for n in morph.nodes.values():
-        if n.kind in ("joint", "wheel"):
-            if n.parent == 0:
+        if morpho.is_joint(n.kind) or n.kind == "wheel":
+            if morph.nodes[n.parent].kind in ("core", "segment"):
                 add(PLATE_T + FLOOR_T, 4, "bracket on torso")
             else:
                 add(_mm(morpho.plate_thick(morph.nodes[n.parent])) + FLOOR_T,
@@ -254,15 +289,19 @@ def parent_chain(morph, node_id):
     for i in reversed(path):
         n = morph.nodes[i]
         w = f"{n.kind} {n.axis}" if n.kind in ("joint", "spring") else n.kind
+        if n.kind == "segment":
+            w = f"spine servo {n.axis}"
+        on_torso = morph.nodes[n.parent].kind in ("core", "segment")
         notes = []
-        if n.parent != 0 and n.slot:
+        if not on_torso and n.slot:
             notes.append(ELBOW_SLOTS[n.slot])
         if n.rot:
             notes.append(f"rolled {np.degrees(n.rot):.0f} deg")
         if notes:
             w += f" ({', '.join(notes)})"
-        if n.parent == 0:
-            words.append(f"core {CORE_SLOTS[n.slot]}")
+        if on_torso:
+            base = "core" if n.parent == 0 else "spine plate"
+            words.append(f"{base} {CORE_SLOTS[n.slot]}")
         words.append(w)
     return " > ".join(words)
 
@@ -295,7 +334,8 @@ def _write_assembly(morph, ctl, layout, out_dir):
              "| Servo ID | Node slot | Position | Axis | Link | Sign |", "|---|---|---|---|---|---|"]
     for s, act in zip(ctl["servos"], layout):
         n = morph.nodes[act.slot]
-        link = f"{_mm(n.length)} mm" if act.kind == "joint" else "-"
+        link = (f"{_mm(n.length)} mm"
+                if act.kind == "joint" and n.kind == "joint" else "-")
         lines.append(f"| {s['id']} | {act.slot} | {parent_chain(morph, act.slot)} | "
                      f"{act.axis} | {link} | {s['sign']} |")
     lines += ["",
@@ -326,6 +366,13 @@ def _write_stls(morph, out_dir):
     tiles = parts.torso_tiles(torso_polygon_mm(morph), mount_positions_mm(morph))
     for name, tile in zip(torso, tiles):
         out(name, tile)
+    for (length, width), mounts in sorted(segment_parts(morph).items()):
+        half = [(length / 2, 0), (length / 2, width / 2), (0, width / 2),
+                (-length / 2, width / 2), (-length / 2, 0),
+                (-length / 2, -width / 2), (0, -width / 2),
+                (length / 2, -width / 2)]
+        out(f"segment_plate_{length}x{width}.stl",
+            parts.torso_plate(half, mounts, electronics=False))
     for span in sorted(splices):
         out(f"splice_plate_{span}.stl", parts.splice_plate(span))
     for length, width, thick, profile, bend in sorted(links):

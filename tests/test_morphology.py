@@ -547,3 +547,76 @@ def test_scale_stretches_a_limb_within_range():
                 assert mo.LENGTH_RANGE[0] <= n.length <= mo.LENGTH_RANGE[1]
                 seen.add(round(n.length, 3))
     assert max(seen) > 0.15 and min(seen) < 0.07
+
+
+def _spine_body(n_segments=1):
+    """Template legs on the core plus a spine segment (and a leg on it)."""
+    m = mo.template(2)
+    first = max(m.nodes) + 1
+    m.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
+                             length=0.12, width=0.10)
+    m.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0, axis="pitch",
+                                 length=0.08)
+    m.nodes[first + 2] = mo.Node(first + 2, "joint", first, 6, 0, axis="pitch",
+                                 length=0.08)
+    if n_segments > 1:
+        m.nodes[first + 3] = mo.Node(first + 3, "segment", first, 0, 0,
+                                     axis="roll", length=0.10, width=0.10)
+    return m
+
+
+def test_segment_roundtrip_and_counts():
+    m = _spine_body()
+    seg = next(i for i, n in m.nodes.items() if n.kind == "segment")
+    back = mo.decode(mo.encode(m))
+    _same(back, mo.decode(mo.encode(back)))
+    assert sorted(back.nodes) == sorted(m.nodes)
+    assert back.n_segments == 1
+    assert back.n_servos == m.n_joints + m.n_wheels
+    assert back.n_joints == sum(n.kind in ("joint", "segment")
+                                for n in back.nodes.values())
+    # legs on the core (template) plus two on the segment; the segment is no limb
+    assert back.n_legs == mo.template(2).n_legs + 2
+    acts = [a for a in back.layout() if a.slot == seg]
+    assert acts == [mo.Actuator(seg, "joint", "pitch")]
+    assert [a.slot for a in back.layout()] == [i for i in back.order
+                                               if mo.is_joint(back.nodes[i].kind)
+                                               or back.nodes[i].kind == "wheel"]
+    assert mo.violations(back) == []
+
+
+def test_decode_drops_misplaced_and_extra_segments():
+    m = _spine_body(2)
+    assert mo.decode(mo.encode(m)).n_segments == 2
+    third = max(m.nodes) + 1
+    m.nodes[third] = mo.Node(third, "segment", max(m.nodes) - 1, 1, 0)
+    m.nodes[third + 1] = mo.Node(third + 1, "segment", 0, 2, 0)   # side slot
+    d = mo.decode(mo.encode(m))
+    assert d.n_segments == 2
+    assert all(n.slot in (0, 1) for n in d.nodes.values() if n.kind == "segment")
+    # a child on slot 1 of a segment is dropped
+    seg = next(i for i, n in m.nodes.items() if n.kind == "segment")
+    k = max(m.nodes) + 1
+    m.nodes[k] = mo.Node(k, "joint", seg, 1, 0)
+    d = mo.decode(mo.encode(m))
+    assert not any(n.parent == seg and n.slot == 1 for n in d.nodes.values())
+    assert (seg, 1) not in _spine_body().free_slots()
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_nothing_hangs_on_segment_slot_one(seed):
+    rng = np.random.default_rng(seed)
+    genes = mo.encode(_spine_body(2))
+    for _ in range(150):
+        genes = mo.mutate(genes, rng)
+        m = mo.decode(genes)
+        _within_limits(m)
+        assert m.n_segments <= mo.MAX_SEGMENTS
+        for n in m.nodes.values():
+            if n.kind == "segment":
+                assert n.parent >= 0 and n.slot in (0, 1)
+                assert m.nodes[n.parent].kind in ("core", "segment")
+            if n.parent >= 0 and m.nodes[n.parent].kind == "segment":
+                assert n.slot != 1
+        assert all(not (m.nodes[i].kind == "segment" and s == 1)
+                   for i, s in m.free_slots())

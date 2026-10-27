@@ -232,3 +232,32 @@ def test_rolled_wheel_keeps_its_sign():
 def test_load_full_scale_is_written(tmp_path):
     export_robot(_elite(), tmp_path, "t", stl=False)
     assert read_control_file(tmp_path / "control.json")["load_full_scale"] == 0.7
+
+
+def _profiled_tree():
+    """An L link, an arc link and one explicit foot of every shape."""
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    i = 1
+    for slot, profile, shape in ((0, "L", "sphere"), (1, "arc", "blade")):
+        m.nodes[i] = mo.Node(i, "joint", 0, slot, 0.0, "pitch", 0.06)
+        m.nodes[i + 1] = mo.Node(i + 1, "link", i, 0, 0.0, length=0.08,
+                                 profile=profile, bend=np.pi / 2)
+        m.nodes[i + 2] = mo.Node(i + 2, "foot", i + 1, 0, 0.0,
+                                 foot_rad=0.018, foot_shape=shape)
+        i += 3
+    m.nodes[i] = mo.Node(i, "foot", 0, 2, 0.0, foot_rad=0.018, foot_shape="pad")
+    m.nodes[i + 1] = mo.Node(i + 1, "foot", 0, 3, 0.0, foot_rad=0.018,
+                             foot_shape="claw")
+    return m
+
+
+def test_bent_links_and_foot_shapes_export_non_empty_stls(tmp_path):
+    pytest.importorskip("build123d")
+    out = tmp_path / "robot"
+    export_robot(_elite(_profiled_tree()), out, "profiled")
+    stls = set(os.listdir(out / "parts"))
+    assert {"link_80x20x6_L90.stl", "link_80x20x6_arc90.stl"} <= stls
+    assert {"foot_18.stl", "foot_blade_18.stl", "foot_pad_18.stl",
+            "foot_claw_18.stl"} <= stls
+    for name in stls:
+        assert (out / "parts" / name).stat().st_size > 0

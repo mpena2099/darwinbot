@@ -97,6 +97,22 @@ def test_link_rejects_short_plate():
         parts.link(10, 20, 6)
 
 
+@pytest.mark.parametrize("profile,bend", [("L", 30), ("L", -90), ("arc", -45)])
+def test_bent_link_follows_its_path(profile, bend):
+    p = parts.link(80, 20, 6, profile, bend)
+    _ok(p)
+    straight = parts.link(80, 20, 6)
+    assert p.bounding_box().size.Z == pytest.approx(6, abs=0.1)
+    assert p.bounding_box().size.Y > straight.bounding_box().size.Y + 1
+
+
+@pytest.mark.parametrize("shape", ["sphere", "blade", "pad", "claw"])
+def test_foot_shapes_are_solids(shape):
+    p = parts.foot(18, shape)
+    _ok(p)
+    assert p.bounding_box().size.X > 0 and p.bounding_box().size.Y > 0
+
+
 @pytest.mark.parametrize("distance,angle,width,thick", [(40, 90, 20, 6),
                                                         (60, 45, 18, 5),
                                                         (80, 150, 30, 10)])

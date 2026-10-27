@@ -339,6 +339,68 @@ def test_link_longer_than_the_bed_is_a_violation():
     assert mo.violations(_single_link(0.030, 0.006, length=0.20))
 
 
+def test_bed_check_uses_the_path_bounding_box():
+    straight = _single_link(0.030, 0.006, length=0.20)
+    assert any("bed" in v for v in mo.violations(straight))
+    for profile, bend in (("L", np.pi / 2), ("arc", -np.pi / 2)):
+        bent = _single_link(0.030, 0.006, length=0.20)
+        bent.nodes[1].profile, bent.nodes[1].bend = profile, bend
+        assert not mo.violations(bent)
+
+
+def test_profile_and_foot_shape_round_trip():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", 0.10,
+                         profile="L", bend=np.radians(30))
+    m.nodes[2] = mo.Node(2, "link", 1, 0, 0.0, length=0.08,
+                         profile="arc", bend=-np.radians(45))
+    m.nodes[3] = mo.Node(3, "foot", 2, 0, 0.0, foot_rad=0.02,
+                         foot_shape="claw")
+    m.nodes[4] = mo.Node(4, "foot", 0, 2, 0.0, foot_rad=0.02,
+                         foot_shape="pad")
+    genes = mo.encode(m)
+    m2 = mo.decode(genes)
+    for i in (1, 2):
+        assert m2.nodes[i].profile == m.nodes[i].profile
+        assert m2.nodes[i].bend == pytest.approx(m.nodes[i].bend)
+    assert m2.nodes[3].foot_shape == "claw"
+    assert m2.nodes[4].foot_shape == "pad"
+    assert np.allclose(mo.encode(m2), genes)
+    # the profile/bend genes are ignored by a foot
+    genes[3 * mo.BLOCK_GENES + mo.PROFILE] = 1.0
+    genes[3 * mo.BLOCK_GENES + mo.BEND] = 1.0
+    assert mo.decode(genes).nodes[3].profile == "straight"
+    assert mo.decode(genes).nodes[3].bend == 0.0
+    # the AXIS gene picks the foot shape
+    genes[3 * mo.BLOCK_GENES + mo.AXIS] = 0.0
+    assert mo.decode(genes).nodes[3].foot_shape == mo.FOOT_SHAPES[0]
+
+
+@pytest.mark.parametrize("profile,bend", (("L", np.pi / 2),
+                                          ("arc", np.pi / 2)))
+def test_link_tip_for_bent_profiles(profile, bend):
+    node = mo.Node(1, "link", length=0.12, profile=profile, bend=bend)
+    path = mo.link_path(node)
+    assert sum(np.linalg.norm(b - a) for a, b in zip(path, path[1:])) == \
+        pytest.approx(node.length)
+    pos, rot = mo.link_tip(node)
+    assert rot == pytest.approx(mo._rz(np.pi / 2))
+    if profile == "L":                      # two 60 mm pieces, the second up
+        assert pos == pytest.approx([0.06, 0.06, 0.0])
+    else:                                   # three 40 mm pieces, 45 deg each
+        assert pos == pytest.approx([0.04 + 0.04 / np.sqrt(2),
+                                     0.04 / np.sqrt(2) + 0.04, 0.0])
+
+
+def test_mirror_negates_bend():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "link", 0, 2, 0.0, length=0.10,
+                         profile="L", bend=np.radians(60))
+    twin = mo.copy_subtree(m, 1, 0, mo.mirror_slot("core", 2), mirror=True)
+    assert m.nodes[twin].profile == "L"
+    assert m.nodes[twin].bend == pytest.approx(-np.radians(60))
+
+
 def _single_spring(blade=0.004):
     m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
     m.nodes[1] = mo.Node(1, "spring", 0, 3, 0.0, axis="yaw", length=0.10,

@@ -15,7 +15,8 @@ Modules
          as a link. It bends only about its blade's thin axis (local Y), so the
          AXIS gene is ignored and the slot roll sets the bending direction
   wheel  servo in wheel mode + wheel, terminal
-  foot   TPU tip, terminal. A joint or link with no child ends in an implicit foot.
+  foot   TPU tip, terminal, one of FOOT_SHAPES. A joint or link with no child
+         ends in an implicit spherical foot.
   tail   printed bar with a counterweight at the tip, terminal
   skid   low-friction pad, terminal
   spike  high-friction TPU tip, terminal
@@ -27,18 +28,27 @@ so a child can point anywhere. A joint turns about its pitch (local Z), yaw
 negates the axis, which is how a mirrored copy keeps "same signal, mirrored
 motion".
 
+A joint, link or spring keeps its path length `length` whatever its PROFILE:
+  straight  one piece along local X
+  L         two equal pieces, the second turned by `bend` about local Z
+  arc       three equal pieces, turned by bend/2 at each inner joint
+The tip is the end of that path, with the accumulated rotation (link_tip).
+
 Genome: MAX_NODES blocks of BLOCK_GENES genes in [0, 1], one per node slot.
 The block index is the stable slot id of the node (the controller is indexed
 by it). Block 0 is always the core. A block is
   [ACTIVE, PARENT, SLOT, ROT, TYPE, AXIS, LENGTH, WHEEL, FLIP,
-   WIDTH, THICK, OFFSET, ANGLE]
+   WIDTH, THICK, OFFSET, ANGLE, PROFILE, BEND]
 (for the core, LENGTH and WHEEL hold body length and width, and the unused
 genes PARENT, SLOT, ROT, TYPE, AXIS, FLIP, WIDTH and THICK hold the contour
-factors in CONTOUR_RANGE). LENGTH is the
+factors in CONTOUR_RANGE; PROFILE and BEND are unused). LENGTH is the
 link length (40..200 mm); WIDTH and THICK are the link section (12..30 mm by
 3..10 mm, and for a spring THICK is the TPU blade, 2..8 mm); WHEEL is the wheel
 radius or, for a foot, the foot radius; ROT is
-the slot roll in [0, 2*pi). OFFSET and ANGLE are attachment fractions in
+the slot roll in [0, 2*pi). PROFILE is one of PROFILES and BEND the signed bend
+of an L or arc link in BEND_RANGE (whole degrees in the genome, radians in
+code); both are ignored by other kinds. For a foot, the otherwise unused AXIS
+gene picks the foot shape. OFFSET and ANGLE are attachment fractions in
 [0, 1] whose meaning depends on the parent:
   * core: OFFSET slides the mount along the contour by +/-30% of the edge to
     the next or previous vertex and ANGLE yaws it by up to +/-60 degrees;
@@ -108,10 +118,16 @@ TYPE_KINDS = ("joint", "link", "wheel", "foot", "spring",
 AXES = ("pitch", "yaw", "roll")
 AXIS_LOCAL = {"pitch": (0.0, 0.0, 1.0), "yaw": (0.0, 1.0, 0.0),
               "roll": (1.0, 0.0, 0.0)}
+PROFILES = ("straight", "L", "arc")                     # from the PROFILE gene
+BEND_RANGE = (-90.0, 90.0)      # degrees, signed bend of an L or arc link
+FOOT_SHAPES = ("sphere", "blade", "pad", "claw")        # from the foot AXIS gene
+CLAW_SPREAD = np.radians(30.0)  # claw toes spread around local X, in local XY
+CLAW_LENGTH = 1.5               # times foot radius, length of a claw capsule
+CLAW_RADIUS = 0.2               # times foot radius, radius of a claw capsule
 
 (ACTIVE, PARENT, SLOT, ROT, TYPE, AXIS, LENGTH, WHEEL, FLIP,
- WIDTH, THICK, OFFSET, ANGLE) = range(13)
-BLOCK_GENES  = 13
+ WIDTH, THICK, OFFSET, ANGLE, PROFILE, BEND) = range(15)
+BLOCK_GENES  = 15
 MORPH_LENGTH = MAX_NODES * BLOCK_GENES
 # Core block genes that no core field needs hold the 8 contour factors.
 CONTOUR_GENES = (PARENT, SLOT, ROT, TYPE, AXIS, FLIP, WIDTH, THICK)
@@ -147,9 +163,12 @@ class Node:
     width:    float = 0.020        # joint, link and spring
     thick:    float = 0.006        # joint and link; spring: blade thickness
     foot_rad: float = 0.02         # foot only
+    foot_shape: str = "sphere"     # foot only, one of FOOT_SHAPES
     tail_mass: float = 0.0         # tail only, counterweight mass
     offset:   float = 0.5          # attachment fraction along the parent slot
     angle:    float = 0.5          # attachment yaw / elbow angle fraction
+    profile:  str = "straight"     # joint, link and spring, one of PROFILES
+    bend:     float = 0.0          # joint, link and spring: signed bend, radians
 
 
 def _rz(a: float) -> np.ndarray:
@@ -191,6 +210,60 @@ def spring_stiffness(node: Node) -> float:
     base, k = E * (width * blade^3 / 12) / free length. THICK is the blade."""
     inertia = node.width * node.thick ** 3 / 12.0
     return E_TPU * inertia / SPRING_FLEX_LEN
+
+
+def link_path(node: Node) -> List[np.ndarray]:
+    """Polyline of a link in the node frame, starting at the origin. The path
+    length is always `length`: one piece for a straight link, two for L and
+    three for an arc, each one turned by bend / inner joints about local Z."""
+    pieces = {"straight": 1, "L": 2, "arc": 3}.get(node.profile, 1)
+    step = node.length / pieces
+    turn = node.bend / (pieces - 1) if pieces > 1 else 0.0
+    points = [np.zeros(3)]
+    angle = 0.0
+    for k in range(pieces):
+        if k:
+            angle += turn
+        points.append(points[-1] + _rz(angle) @ np.array([step, 0, 0]))
+    return points
+
+
+def link_tip(node: Node) -> Tuple[np.ndarray, np.ndarray]:
+    """End point of a link in the node frame and its accumulated rotation."""
+    turn = node.bend if node.profile in ("L", "arc") else 0.0
+    return link_path(node)[-1], _rz(turn)
+
+
+def foot_reach(node: Node) -> float:
+    """Bounding radius of a foot shape around its origin, for contact and reach.
+    A pad's cylinder axis is along local X (the limb direction), so its flat
+    face looks down when the limb points down."""
+    r = node.foot_rad
+    if node.foot_shape == "blade":
+        return float(np.hypot(r, r / 2))      # 2r x r/3 x r box
+    if node.foot_shape == "pad":
+        return float(np.hypot(r, r / 6))      # disc radius r, height r/3
+    if node.foot_shape == "claw":
+        return (CLAW_LENGTH + CLAW_RADIUS) * r
+    return r
+
+
+def foot_lowest(node: Node, rot: np.ndarray) -> float:
+    """Lowest point of a foot shape along world Z, relative to its origin."""
+    r = node.foot_rad
+    down = rot[2]                              # world Z in the node frame
+    if node.foot_shape == "blade":
+        return -float(np.abs(down) @ np.array([r, r / 6, r / 2]))
+    if node.foot_shape == "pad":               # disc: axis X, half height r/6
+        az = abs(float(down[0]))
+        return -(r / 6 * az + r * np.sqrt(max(0.0, 1 - az * az)))
+    if node.foot_shape == "claw":
+        low = 0.0
+        for a in (-CLAW_SPREAD, 0.0, CLAW_SPREAD):
+            end = np.array([np.cos(a), np.sin(a), 0.0]) * CLAW_LENGTH * r
+            low = min(low, float(down @ end))
+        return low - CLAW_RADIUS * r
+    return -r
 
 
 @dataclass
@@ -318,12 +391,14 @@ class Morphology:
             return (np.array([x, y, 0]),
                     _rz(float(np.arctan2(y, x)) + yaw))
         if slot == 0:
-            return np.array([parent.length, 0, 0]), _rz(0.0)
+            tip, rot = link_tip(parent)
+            return tip, rot
         side = 1.0 if slot == 1 else -1.0
+        tip, trot = link_tip(parent)
         d = elbow_distance(child) if child is not None else _scale(0.5, *ELBOW_RANGE)
         a = elbow_angle(child) if child is not None else _scale(
             0.5, np.radians(30.0), np.radians(150.0))
-        return (np.array([parent.length, side * d, 0]), _rz(side * a))
+        return (tip + trot @ np.array([0, side * d, 0]), trot @ _rz(side * a))
 
     def rel_frame(self, node: Node) -> Tuple[np.ndarray, np.ndarray]:
         """Offset and rotation of a node in the frame of its parent."""
@@ -381,7 +456,7 @@ class Morphology:
                 out.append((i, pos + rot @ self.caster_hub(n, pos, rot),
                             n.wheel_rad))
             elif n.kind == "foot":
-                out.append((i, pos.copy(), n.foot_rad))
+                out.append((i, pos.copy(), foot_reach(n)))
             elif n.kind == "tail":
                 out.append((i, pos + rot @ np.array([n.length, 0, 0]),
                             TAIL_TIP_RADIUS))
@@ -391,8 +466,8 @@ class Morphology:
                 out.append((i, pos + rot @ np.array([SPIKE_LENGTH, 0, 0]),
                             SPIKE_RADIUS))
             elif n.kind in ("joint", "link", "spring") and i not in cm:
-                out.append((i, pos + rot @ np.array([n.length, 0, 0]),
-                            section_radius(n)))
+                tip, _ = link_tip(n)
+                out.append((i, pos + rot @ tip, section_radius(n)))
         return out
 
     @property
@@ -408,8 +483,9 @@ class Morphology:
             n = self.nodes[i]
             r = max(r, float(np.linalg.norm(pos)))
             if n.kind in ("joint", "link", "spring"):
-                tip = pos + rot @ np.array([n.length, 0, 0])
-                r = max(r, float(np.linalg.norm(tip)) + section_radius(n))
+                for p in link_path(n):
+                    r = max(r, float(np.linalg.norm(pos + rot @ p))
+                            + section_radius(n))
         for _, p, rad in self.terminal_points():
             r = max(r, float(np.linalg.norm(p)) + rad)
         return r
@@ -424,9 +500,9 @@ class Morphology:
             if n.kind in ("joint", "wheel"):
                 low = min(low, float((pos + corners @ rot.T)[:, 2].min()))
             if n.kind in ("joint", "link", "spring"):
-                tip = pos + rot @ np.array([n.length, 0, 0])
                 r = section_radius(n)
-                low = min(low, pos[2] - r, tip[2] - r)
+                for p in link_path(n):
+                    low = min(low, float((pos + rot @ p)[2]) - r)
             elif n.kind == "wheel":
                 c = pos + rot @ self.wheel_hub(n, pos, rot)
                 az = abs(float((rot @ np.array([0.0, 1.0, 0.0]))[2]))
@@ -441,7 +517,7 @@ class Morphology:
                           float(c[2] - half * az
                                 - n.wheel_rad * np.sqrt(max(0.0, 1 - az * az))))
             elif n.kind == "foot":
-                low = min(low, pos[2] - n.foot_rad)
+                low = min(low, pos[2] + foot_lowest(n, rot))
             elif n.kind == "tail":
                 tip = pos + rot @ np.array([n.length, 0, 0])
                 low = min(low, pos[2] - TAIL_BAR_SIZE[1] / 2,
@@ -504,9 +580,13 @@ def violations(morph: Morphology) -> List[str]:
         if stress > limit:
             out.append(f"#{i} {n.kind}: bending stress {stress / 1e6:.1f} MPa "
                        f"above the {limit / 1e6:.1f} MPa limit")
-        if n.length + n.width > BED + 1e-9:
-            out.append(f"#{i} {n.kind}: {n.length * 1000:.0f} + "
-                       f"{n.width * 1000:.0f} mm does not fit the "
+        pts = link_path(n)
+        dx = max(p[0] for p in pts) - min(p[0] for p in pts) + n.width
+        dy = max(p[1] for p in pts) - min(p[1] for p in pts) + n.width
+        extent = max(dx, dy)
+        if extent > BED + 1e-9:
+            out.append(f"#{i} {n.kind}: {extent * 1000:.0f} mm "
+                       f"({n.profile}) does not fit the "
                        f"{BED * 1000:.0f} mm bed")
         if n.slot in (1, 2) and morph.nodes[n.parent].kind in (
                 "joint", "link", "spring"):
@@ -577,6 +657,9 @@ def _node_from_block(i, kind, parent, slot, b) -> Node:
         # a spring always bends about its blade's thin axis (local Y)
         n.axis = AXES[_pick(b[AXIS], 3)] if kind == "joint" else "yaw"
         n.flip = bool(b[FLIP] > 0.5)
+    if kind in ("joint", "link", "spring"):
+        n.profile = PROFILES[_pick(b[PROFILE], len(PROFILES))]
+        n.bend = round(float(np.radians(_scale(b[BEND], *BEND_RANGE))), 6)
     if kind in ("joint", "link", "spring", "tail"):
         n.length = round(_scale(b[LENGTH], *LENGTH_RANGE), 6)
     if kind == "wheel":
@@ -585,6 +668,7 @@ def _node_from_block(i, kind, parent, slot, b) -> Node:
         n.wheel_rad = round(_scale(b[WHEEL], *CASTER_RANGE), 6)
     if kind == "foot":
         n.foot_rad = round(_scale(b[WHEEL], *FOOT_RANGE), 6)
+        n.foot_shape = FOOT_SHAPES[_pick(b[AXIS], len(FOOT_SHAPES))]
     if kind == "tail":
         n.tail_mass = round(_scale(b[WHEEL], *TAIL_MASS_RANGE), 6)
     return n
@@ -607,8 +691,12 @@ def encode(morph: Morphology) -> np.ndarray:
         b[SLOT] = _bin(n.slot, N_SLOTS[morph.nodes[n.parent].kind])
         b[ROT] = _unscale(n.rot, 0.0, 2 * np.pi)
         b[TYPE] = _bin(TYPE_KINDS.index(n.kind), len(TYPE_KINDS))
-        b[AXIS] = _bin(AXES.index(n.axis), 3)
+        b[AXIS] = (_bin(FOOT_SHAPES.index(n.foot_shape), len(FOOT_SHAPES))
+                   if n.kind == "foot" else _bin(AXES.index(n.axis), 3))
         b[LENGTH] = _unscale(n.length, *LENGTH_RANGE)
+        if n.kind in ("joint", "link", "spring"):
+            b[PROFILE] = _bin(PROFILES.index(n.profile), len(PROFILES))
+            b[BEND] = _unscale(float(np.degrees(n.bend)), *BEND_RANGE)
         if n.kind == "foot":
             b[WHEEL] = _unscale(n.foot_rad, *FOOT_RANGE)
         elif n.kind == "tail":
@@ -725,6 +813,7 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
         new.id, new.parent, new.slot = i, par, sl
         if mirror:
             new.rot = (-node.rot) % (2 * np.pi)
+            new.bend = -node.bend
             if par == 0:
                 # contour position and yaw mirror around the torso
                 new.offset = round(1.0 - node.offset, 6)
@@ -809,6 +898,10 @@ def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
         n.flip = bool(rng.random() < 0.5)
     if kind in ("joint", "link", "spring", "tail"):
         n.length = round(float(rng.uniform(*LENGTH_RANGE)), 6)
+    if kind in ("joint", "link", "spring"):
+        n.profile = str(rng.choice(PROFILES, p=[0.6, 0.2, 0.2]))
+        if n.profile != "straight":
+            n.bend = round(float(np.radians(rng.uniform(*BEND_RANGE))), 6)
     if kind == "spring":
         n.thick = round(float(rng.uniform(*SPRING_BLADE_RANGE)), 6)
     if kind == "tail":
@@ -819,6 +912,7 @@ def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
         n.wheel_rad = round(float(rng.uniform(*CASTER_RANGE)), 6)
     if kind == "foot":
         n.foot_rad = round(float(rng.uniform(*FOOT_RANGE)), 6)
+        n.foot_shape = str(rng.choice(FOOT_SHAPES))
     return n
 
 
@@ -904,7 +998,9 @@ def _op_param(morph, rng):
         return
     choices = ["rot", "offset", "angle"]
     if n.kind in ("joint", "link", "spring"):
-        choices += ["length"] * 2 + ["width", "thick"]
+        choices += ["length"] * 2 + ["width", "thick", "profile"]
+        if n.profile != "straight":
+            choices += ["bend"]
     if n.kind == "tail":
         choices += ["length"] * 2 + ["tail_mass"]
     if n.kind == "joint":
@@ -914,7 +1010,7 @@ def _op_param(morph, rng):
     if n.kind in ("wheel", "caster"):
         choices += ["wheel_rad"] * 2
     if n.kind == "foot":
-        choices += ["foot_rad"]
+        choices += ["foot_rad", "foot_shape"]
     what = str(rng.choice(choices))
     if what == "rot":
         n.rot = _jitter(n.rot, 0.0, 2 * np.pi, rng) % (2 * np.pi)
@@ -929,6 +1025,15 @@ def _op_param(morph, rng):
         n.offset = _jitter(n.offset, 0.0, 1.0, rng)
     elif what == "angle":
         n.angle = _jitter(n.angle, 0.0, 1.0, rng)
+    elif what == "profile":
+        n.profile = str(rng.choice(PROFILES))
+        if n.profile == "straight":
+            n.bend = 0.0
+        elif not n.bend:
+            n.bend = round(float(np.radians(rng.uniform(*BEND_RANGE))), 6)
+    elif what == "bend":
+        n.bend = round(float(np.radians(_jitter(
+            float(np.degrees(n.bend)), *BEND_RANGE, rng))), 6)
     elif what == "axis":
         n.axis = str(rng.choice(AXES))
     elif what == "flip":
@@ -938,6 +1043,8 @@ def _op_param(morph, rng):
         n.wheel_rad = _jitter(n.wheel_rad, *span, rng)
     elif what == "tail_mass":
         n.tail_mass = _jitter(n.tail_mass, *TAIL_MASS_RANGE, rng)
+    elif what == "foot_shape":
+        n.foot_shape = str(rng.choice(FOOT_SHAPES))
     else:
         n.foot_rad = _jitter(n.foot_rad, *FOOT_RANGE, rng)
 

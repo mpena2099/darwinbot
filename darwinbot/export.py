@@ -6,10 +6,10 @@ notes and the MJCF used in simulation.
 
 The body is a module tree (darwinbot/morphology.py), so everything is read by
 walking the tree: one STL per distinct part (the extruded torso contour plate
-or its tiles, one per link size, elbow size, wheel radius, caster wheel radius,
-foot radius and spring flexure, servo bracket, splice plates), and one
-assembly row per servo in layout order. Mount positions on the plate are the
-core slot offsets of Morphology.slot_frame, in mm.
+or its tiles, one per link size and profile, elbow size, wheel radius, caster
+wheel radius, foot shape and radius and spring flexure, servo bracket, splice
+plates), and one assembly row per servo in layout order. Mount positions on
+the plate are the core slot offsets of Morphology.slot_frame, in mm.
 """
 
 import csv
@@ -31,6 +31,19 @@ ELBOW_SLOTS = {1: "left elbow", 2: "right elbow"}
 
 def _mm(m):
     return int(round(m * 1000))
+
+
+def link_name(profile, bend_deg, length, width, thick):
+    """STL name of a link, with the profile and whole-degree bend when bent."""
+    name = f"link_{length}x{width}x{thick}"
+    if profile != "straight":
+        name += f"_{profile}{int(round(bend_deg))}"
+    return name
+
+
+def foot_name(shape, radius):
+    """STL name of a foot: the sphere keeps its old name."""
+    return f"foot_{radius}" if shape == "sphere" else f"foot_{shape}_{radius}"
 
 
 # Stack-up constants, equal to parts.WALL, parts.PLATE_T (parts needs build123d,
@@ -61,10 +74,10 @@ def mount_positions_mm(morph):
 
 def part_counts(morph):
     """Printed parts needed, keyed by whole millimetres: links by
-    (length, width, thick), elbow plates by (distance, angle deg, width,
-    thick) of the parent link, feet by radius, wheels by radius, springs
-    by (width, blade), tails by length and caster wheels by radius;
-    skids and spikes as plain counts."""
+    (length, width, thick, profile, bend deg), elbow plates by (distance,
+    angle deg, width, thick) of the parent link, feet by (shape, radius),
+    wheels by radius, springs by (width, blade), tails by length and caster
+    wheels by radius; skids and spikes as plain counts."""
     cm = morph.child_map()
     links, wheels = Counter(), Counter()
     feet, elbows, springs, tails = Counter(), Counter(), Counter(), Counter()
@@ -72,7 +85,9 @@ def part_counts(morph):
     skids = spikes = 0
     for i, n in morph.nodes.items():
         if n.kind in ("joint", "link", "spring"):
-            links[(_mm(n.length), _mm(n.width), _mm(morpho.plate_thick(n)))] += 1
+            bend = int(round(np.degrees(n.bend))) if n.profile != "straight" else 0
+            links[(_mm(n.length), _mm(n.width), _mm(morpho.plate_thick(n)),
+                   n.profile, bend)] += 1
             if n.kind == "spring":
                 springs[(_mm(n.width), _mm(n.thick))] += 1
             for slot, child in cm.get(i, {}).items():
@@ -82,13 +97,13 @@ def part_counts(morph):
                             int(round(np.degrees(morpho.elbow_angle(c)))),
                             _mm(n.width), _mm(morpho.plate_thick(n)))] += 1
             if i not in cm:
-                feet[_mm(morpho.section_radius(n))] += 1   # implicit tip foot
+                feet[("sphere", _mm(morpho.section_radius(n)))] += 1
         elif n.kind == "wheel":
             wheels[_mm(n.wheel_rad)] += 1
         elif n.kind == "caster":
             casters[_mm(n.wheel_rad)] += 1
         elif n.kind == "foot":
-            feet[_mm(n.foot_rad)] += 1
+            feet[(n.foot_shape, _mm(n.foot_rad))] += 1
         elif n.kind == "tail":
             tails[_mm(n.length)] += 1
         elif n.kind == "skid":
@@ -135,16 +150,17 @@ def bom_rows(morph):
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
     size = torso_size_mm(morph)
     rows += [(name, 1, f"PLA, {size[0]:.0f} x {size[1]:.0f} mm") for name in torso]
-    for (length, width, thick), q in sorted(links.items()):
-        rows.append((f"link_{length}x{width}x{thick}.stl", q, "PLA"))
+    for (length, width, thick, profile, bend), q in sorted(links.items()):
+        rows.append((f"{link_name(profile, bend, length, width, thick)}.stl",
+                     q, "PLA"))
     for (width, blade), q in sorted(springs.items()):
         rows.append((f"spring_{width}x{blade}.stl", q, "TPU, flexure"))
     rows.append(("servo_bracket.stl", n, "PLA, one per servo"))
     for (dist, angle, width, thick), q in sorted(elbows.items()):
         rows.append((f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl", q,
                      "PLA, one per side module"))
-    for radius, q in sorted(feet.items()):
-        rows.append((f"foot_{radius}.stl", q, "TPU"))
+    for (shape, radius), q in sorted(feet.items()):
+        rows.append((f"{foot_name(shape, radius)}.stl", q, "TPU"))
     for r, q in sorted(wheels.items()):
         rows.append((f"wheel_{r}.stl", q, "PLA"))
         rows.append((f"Rubber O-ring tyre, wheel_{r}", q, f"fits rim of radius {r} mm"))
@@ -312,16 +328,17 @@ def _write_stls(morph, out_dir):
         out(name, tile)
     for span in sorted(splices):
         out(f"splice_plate_{span}.stl", parts.splice_plate(span))
-    for length, width, thick in sorted(links):
-        out(f"link_{length}x{width}x{thick}.stl", parts.link(length, width, thick))
+    for length, width, thick, profile, bend in sorted(links):
+        out(f"{link_name(profile, bend, length, width, thick)}.stl",
+            parts.link(length, width, thick, profile, bend))
     for width, blade in sorted(springs):
         out(f"spring_{width}x{blade}.stl", parts.spring(width, blade))
     out("servo_bracket.stl", parts.servo_bracket())
     for dist, angle, width, thick in sorted(elbows):
         out(f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl",
             parts.elbow_plate(dist, angle, width, thick))
-    for radius in sorted(feet):
-        out(f"foot_{radius}.stl", parts.foot(radius))
+    for shape, radius in sorted(feet):
+        out(f"{foot_name(shape, radius)}.stl", parts.foot(radius, shape))
     for r in sorted(wheels):
         out(f"wheel_{r}.stl", parts.wheel(r))
     for r in sorted(casters):

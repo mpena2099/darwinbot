@@ -89,13 +89,19 @@ def terminal_geoms(model: mujoco.MjModel, morph: Morphology):
     geoms, wheel = [], []
     for i, _, _ in morph.terminal_points():
         is_wheel = morph.nodes[i].kind == "wheel"
+        tip = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"tip{i}")
+        if tip >= 0:                 # the last piece of a joint, link or spring
+            geoms.append(tip)
+            wheel.append(is_wheel)
+            continue
         body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY,
                                  f"{'w' if is_wheel else 'n'}{i}")
         first = model.body_geomadr[body]
         # physical geoms only: the look-only bracket and horn have contype 0
         own = [g for g in range(first, first + model.body_geomnum[body])
                if model.geom_contype[g] != 0]
-        # Links are boxes now; a free tip has no non-box geom to pick.
+        # Foot and terminal shapes: prefer a non-box geom for contact; a free
+        # tip was already resolved by its name above.
         non_box = [g for g in own if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX]
         geoms.append(non_box[0] if non_box else
                      max(own, key=lambda g: abs(model.geom_pos[g][0])

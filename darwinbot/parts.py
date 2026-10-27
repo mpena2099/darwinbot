@@ -6,7 +6,8 @@ link, elbow plate, TPU foot, wheel and torso plate (the extruded contour
 polygon, one mount per used core slot). All dimensions in mm.
 
 Conventions: a link lies along +X with the horn axis at the origin and the
-next servo axis at x = length_mm; servo and wheel axes point along Z.
+next servo axis at x = length_mm, or at the end of its L/arc path; servo and
+wheel axes point along Z. Feet come in the FOOT_SHAPES of morphology.py.
 Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 """
 
@@ -120,17 +121,44 @@ def servo_bracket() -> Part:
 
 
 def link(length_mm: float, width_mm: float = LINK_W,
-         thick_mm: float = LINK_T) -> Part:
-    """Plate between two servo axes (horn at x=0, next bracket at x=length).
+         thick_mm: float = LINK_T, profile: str = "straight",
+         bend_deg: float = 0.0) -> Part:
+    """Plate between two servo axes (horn at x=0, next bracket at the tip).
     Both ends carry a round boss of END_BOSS_D (or the width, if wider), so the
-    horn holes stay inside the material for any width."""
+    horn holes stay inside the material for any width. An L link is two equal
+    bars and an arc three, turned about Z so the whole path keeps its length;
+    each piece is a straight bar and the pieces are unioned."""
     if length_mm < width_mm:
         raise ValueError("link too short")
-    part = _bar(0.0, length_mm, width_mm, thick_mm)
+    pts = _link_path_mm(length_mm, profile, bend_deg)
+    part = None
+    for a, b in zip(pts, pts[1:]):
+        yaw = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+        seg = math.hypot(b[0] - a[0], b[1] - a[1])
+        bar = Pos(a[0], a[1], 0) * Rot(Z=yaw) * _bar(0.0, seg, width_mm, thick_mm)
+        part = bar if part is None else part + bar
     part -= _horn_holes(thick_mm)
-    # bracket end: the common mounting pattern plus a bore for the cable
-    part -= Pos(length_mm, 0, 0) * _link_end_pattern(thick_mm)
+    # bracket end at the tip, turned by the total bend
+    tip = pts[-1]
+    part -= Pos(tip[0], tip[1], 0) * Rot(Z=0.0 if profile == "straight" else bend_deg) \
+        * _link_end_pattern(thick_mm)
     return part
+
+
+def _link_path_mm(length_mm: float, profile: str, bend_deg: float):
+    """Polyline of a link in mm, starting at the origin, same as
+    morphology.link_path."""
+    pieces = {"straight": 1, "L": 2, "arc": 3}[profile]
+    step = length_mm / pieces
+    turn = math.radians(bend_deg) / (pieces - 1) if pieces > 1 else 0.0
+    pts = [(0.0, 0.0)]
+    angle = 0.0
+    for k in range(pieces):
+        if k:
+            angle += turn
+        x, y = pts[-1]
+        pts.append((x + step * math.cos(angle), y + step * math.sin(angle)))
+    return pts
 
 
 def _link_end_pattern(thick_mm: float, yaw_deg: float = 0.0) -> Part:
@@ -182,11 +210,28 @@ def spring(width_mm: float = LINK_W, blade_mm: float = 4.0) -> Part:
     return part
 
 
-def foot(radius_mm: float = FOOT_R) -> Part:
-    """Rounded cap (print in TPU): hemisphere over a socket for the shin.
-    Scaled from the 9 mm foot; the socket keeps its diameter and the radius is
-    clamped so the wall around it stays at least 2 mm."""
+def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
+    """TPU tip in one of the FOOT_SHAPES. The sphere is the rounded cap over a
+    socket for the shin. The blade is a long thin box, the pad a disc with its
+    axis along X (so its flat face looks down when the limb points down) and
+    the claw three toes spread in the XY plane. Scaled from the 9 mm foot; the
+    socket keeps its diameter and the radius is clamped so the wall around it
+    stays at least 2 mm."""
     r = max(radius_mm, FOOT_MIN_R)
+    if shape == "blade":
+        return Box(2 * r, r / 3, r)
+    if shape == "pad":
+        return Rot(Y=90) * Cylinder(r, r / 3)
+    if shape == "claw":
+        part = None
+        for a in (-30.0, 0.0, 30.0):
+            toe = Rot(Z=a) * Rot(Y=90) * Cylinder(
+                r / 5, 1.5 * r, align=(Align.CENTER, Align.CENTER, Align.MIN))
+            end = Pos(1.5 * r * math.cos(math.radians(a)),
+                      1.5 * r * math.sin(math.radians(a)), 0) * Sphere(r / 5)
+            toe += end
+            part = toe if part is None else part + toe
+        return part
     with BuildPart() as b:
         Sphere(r)
     dome = b.part - Pos(0, 0, -r) * Box(4 * r, 4 * r, 2 * r)

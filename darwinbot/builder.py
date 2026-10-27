@@ -33,11 +33,13 @@ import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
+                                  CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
                                   ELECTRONICS_BOX, SERVO_BOX, SKID_SIZE,
                                   SPIKE_LENGTH, SPIKE_RADIUS, SPRING_DAMPING,
                                   TAIL_BAR_SIZE, TAIL_TIP_RADIUS, TORSO_HEIGHT,
                                   Actuator, ActuatorLayout, Morphology,
-                                  elbow_distance, plate_thick, spring_stiffness)
+                                  elbow_distance, link_path, link_tip,
+                                  plate_thick, spring_stiffness)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
@@ -136,21 +138,67 @@ def _servo_dress(axis_local) -> str:
     return f"{bracket}\n{horn}"
 
 
-def _link_geom(node, rgba: str = LINK_RGBA) -> str:
-    return (f'<geom type="box" pos="{_f(node.length / 2, 0, 0)}" '
-            f'size="{_f(node.length / 2, node.width / 2, plate_thick(node) / 2)}" '
-            f'density="{LINK_DENSITY}" rgba="{rgba}" {ROBOT_GEOM}/>')
+def _rot_z(a: float) -> np.ndarray:
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=float)
+
+
+def _xyaxes(rot: np.ndarray) -> str:
+    return f'xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
+
+
+def _link_geoms(node, rgba: str = LINK_RGBA) -> str:
+    """One box geom per piece of the link path; the last piece carries the
+    tip name that sim.terminal_geoms uses for a free end."""
+    pts = link_path(node)
+    out = []
+    for k, (a, b) in enumerate(zip(pts, pts[1:])):
+        d = b - a
+        rot = _rot_z(float(np.arctan2(d[1], d[0])))
+        name = f' name="tip{node.id}"' if k == len(pts) - 2 else ""
+        out.append(f'<geom{name} type="box" pos="{_f(*((a + b) / 2))}" '
+                   f'{_xyaxes(rot)} '
+                   f'size="{_f(np.linalg.norm(d) / 2, node.width / 2, plate_thick(node) / 2)}" '
+                   f'density="{LINK_DENSITY}" rgba="{rgba}" {ROBOT_GEOM}/>')
+    return "\n        ".join(out)
 
 
 def _elbow_geom(parent, child, slot: int) -> str:
     """Printed elbow plate from the link tip to the side slot `slot` (1 left,
-    2 right), where the child module is mounted."""
+    2 right), where the child module is mounted. It follows the tip rotation
+    of a bent link."""
     side = 1.0 if slot == 1 else -1.0
     d = elbow_distance(child)
+    tip, rot = link_tip(parent)
+    pos = tip + rot @ np.array([0.0, side * d / 2, 0.0])
     return (f'<geom name="elbow{child.id}" type="box" '
-            f'pos="{_f(parent.length, side * d / 2, 0)}" '
+            f'pos="{_f(*pos)}" {_xyaxes(rot)} '
             f'size="{_f(parent.width / 2, d / 2, plate_thick(parent) / 2)}" '
             f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>')
+
+
+def _foot_geoms(node, friction: float = 1.0) -> str:
+    """Foot of the shape picked by the AXIS gene. All TPU. The pad is a disc
+    with its axis along local X (the limb direction), so its flat face looks
+    down when the limb points down; the claws spread in the local XY plane."""
+    r = node.foot_rad
+    geom = f'density="{LIMB_DENSITY}" rgba="0.2 0.2 0.2 1"'
+    if node.foot_shape == "blade":
+        return (f'<geom type="box" size="{_f(r, r / 3 / 2, r / 2)}" '
+                f'{geom} {ROBOT_GEOM}/>')
+    if node.foot_shape == "pad":
+        return (f'<geom type="cylinder" fromto="{_f(-r / 6, 0, 0, r / 6, 0, 0)}" '
+                f'size="{r:.4f}" {geom} {ROBOT_GEOM}/>')
+    if node.foot_shape == "claw":
+        out = []
+        for a in (-CLAW_SPREAD, 0.0, CLAW_SPREAD):
+            end = np.array([np.cos(a), np.sin(a), 0.0]) * CLAW_LENGTH * r
+            out.append(f'<geom type="capsule" fromto="{_f(0, 0, 0, *end)}" '
+                       f'size="{CLAW_RADIUS * r:.4f}" {geom} '
+                       f'{_special_geom(SPIKE_FACTOR, friction)}/>')
+        return "\n        ".join(out)
+    return (f'<geom type="sphere" size="{r:.4f}" density="{LIMB_DENSITY}" '
+            f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
@@ -169,9 +217,9 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
                  f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_servo_dress(AXIS_LOCAL[node.axis])}\n'
-                 f'{_link_geom(node)}')
+                 f'{_link_geoms(node)}')
     elif node.kind == "link":
-        inner = _link_geom(node)
+        inner = _link_geoms(node)
     elif node.kind == "spring":
         sign = -1.0 if node.flip else 1.0
         axis = sign * np.array(AXIS_LOCAL[node.axis])
@@ -179,7 +227,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                  f'stiffness="{spring_stiffness(node):.8g}" '
                  f'damping="{SPRING_DAMPING}" frictionloss="0" armature="0" '
                  f'range="{-SPRING_RANGE} {SPRING_RANGE}"/>\n'
-                 f'{_link_geom(node, SPRING_RGBA)}')
+                 f'{_link_geoms(node, SPRING_RGBA)}')
     elif node.kind == "wheel":
         pos, rot = frames[i]
         name = f"w{i}"
@@ -214,8 +262,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                   rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
           </body>"""
     elif node.kind == "foot":
-        inner = (f'<geom type="sphere" size="{node.foot_rad:.4f}" density="{LIMB_DENSITY}" '
-                 f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+        inner = _foot_geoms(node, friction)
     elif node.kind == "tail":
         mass = max(node.tail_mass, 1e-6)   # a zero-mass geom would be degenerate
         inner = (f'<geom name="tail{i}" type="box" pos="{_f(node.length / 2, 0, 0)}" '

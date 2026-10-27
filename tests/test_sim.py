@@ -101,6 +101,35 @@ def test_terminal_friction_lives_on_its_own_geom(kind, friction):
     assert episode.model.geom_friction[gid, 0] == pytest.approx(friction)
 
 
+def _profiled_body():
+    """Two bent links and one explicit foot of every shape."""
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    i = 1
+    for slot, profile, shape in ((0, "L", "sphere"), (1, "arc", "blade")):
+        m.nodes[i] = mo.Node(i, "joint", 0, slot, 0.0, "pitch", 0.06)
+        m.nodes[i + 1] = mo.Node(i + 1, "link", i, 0, 0.0, length=0.08,
+                                 profile=profile, bend=np.pi / 2)
+        m.nodes[i + 2] = mo.Node(i + 2, "foot", i + 1, 0, 0.0,
+                                 foot_rad=0.018, foot_shape=shape)
+        i += 3
+    m.nodes[i] = mo.Node(i, "foot", 0, 2, 0.0, foot_rad=0.018, foot_shape="pad")
+    m.nodes[i + 1] = mo.Node(i + 1, "foot", 0, 3, 0.0, foot_rad=0.018,
+                             foot_shape="claw")
+    return m
+
+
+def test_bent_links_and_every_foot_shape_simulate():
+    morph = _profiled_body()
+    episode = Episode(morph, te.flat(), seconds=0.6)
+    assert episode.buildable
+    assert episode.model.nu == len(episode.layout) == 2
+    metrics = episode.run(_ctrl(morph, amp=0.3))
+    assert not metrics.unstable
+    for value in (metrics.dx, metrics.dy, metrics.energy, metrics.mass,
+                  metrics.duty, metrics.height, metrics.wheel_share, metrics.yaw):
+        assert np.isfinite(value)
+
+
 def test_tail_counterweight_adds_its_mass():
     light = Episode(_terminal_body("tail", 0.02), te.flat(), seconds=1.0)
     heavy = Episode(_terminal_body("tail", 0.08), te.flat(), seconds=1.0)

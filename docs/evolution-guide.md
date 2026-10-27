@@ -37,8 +37,8 @@ In biology, the **genotype** is the DNA and the **phenotype** is the
 organism it produces. In DarwinBot:
 
 - the genotype is a vector of numbers between 0 and 1;
-- the phenotype is the robot's body: a tree of modules (trunk, servo
-  joints, links, TPU springs, wheels, feet, tails, skids, spikes and free
+- the phenotype is the robot's body: a tree of modules (trunk, spine
+  segments, servo joints, links, TPU springs, wheels, feet, tails, skids, spikes and free
   caster wheels).
 
 ![From genome to body](img/guide/genome_en.png)
@@ -50,7 +50,10 @@ what type of module it is, the joint axis, the link length and so on.
 The measures are continuous: link length goes from 40 to 200 mm, the
 section from 12 to 30 mm by 3 to 10 mm, the elbow has its own distance and
 angle, the mount rolls to any angle and can sit anywhere along the torso
-edge. Each block has 13 genes. The passive modules (spring, tail with
+edge, top or bottom. The trunk outline is an 8-vertex polygon that evolution
+reshapes, a link can be straight, L-shaped or arc-shaped, a foot can be a
+sphere, blade, pad or claw, and the trunk can grow up to two extra plates
+joined by spine servos. Each block has 15 genes. The passive modules (spring, tail with
 counterweight, skid, spike, caster) have no servo.
 
 **In the code:** `darwinbot/morphology.py`, functions `decode` (genome to
@@ -68,7 +71,7 @@ little. DarwinBot uses six operators, drawn with different weights:
 
 | Operator | What it does | Chance |
 |---|---|---|
-| `param` | nudges a continuous measure (length, section, elbow, roll, radius) | 35% |
+| `param` | nudges a continuous measure (length, section, elbow, roll, radius, trunk outline, link bend, foot shape) | 35% |
 | `add` | adds a module in a free socket | 20% |
 | `type` | swaps a module's type (a joint becomes a link, spring, tail, skid, spike or caster, for example) | 15% |
 | `mirror` | copies a limb to the opposite side, mirrored | 15% |
@@ -204,7 +207,7 @@ There is a fourth defense, **natural selection by the printer**: a body is
 buildable only if every part fits a 220 mm print bed, every link survives
 the servo stall torque (1.91 N*m) with a bending stress of at most 25 MPa
 (half of what PLA takes), and no parts overlap. The torso has no limit: it
-is split into bed-sized tiles joined by splice plates. A body that breaks a
+is split into bed-sized tiles joined by splice plates, and each spine segment is its own plate. A body that breaks a
 rule is scored as unbuildable and is never simulated.
 
 ![Varied physics](img/guide/randomize_en.png)

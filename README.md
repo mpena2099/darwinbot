@@ -9,11 +9,13 @@ from real parts so the result can be printed and assembled.
 ![Four evolved robots moving: a roller and three legged gaits](docs/img/gait.gif)
 
 Every robot is a tree of real modules (Karl Sims and Revolve2 style): a core
-(torso plate, ESP32, LiPo) with servo joints, passive links, TPU springs, tails,
-skids, spikes, caster wheels, wheels and feet hanging from its slots, driven by
-Feetech STS3215 servos. Only the interfaces are fixed (servo, horn and bracket
-holes, M3 screws, electronics); link length, section, elbow, roll, mount
-position and foot size are continuous genes, and a body that the printer or the
+(a torso plate with a free contour, ESP32, LiPo) with servo joints, spine
+segments, passive links (straight, L or arc), TPU springs, tails, skids, spikes,
+caster wheels, wheels and feet (sphere, blade, pad or claw) hanging from its
+slots, driven by Feetech STS3215 servos. Only the interfaces are fixed (servo,
+horn and bracket holes, M3 screws, electronics); torso contour, link length,
+section, profile and bend, elbow, roll, mount position and foot size are
+continuous genes, and a body that the printer or the
 servo torque could not deal with is not buildable. Bodies are evolved
 with a MAP-Elites archive laid out by behaviour and cost, while a central
 pattern generator with two harmonics per joint and load feedback (Tegotae) is
@@ -48,8 +50,10 @@ de hardware em `docs/` estão em português.
 
 The program invents robots and teaches each one to move. A robot is a tree of
 modules; evolution decides how many limbs, how long (continuous lengths, in
-millimetres), which way each joint turns, where each part mounts on the torso
-and whether a limb ends in a wheel. Passive modules without a servo (TPU spring,
+millimetres, straight or bent), which way each joint turns, what outline the
+torso has, whether it is split in segments, where each part mounts on the torso
+(edge, top or bottom face) and whether a limb ends in a wheel or a shaped foot.
+Passive modules without a servo (TPU spring,
 tail with counterweight, skid, spike, caster wheel) are part of the search. A
 body the printer or the servo could not handle is not buildable and is never
 simulated. For every new body, an optimiser searches for
@@ -97,8 +101,8 @@ active again if a module returns.
 Construction rules act as natural selection by the printer. A body is buildable
 only if every part fits a 220 mm print bed, every link bends under the 1.91 N*m
 servo stall torque with a stress of at most 25 MPa (half of what PLA takes), and
-no parts overlap at spawn. The torso is not limited: it is split into bed-sized
-tiles joined by splice plates. A body that breaks a rule scores as unbuildable
+no parts overlap at spawn. The torso is not limited: its outline is split into
+bed-sized tiles joined by splice plates, and each spine segment is its own plate. A body that breaks a rule scores as unbuildable
 and is never simulated.
 
 ## Install
@@ -297,7 +301,7 @@ the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.
 | `control.json` | the evolved controller for the ESP32 firmware (format 3), described in `docs/formato-controle.md` |
 | `bom.md`, `bom.csv` | servos, printed parts with quantities and material, electronics, screws, tyres |
 | `assembly.md` | one row per servo in layout order: id, node slot, parent chain in words (for example `core right-front > joint pitch > joint roll`), axis, link length, sign; mounting direction and calibration step |
-| `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl`, `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl`, `wheel_{R}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `servo_bracket.stl`, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
+| `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl` (bent links add `_L{deg}` or `_arc{deg}`), `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl` (blade, pad and claw feet: `foot_{shape}_{R}.stl`), `wheel_{R}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `servo_bracket.stl`, `segment_plate_{L}x{W}.stl` for each spine segment, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
 | `robot.xml` | the MuJoCo model, for inspection |
 
 The export walks the module tree: every joint, link and spring needs a link of
@@ -325,10 +329,12 @@ range on decode, so one mutation sigma works for every gene.
 
 ### Body genome (`darwinbot/morphology.py`)
 
-A tree of modules: `core`, `joint`, `link`, `spring`, `wheel`, `foot`, `tail`,
-`skid`, `spike` and `caster`. Joints and wheels carry an STS3215 servo; links,
-springs, tails, skids, spikes, casters and feet are passive. The genome is a
-fixed vector of `MORPH_LENGTH = MAX_NODES * 13 = 260` genes: one block of 13
+A tree of modules: `core`, `joint`, `segment`, `link`, `spring`, `wheel`, `foot`,
+`tail`, `skid`, `spike` and `caster`. Joints, segments (a spine servo followed by
+a second torso plate, at most `MAX_SEGMENTS = 2`, attached only to the front or
+back slot of the core or of another segment) and wheels carry an STS3215 servo;
+links, springs, tails, skids, spikes, casters and feet are passive. The genome is
+a fixed vector of `MORPH_LENGTH = MAX_NODES * 15 = 300` genes: one block of 15
 genes per node slot, with `MAX_NODES = 20`. Block 0 is always the core; the block index
 is the stable slot id of the node. A block is
 
@@ -336,17 +342,19 @@ is the stable slot id of the node. A block is
 |------|---------|
 | `active` | the module exists when > 0.5 |
 | `parent` | slot id of the parent module |
-| `slot` | attachment slot on the parent (core: 8 slots, front, back, left and right sides; joint, link and spring: tip and two sides) |
+| `slot` | attachment slot on the parent (core: 12 slots, 8 on the contour (front, back, three on each side) and 4 on the flat faces (top front, top rear, bottom front, bottom rear); segment: 8 slots like the core; joint, link and spring: tip and two sides) |
 | `rot` | roll of the attachment around the slot direction, any angle in [0, 2*pi) |
-| `type` | joint, link, spring, wheel, foot, tail, skid, spike or caster |
-| `axis` | joint turns about pitch, yaw or roll |
+| `type` | joint, link, spring, wheel, foot, tail, skid, spike, caster or segment |
+| `axis` | joint turns about pitch, yaw or roll; for a foot, the shape (sphere, blade, pad or claw) |
 | `length` | link length 40 - 200 mm (tail: bar length) |
 | `wheel` | wheel or caster radius (wheel 30 - 60 mm, caster 15 - 35 mm), or foot radius 8 - 30 mm; for a tail, the counterweight 0 - 100 g |
 | `flip` | joint axis reversed (how a mirrored copy keeps the same signal) |
 | `width` | link section width 12 - 30 mm |
 | `thick` | link section thickness 3 - 10 mm; for a spring, the TPU blade 2 - 8 mm |
-| `offset` | on the core: mount position along the torso edge; on a link side slot: elbow distance 25 - 80 mm |
-| `angle` | on the core: mount yaw up to +/-60 degrees; on a link side slot: elbow angle 30 - 150 degrees |
+| `offset` | on the core: mount position along the torso edge (on a top or bottom face, across the torso); on a link side slot: elbow distance 25 - 80 mm |
+| `angle` | on the core: mount yaw up to +/-60 degrees (on a face, yaw about the vertical, +/-180); on a link side slot: elbow angle 30 - 150 degrees |
+| `profile` | link, joint or spring path: straight, L (two pieces) or arc (three pieces); ignored by other modules |
+| `bend` | signed bend of an L or arc profile, -90 to +90 degrees |
 
 Passive module physics: a spring is a hinge whose stiffness follows from the TPU
 blade thickness (see "Mola de TPU" in `docs/hardware-dados.md`); a tail is a bar
@@ -354,13 +362,15 @@ with a counterweight at the tip; a skid has low friction (0.15), a spike high
 friction (1.6); a caster is a free wheel on a passive hinge. None has a servo.
 
 For the core block, `length` and `wheel` hold the torso length (0.15 - 0.40 m)
-and width (0.10 - 0.25 m). `decode()` accepts any vector and always returns a
+and width (0.10 - 0.25 m), and the unused genes hold the contour factors (0.4 to
+1.4) of the 8 vertices of the star-shaped torso polygon, one per contour slot.
+For a segment, `length` and `width` set the plate (80 - 220 mm each). `decode()` accepts any vector and always returns a
 body within `MAX_NODES`, `MAX_SERVOS = 16` and depth 5: blocks that are
 inactive, unreachable, clash on a slot or break a limit are dropped. A joint or
 link with no child ends in an implicit foot.
 
 Mutation works on the decoded tree: nudge a continuous measure (one step in five
-is a large jump), stretch or shrink a whole limb, change a module type (including
+is a large jump; this includes the torso contour, link profile and bend, and foot shape), stretch or shrink a whole limb, change a module type (including
 into a passive kind), add a module or small subtree, remove a subtree, duplicate
 a subtree mirrored on the opposite slot, or copy it to another free slot. One
 child in five is instead a graft: a whole limb of a second elite is attached to
@@ -411,7 +421,8 @@ Every simulated robot is built from parts you can buy or print: Feetech
 STS3215 servos at 7.4 V (1.91 N*m stall, 5.45 rad/s, run at 70% of the torque),
 60 g per servo, an ESP32 + 2S LiPo + regulator payload of 0.13 kg in the torso,
 printed links of any length from 40 to 200 mm with a width of 12 to 30 mm and a
-thickness of 3 to 10 mm, printed elbow plates that carry the modules mounted on
+thickness of 3 to 10 mm (straight, L or arc), a torso plate of free contour with
+optional spine plates, blade, pad and claw feet with a socket hub, printed elbow plates that carry the modules mounted on
 the side of a link, TPU flexure springs, tails, skids, spikes and caster wheels,
 and self-collision between limbs. Link mass comes from the PLA geometry, and a
 link must keep its bending stress under the servo stall torque at or below 25 MPa. The
@@ -494,7 +505,8 @@ folder (`checkpoints/<preset>`), so they never overwrite the main archive:
 | `payload` | walk and turn when told | the `terrain` set | 0.3 kg |
 
 ```bash
-# All three extra tasks overnight, 5 batches each (about 2 h 20 min per preset)
+# The three extra tasks, 5 batches each. step and payload score three episodes
+# per evaluation, so each takes about 10 h on 4 cores; turn is much quicker
 python experiments/train.py --preset turn,step,payload --batches 5 --workers 3
 # The same command again continues each preset from where it stopped
 python experiments/replay.py --archive checkpoints/turn/archive.pkl --list
@@ -600,8 +612,6 @@ list, not in any single robot.
 - **Getting up** (`--task getup`): the robot starts upside down and scores by
   ending upright, so a fall no longer ends the episode. Bodies that can right
   themselves look very different from bodies that only walk.
-- **Free-form printed shapes**: a torso of any outline or in several segments,
-  curved links, blade, paw or claw feet, mounts on any face.
 
 ## Project structure
 

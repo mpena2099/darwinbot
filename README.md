@@ -613,6 +613,12 @@ list, not in any single robot.
   topology optimisation of every printed part after evolution, under the servo stall torque and the loads seen in
   simulation, removing material where nothing is carried. The parts come out
   bone-like and lighter while the evolved body and its interfaces stay the same.
+- **Closed loops grown by evolution**: a "ligament" gene that pins the tip of
+  one part to another part of the body, so linkages such as four-bar
+  mechanisms can arise on their own (a wrasse's jaw and the crossed ligaments of
+  a knee are four-bar linkages) instead of being handed over as a ready-made
+  module. Hard parts: the loop must close at the spawn pose to be buildable,
+  closed chains are less stable in simulation, and printing needs pins and play.
 - **Shapes drawn by an evolved network** (layer 4): a small CPPN in the genome
   draws each foot and the torso as an implicit surface (as Cheney et al. did for
   soft robots in 2013), split into convex pieces for MuJoCo and checked for

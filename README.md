@@ -17,6 +17,16 @@ behaviour and cost, while a central pattern generator with load feedback
 can be exported as printable parts, a bill of materials and a control file for an
 ESP32.
 
+## What evolution came up with
+
+| Body plans found in one run | Printable parts of the best robot |
+|---|---|
+| ![Evolved body plans](docs/img/robots.png) | ![Printable parts of the best robot](docs/img/parts.png) |
+| Wheels, legs and hybrids, each the best of its region of the map. | Every part fits a 220 mm print bed and survives the servo's stall torque. |
+
+[Full results →](https://mpena2099.github.io/darwinbot/results/) (numbers, the
+archive map and training progress)
+
 ## In three commands
 
 ```bash

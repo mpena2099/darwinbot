@@ -17,16 +17,32 @@ Controller::Controller(float frequency, float ramp_time, float control_hz,
       ramp_time_(ramp_time),
       dt_(control_hz > 0.0f ? 1.0f / control_hz : 0.0f),
       load_full_scale_(load_full_scale > 0.0f ? load_full_scale : kLoadFullScale),
-      servos_(std::move(servos)) {
+      servos_(std::move(servos)),
+      base_(servos_) {
     const size_t n = servos_.size();
     theta_.assign(n, 0.0f);
     targets.assign(n, 0.0f);
     steps.assign(n, 0);
     wheel_speeds.assign(n, 0.0f);
+    set_command(0.0f);
+}
 
-    // A servo cannot follow a signal whose peak speed exceeds its own.
-    for (ServoParams& p : servos_) {
-        if (p.mode != ServoParams::Mode::Position) continue;
+void Controller::set_command(float c) {
+    command_ = std::clamp(c, -1.0f, 1.0f);
+    for (size_t i = 0; i < servos_.size(); ++i) {
+        const ServoParams& b = base_[i];
+        ServoParams& p = servos_[i];
+        if (p.mode == ServoParams::Mode::Wheel) {
+            p.speed = std::clamp(b.speed + command_ * b.steer_shift,
+                                 -kServoSpeed, kServoSpeed);
+            continue;
+        }
+        const float gain =
+            std::clamp(1.0f + command_ * b.steer_gain, 0.0f, 2.0f);
+        p.offset = b.offset + command_ * b.steer_shift;
+        p.amp1 = b.amp1 * gain;
+        p.amp2 = b.amp2 * gain;
+        // A servo cannot follow a signal whose peak speed exceeds its own.
         const float peak = (p.amp1 + 2.0f * p.amp2) * omega_;
         const float k = std::min(1.0f, kServoSpeed / std::max(peak, 1e-12f));
         p.amp1 *= k;

@@ -24,10 +24,11 @@ from darwinbot.fitness import TASKS
 from darwinbot.morphology import decode, summary
 
 PRESETS = {
+    "steer":   dict(task="steer", terrains="terrain", payload=0.0),
     "forward": dict(task="forward", terrains="terrain", payload=0.0),
     "turn":    dict(task="turn", terrains="flat", payload=0.0),
-    "step":    dict(task="forward", terrains="step", payload=0.0),
-    "payload": dict(task="forward", terrains="terrain", payload=0.3),
+    "step":    dict(task="steer", terrains="step", payload=0.0),
+    "payload": dict(task="steer", terrains="terrain", payload=0.3),
 }
 
 
@@ -59,8 +60,9 @@ def main():
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
-    p.add_argument("--task", choices=TASKS, default="forward",
-                   help="what the score rewards: walking forward (default) or "
+    p.add_argument("--task", choices=TASKS, default="steer",
+                   help="what the score rewards: walking straight and turning "
+                        "when told (steer, default), walking forward only, or "
                         "turning in place (ignored on --resume)")
     p.add_argument("--payload", type=float, default=0.0, metavar="KG",
                    help="extra mass carried on the torso (ignored on --resume)")

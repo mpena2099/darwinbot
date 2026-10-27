@@ -29,7 +29,7 @@ import numpy as np
 from darwinbot import randomize
 
 from darwinbot.controller import CTRL_LENGTH, active_genes, random_controller
-from darwinbot.fitness import UNSTABLE_SCORE, aggregate, score
+from darwinbot.fitness import UNSTABLE_SCORE, aggregate, commands, score, task_score
 from darwinbot.morphology import Morphology
 from darwinbot.sim import COT_MAX, EPISODE_SECONDS, Episode, Metrics, cost_of_transport
 from darwinbot.terrain import Terrain, flat
@@ -51,15 +51,16 @@ def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
     variants: None, or one list of randomize.Variant per episode. The terrain
     score is then the mean over its variants (metrics keep the first one).
     """
+    cmds = commands(task)
     if not variants:
-        metrics = [ep.run(ctrl) for ep in episodes]
-        scores  = [score(m, task) for m in metrics]
-        return aggregate(scores), scores, metrics
+        runs = [[ep.run(ctrl, None, c) for c in cmds] for ep in episodes]
+        scores = [task_score(ms, task) for ms in runs]
+        return aggregate(scores), scores, [ms[0] for ms in runs]
     metrics, scores = [], []
     for ep, vs in zip(episodes, variants):
-        ms = [ep.run(ctrl, v) for v in vs]
-        metrics.append(ms[0])
-        scores.append(float(np.mean([score(m, task) for m in ms])))
+        runs = [[ep.run(ctrl, v, c) for c in cmds] for v in vs]
+        metrics.append(runs[0][0])
+        scores.append(float(np.mean([task_score(ms, task) for ms in runs])))
     return aggregate(scores), scores, metrics
 
 
@@ -125,11 +126,12 @@ def optimise_controller(
             return _unbuildable(morph, base, terrains, batches[0].mass)
 
         def evaluate_batch(ctrls):
-            per_terrain = [b.run_batch(ctrls) for b in batches]
+            cmds = commands(task)
+            per_terrain = [[b.run_batch(ctrls, c) for c in cmds] for b in batches]
             out = []
             for i in range(len(ctrls)):
-                metrics = [p[i] for p in per_terrain]
-                scores = [score(m, task) for m in metrics]
+                metrics = [p[0][i] for p in per_terrain]
+                scores = [task_score([r[i] for r in p], task) for p in per_terrain]
                 out.append((aggregate(scores), scores, metrics))
             return out
 

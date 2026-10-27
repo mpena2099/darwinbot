@@ -307,7 +307,7 @@ website, so for pushed versions the kernel reads it from a private dataset
 
 | File | Content |
 |------|---------|
-| `control.json` | the evolved controller for the ESP32 firmware (format 2), described in `docs/formato-controle.md` |
+| `control.json` | the evolved controller for the ESP32 firmware (format 3), described in `docs/formato-controle.md` |
 | `bom.md`, `bom.csv` | servos, printed parts with quantities and material, electronics, screws, tyres |
 | `assembly.md` | one row per servo in layout order: id, node slot, parent chain in words (for example `core right-front > joint pitch > joint roll`), axis, link length, sign; mounting direction and calibration step |
 | `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl`, `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl`, `wheel_{R}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `servo_bracket.stl`, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
@@ -477,7 +477,16 @@ use one fixed layout, so a robot always meets the same ground there.
 `--task` picks what the score rewards; the body and controller genomes are the
 same for every task, and so are the behaviour descriptors.
 
-- `forward` (default): walk straight, the score above.
+- `steer` (default): walk straight and turn when told. A steering command from
+  -1 (left) to +1 (right) scales each joint's amplitudes, shifts its offset and
+  changes each wheel's speed through two genes per slot, the way animals turn
+  with one gait and one side stronger. Every evaluation runs three episodes,
+  straight, left and right: `score = 0.5 * straight + 0.25 * (left + right)`,
+  where `straight` is the forward score and a turn scores `0.2 * yaw` towards the
+  side asked for (`yaw` in radians) minus the same energy and fall terms. Three
+  episodes make an evaluation three times as slow. On the robot the command can
+  come from a remote control, and later from sensors.
+- `forward`: walk straight only, the score above.
 - `turn`: rotate in place. `score = |yaw| - 0.5 * hypot(dx, dy) - 0.05 * energy / (m * g) - 0.5 * fell`,
   where `yaw` is the net heading change of the torso in radians, either way.
 
@@ -491,10 +500,11 @@ folder (`checkpoints/<preset>`), so they never overwrite the main archive:
 
 | Preset | Task | Terrain | Payload |
 |---|---|---|---|
+| `steer` | walk and turn when told | the `terrain` set | none |
 | `forward` | walk forward | the `terrain` set | none |
 | `turn` | turn in place | flat | none |
-| `step` | walk forward | one 3 cm step | none |
-| `payload` | walk forward | the `terrain` set | 0.3 kg |
+| `step` | walk and turn when told | one 3 cm step | none |
+| `payload` | walk and turn when told | the `terrain` set | 0.3 kg |
 
 ```bash
 # All three extra tasks overnight, 5 batches each (about 2 h 20 min per preset)
@@ -603,11 +613,6 @@ list, not in any single robot.
 - **Getting up** (`--task getup`): the robot starts upside down and scores by
   ending upright, so a fall no longer ends the episode. Bodies that can right
   themselves look very different from bodies that only walk.
-- **Steering on command**: a direction input from -1 (left) to +1 (right)
-  modulates each joint's amplitude and phase (and each wheel's speed), the way
-  animals steer by making one side stronger. Every robot is scored on going
-  straight and on turning when asked, so a body that only does one of them falls
-  behind.
 - **Free-form printed shapes**: a torso of any outline or in several segments,
   curved links, blade, paw or claw feet, mounts on any face.
 - **Adversarial terrains**: instead of drawing rough and rubble terrains at

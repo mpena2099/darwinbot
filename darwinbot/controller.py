@@ -16,6 +16,12 @@ on the real robot (in simulation, the actuator force). With sigma = 0 this is
 an open-loop two-harmonic CPG. Wheels ignore everything but the offset gene,
 which is their signed speed: target = ramp(t) * speed.
 
+Steering: a command c in [-1, 1] (0 straight, -1 left, +1 right) comes from
+outside (a remote, later a sensor). Each joint scales both amplitudes by
+(1 + c * gain) and shifts its offset by c * shift; each wheel adds c * shift
+to its speed. Animals turn the same way, with one gait and one side stronger,
+so the robot keeps a single rhythm and evolution finds how this body turns.
+
 The controller vector has a fixed size for every morphology and is indexed by
 the stable node slot id (see morphology.py). Genes of slots that
 are absent from the body are ignored, so a child can inherit its parent's
@@ -24,7 +30,7 @@ controller verbatim.
 Layout (all genes in [0, 1])
   [0] frequency
   slot s (s = 0..MAX_NODES-1), CTRL_PER_NODE genes from 1 + s * CTRL_PER_NODE:
-    amp1, phase1, offset, amp2, phase2, sigma
+    amp1, phase1, offset, amp2, phase2, sigma, steer_gain, steer_shift
 
 Amplitudes are clipped so no servo is asked to move faster than SERVO_SPEED:
 (amp1 + 2 * amp2) * omega <= SERVO_SPEED, scaling both down proportionally.
@@ -43,11 +49,14 @@ SERVO_TORQUE = 1.91 * LOAD_FULL_SCALE   # N*m: 7.4 V stall torque with a 30% mar
 WHEEL_RANGE  = (-SERVO_SPEED, SERVO_SPEED)   # signed so wheels may roll either way
 SIGMA_MAX    = 3.0            # rad/s; signed, load sign depends on the mounting
 SIGMA_RANGE  = (-SIGMA_MAX, SIGMA_MAX)
+STEER_GAIN_RANGE  = (-1.0, 1.0)     # amplitude factor 1 + c * gain, kept in [0, 2]
+STEER_SHIFT_RANGE = (-0.4, 0.4)     # rad, offset shift at full command
+WHEEL_STEER_RANGE = WHEEL_RANGE     # rad/s, wheel speed change at full command
 CONTROL_DT   = 0.02           # s, the ESP32 updates servo targets at 50 Hz
 RAMP_TIME    = 0.5            # s to fade the gait in from rest
 
-(AMP1, PHASE1, OFFSET, AMP2, PHASE2, SIGMA) = range(6)
-CTRL_PER_NODE = 6
+(AMP1, PHASE1, OFFSET, AMP2, PHASE2, SIGMA, STEER_GAIN, STEER_SHIFT) = range(8)
+CTRL_PER_NODE = 8
 CTRL_LENGTH   = 1 + MAX_NODES * CTRL_PER_NODE
 
 
@@ -66,7 +75,7 @@ def active_genes(morph: Morphology) -> np.ndarray:
     for act in morph.layout():
         b = node_base(act.slot)
         if act.kind == "wheel":
-            idx.add(b + OFFSET)
+            idx.update((b + OFFSET, b + STEER_SHIFT))
         else:
             idx.update(range(b, b + CTRL_PER_NODE))
     return np.array(sorted(idx), dtype=int)
@@ -100,9 +109,11 @@ def servo_targets(theta, t, p: "Params"):
 
 
 class Params:
-    """Per-actuator constants decoded from a controller vector."""
+    """Per-actuator constants decoded from a controller vector, under a
+    steering command (0 = straight)."""
 
-    def __init__(self, ctrl: np.ndarray, layout: ActuatorLayout):
+    def __init__(self, ctrl: np.ndarray, layout: ActuatorLayout,
+                 command: float = 0.0):
         ctrl = np.asarray(ctrl, dtype=float)
         assert ctrl.shape == (CTRL_LENGTH,), ctrl.shape
         self.omega = 2 * np.pi * _scale(ctrl[0], *FREQ_RANGE)
@@ -114,12 +125,15 @@ class Params:
         self.amp2   = np.zeros(n)
         self.phase2 = np.zeros(n)
         self.sigma  = np.zeros(n)
+        self.steer_gain  = np.zeros(n)
+        self.steer_shift = np.zeros(n)
         self.wheel  = np.zeros(n, dtype=bool)
         for a, act in enumerate(layout):
             g = ctrl[node_base(act.slot):node_base(act.slot) + CTRL_PER_NODE]
             if act.kind == "wheel":
                 self.wheel[a] = True
                 self.offset[a] = _scale(g[OFFSET], *WHEEL_RANGE)
+                self.steer_shift[a] = _scale(g[STEER_SHIFT], *WHEEL_STEER_RANGE)
                 continue
             self.amp1[a]   = _scale(g[AMP1],   *AMP_RANGE)
             self.phase1[a] = _scale(g[PHASE1], 0.0, 2 * np.pi)
@@ -127,6 +141,13 @@ class Params:
             self.amp2[a]   = _scale(g[AMP2],   *AMP_RANGE)
             self.phase2[a] = _scale(g[PHASE2], 0.0, 2 * np.pi)
             self.sigma[a]  = _scale(g[SIGMA],  *SIGMA_RANGE)
+            self.steer_gain[a]  = _scale(g[STEER_GAIN], *STEER_GAIN_RANGE)
+            self.steer_shift[a] = _scale(g[STEER_SHIFT], *STEER_SHIFT_RANGE)
+        # as decoded, before steering and the speed clip: what the firmware
+        # receives, so it can steer and clip on the robot the same way
+        self.amp1_base, self.amp2_base = self.amp1.copy(), self.amp2.copy()
+        self.offset_base = self.offset.copy()
+        steer(self, command)
         # A servo cannot follow a signal whose peak speed exceeds its own.
         peak = (self.amp1 + 2.0 * self.amp2) * self.omega
         k = np.minimum(1.0, SERVO_SPEED / np.maximum(peak, 1e-12))
@@ -134,11 +155,23 @@ class Params:
         self.amp2 = self.amp2 * k
 
 
+def steer(p: "Params", command: float) -> None:
+    """Apply a steering command to decoded params, in place (before the speed
+    clip, so a stronger side still respects the servo)."""
+    c = float(np.clip(command, -1.0, 1.0))
+    gain = np.clip(1.0 + c * p.steer_gain, 0.0, 2.0)
+    p.amp1 = np.where(p.wheel, p.amp1, p.amp1 * gain)
+    p.amp2 = np.where(p.wheel, p.amp2, p.amp2 * gain)
+    p.offset = np.where(p.wheel, np.clip(p.offset + c * p.steer_shift, *WHEEL_RANGE),
+                        p.offset + c * p.steer_shift)
+
+
 class Controller:
     """Stateful controller: owns the phases, advanced every physics step."""
 
-    def __init__(self, ctrl: np.ndarray, layout: ActuatorLayout):
-        self.params = Params(ctrl, layout)
+    def __init__(self, ctrl: np.ndarray, layout: ActuatorLayout,
+                 command: float = 0.0):
+        self.params = Params(ctrl, layout, command)
         self.omega = self.params.omega
         self.theta = np.zeros(len(layout))
 

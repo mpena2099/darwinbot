@@ -148,14 +148,14 @@ class Episode:
         self._k = 0
         assert self.model.nu == len(self.layout)
 
-    def reset(self, ctrl: np.ndarray, model=None) -> Controller:
+    def reset(self, ctrl: np.ndarray, model=None, command: float = 0.0) -> Controller:
         model = model or self.model
         mujoco.mj_resetData(model, self.data)
         mujoco.mj_forward(model, self.data)
         self._k = 0
         for w in BLOWUP_WARNINGS:
             self.data.warning[w].number = 0
-        return Controller(ctrl, self.layout)
+        return Controller(ctrl, self.layout, command)
 
     def _blew_up(self, t_prev: float) -> bool:
         """True when the last mj_step diverged: a MuJoCo warning fired (it has
@@ -181,7 +181,7 @@ class Episode:
         hit = np.concatenate([a[~self._robot[b]], b[~self._robot[a]]])
         return np.isin(self._tgeoms, hit)
 
-    def run(self, ctrl: np.ndarray, variant=None) -> Metrics:
+    def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0) -> Metrics:
         """
         Simulate one episode. With a randomize.Variant the perturbed model is
         stepped instead (same sizes, so the MjData is reused) and every new
@@ -190,7 +190,7 @@ class Episode:
         """
         m, d = self.model, self.data
         sim_model = variant.model if variant is not None else m
-        controller = self.reset(ctrl, sim_model)
+        controller = self.reset(ctrl, sim_model, command)
         queue = (deque([np.zeros(m.nu)] * variant.latency)
                  if variant is not None and variant.latency > 0 else None)
         x0, y0 = d.xpos[self.torso][:2].copy()

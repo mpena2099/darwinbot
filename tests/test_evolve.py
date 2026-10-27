@@ -294,7 +294,7 @@ def test_train_presets_run_in_sequence_and_resume(tmp_path):
            "--variants", "0", "--seconds", "1", "--out", str(tmp_path)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    for name, task in (("turn", "turn"), ("step", "forward")):
+    for name, task in (("turn", "turn"), ("step", "steer")):
         with open(tmp_path / name / "archive.pkl", "rb") as f:
             assert pickle.load(f).task == task
     again = subprocess.run(cmd[:4] + cmd[6:], capture_output=True, text=True)

@@ -45,6 +45,8 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 
 ## Planejado
 
+- Peças orgânicas na exportação: otimização topológica de cada peça impressa depois da evolução, sob o torque de travamento do servo e as cargas medidas na simulação, tirando material onde não há esforço. O corpo evoluído e as interfaces (furação, soquetes) não mudam; a peça fica mais leve e com aspecto de osso. Fazer junto com o treino longo final.
+- Formas desenhadas por uma rede evoluída (camada 4): uma CPPN no genoma desenha cada pé e o tronco como superfície implícita (Cheney et al., 2013), dividida em pedaços convexos para o MuJoCo e checada por elementos finitos.
 - Tarefa `getup` (levantar-se): o robô nasce de cabeça para baixo, a queda não encerra o episódio e a pontuação mede se ele termina em pé. Mexe em `sim.py` e `sim_gpu.py` (orientação do spawn e detecção de queda) e em `fitness.py`.
 
 ## Convenções e armadilhas

@@ -609,6 +609,14 @@ list, not in any single robot.
 
 ## Planned
 
+- **Organic parts on export**: topology optimisation of every printed part
+  after evolution, under the servo stall torque and the loads seen in
+  simulation, removing material where nothing is carried. The parts come out
+  bone-like and lighter while the evolved body and its interfaces stay the same.
+- **Shapes drawn by an evolved network** (layer 4): a small CPPN in the genome
+  draws each foot and the torso as an implicit surface (as Cheney et al. did for
+  soft robots in 2013), split into convex pieces for MuJoCo and checked for
+  strength by finite elements.
 - **Getting up** (`--task getup`): the robot starts upside down and scores by
   ending upright, so a fall no longer ends the episode. Bodies that can right
   themselves look very different from bodies that only walk.

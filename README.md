@@ -601,6 +601,14 @@ list, not in any single robot.
   behind.
 - **Free-form printed shapes**: a torso of any outline or in several segments,
   curved links, blade, paw or claw feet, mounts on any face.
+- **Adversarial terrains**: instead of drawing rough and rubble terrains at
+  random, keep the terrains and physics variants where the current elites fail
+  most and score everyone on them too, the way Hillis evolved hard test cases
+  as "parasites" and POET evolves terrains alongside its walkers. A hall of
+  fame of these hard cases would also make `validate.py` stricter.
+- **Predator and prey**, much later: a pursuer to escape or a target to catch,
+  first scripted, then evolving in a second archive. It needs the robot to
+  sense the other one, so it waits for sensors.
 
 ## Project structure
 

@@ -47,6 +47,8 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 - Tarefa `getup` (levantar-se): o robô nasce de cabeça para baixo, a queda não encerra o episódio e a pontuação mede se ele termina em pé. Mexe em `sim.py` e `sim_gpu.py` (orientação do spawn e detecção de queda) e em `fitness.py`.
 - Direção por comando (próxima mudança, depois do treino do eixo de pernas): entrada `c` de -1 a +1 que modula amplitude e fase de cada junta e a velocidade das rodas; três episódios por avaliação (reto, esquerda, direita) e nota que combina andar reto e virar quando mandado.
 - Forma livre das peças impressas (camada 3): tronco com contorno livre ou segmentado, links curvos, pés variados, encaixes em qualquer face.
+- Terrenos adversários (ideia do "parasita" de Hillis e do POET): guardar os terrenos sorteados e as variações de física em que as elites mais falham e avaliar todos também neles; um "hall da fama" desses casos deixa o `validate.py` mais rigoroso. Vem depois da forma livre e antes do `getup`.
+- Predador e presa, bem mais adiante: perseguidor programado e depois um segundo arquivo que evolui junto. Depende de sensores no robô.
 
 ## Convenções e armadilhas
 

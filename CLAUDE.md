@@ -48,6 +48,7 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 - Direção por comando (próxima mudança, depois do treino do eixo de pernas): entrada `c` de -1 a +1 que modula amplitude e fase de cada junta e a velocidade das rodas; três episódios por avaliação (reto, esquerda, direita) e nota que combina andar reto e virar quando mandado.
 - Forma livre das peças impressas (camada 3): tronco com contorno livre ou segmentado, links curvos, pés variados, encaixes em qualquer face.
 - Terrenos adversários (ideia do "parasita" de Hillis e do POET): guardar os terrenos sorteados e as variações de física em que as elites mais falham e avaliar todos também neles; um "hall da fama" desses casos deixa o `validate.py` mais rigoroso. Vem depois da forma livre e antes do `getup`.
+- Sensor de equilíbrio: um IMU no ESP32 (MPU-6050, por exemplo) com a inclinação do tronco entrando no controlador, para cada perna corrigir o tombo. Hoje o controlador só sente a carga de cada servo, então a evolução prefere corpos estáveis por si (largos, baixos, com muitos apoios ou rodas); um bípede de pé precisa disso. Mexe em `controller.py`, `sim.py`, `sim_gpu.py`, firmware e `BODY_MODEL`.
 - Predador e presa, bem mais adiante: perseguidor programado e depois um segundo arquivo que evolui junto. Depende de sensores no robô.
 
 ## Convenções e armadilhas

@@ -606,6 +606,11 @@ list, not in any single robot.
   most and score everyone on them too, the way Hillis evolved hard test cases
   as "parasites" and POET evolves terrains alongside its walkers. A hall of
   fame of these hard cases would also make `validate.py` stricter.
+- **Balance sense**: an IMU on the ESP32 (an MPU-6050, for example) feeding the
+  torso's tilt back into the controller, so each leg can correct a lean. Today
+  the controller only feels each servo's load, so evolution favours bodies that
+  are stable on their own (wide, low, many supports or wheels); a body that
+  stands upright on two legs needs this to survive.
 - **Predator and prey**, much later: a pursuer to escape or a target to catch,
   first scripted, then evolving in a second archive. It needs the robot to
   sense the other one, so it waits for sensors.

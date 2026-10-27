@@ -5,11 +5,11 @@ Evolved robot -> build folder for the real DarwinBot: control.json, STL parts, b
 notes and the MJCF used in simulation.
 
 The body is a module tree (darwinbot/morphology.py), so everything is read by
-walking the tree: one STL per distinct part (torso plate or its tiles, one per
-link size, elbow size, wheel radius, caster wheel radius, foot radius and
-spring flexure, servo bracket, splice plates), and one assembly row per servo
-in layout order. Mount
-positions on the plate are the core slot offsets of Morphology.slot_frame, in mm.
+walking the tree: one STL per distinct part (the extruded torso contour plate
+or its tiles, one per link size, elbow size, wheel radius, caster wheel radius,
+foot radius and spring flexure, servo bracket, splice plates), and one
+assembly row per servo in layout order. Mount positions on the plate are the
+core slot offsets of Morphology.slot_frame, in mm.
 """
 
 import csv
@@ -99,12 +99,23 @@ def part_counts(morph):
             casters)
 
 
+def torso_polygon_mm(morph):
+    """Torso contour vertices in mm, for the printable plate."""
+    return [(x * 1000, y * 1000) for x, y in morph.torso_polygon()]
+
+
+def torso_size_mm(morph):
+    """Bounding box (x, y) of the torso contour in mm."""
+    poly = torso_polygon_mm(morph)
+    return (max(x for x, _ in poly) - min(x for x, _ in poly),
+            max(y for _, y in poly) - min(y for _, y in poly))
+
+
 def _torso_names(morph):
     """STL names of the torso pieces, plus (span mm, count) for each splice."""
     from darwinbot import parts
     _, _, tw, th, nx, ny = parts.tile_plan(
-        morph.body_length * 1000, morph.body_width * 1000,
-        mount_positions_mm(morph))
+        torso_polygon_mm(morph), mount_positions_mm(morph))
     if nx == 1 and ny == 1:
         return ["torso_plate.stl"], Counter()
     spans = Counter()
@@ -122,7 +133,8 @@ def bom_rows(morph):
      casters) = part_counts(morph)
     torso, splices = _torso_names(morph)
     rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
-    rows += [(name, 1, "PLA") for name in torso]
+    size = torso_size_mm(morph)
+    rows += [(name, 1, f"PLA, {size[0]:.0f} x {size[1]:.0f} mm") for name in torso]
     for (length, width, thick), q in sorted(links.items()):
         rows.append((f"link_{length}x{width}x{thick}.stl", q, "PLA"))
     for (width, blade), q in sorted(springs.items()):
@@ -260,7 +272,9 @@ def servo_signs(morph, layout):
 
 
 def _write_assembly(morph, ctl, layout, out_dir):
+    w, h = torso_size_mm(morph)
     lines = [f"# Assembly: {ctl['robot']}", "",
+             f"Torso plate bounding box: {w:.0f} x {h:.0f} mm.", "",
              "Set each servo ID on the bus before mounting (one servo at a time).", "",
              "| Servo ID | Node slot | Position | Axis | Link | Sign |", "|---|---|---|---|---|---|"]
     for s, act in zip(ctl["servos"], layout):
@@ -293,8 +307,7 @@ def _write_stls(morph, out_dir):
     links, wheels, feet, elbows, springs, tails, skids, spikes, \
         casters = part_counts(morph)
     torso, splices = _torso_names(morph)
-    tiles = parts.torso_tiles(morph.body_length * 1000, morph.body_width * 1000,
-                              mount_positions_mm(morph))
+    tiles = parts.torso_tiles(torso_polygon_mm(morph), mount_positions_mm(morph))
     for name, tile in zip(torso, tiles):
         out(name, tile)
     for span in sorted(splices):

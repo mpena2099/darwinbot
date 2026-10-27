@@ -128,8 +128,9 @@ def test_mount_positions_follow_used_slots():
     pos = mount_positions_mm(m)
     assert len(pos) == len(m.child_map()[0]) == 4
     assert all(abs(abs(y) - m.body_width * 500) < 1e-6 for _, y, _ in pos)
-    # side slots face outward: yaw +-90 degrees
-    assert all(abs(abs(yaw) - 90) < 1e-6 for _, _, yaw in pos)
+    # every mount faces outward, along the radius of its contour point
+    for x, y, yaw in pos:
+        assert yaw == pytest.approx(np.degrees(np.arctan2(y, x)))
 
 
 def test_random_trees_export(tmp_path):

@@ -11,6 +11,18 @@ from darwinbot import parts  # noqa: E402
 HIPS = [(50, 40), (50, -40), (-50, 40), (-50, -40)]
 
 
+def _polygon(length, width):
+    return [(length / 2, 0), (length / 2, width / 2), (0, width / 2),
+            (-length / 2, width / 2), (-length / 2, 0),
+            (-length / 2, -width / 2), (0, -width / 2), (length / 2, -width / 2)]
+
+
+def _star(length=400, width=200):
+    poly = _polygon(length, width)
+    return [(x * (1.3 if k % 2 else 0.5), y * (1.3 if k % 2 else 0.5))
+            for k, (x, y) in enumerate(poly)]
+
+
 def _ok(p):
     assert p.is_valid
     assert p.volume > 0
@@ -186,14 +198,14 @@ def test_spike_tip():
 
 
 def test_torso_plate():
-    p = parts.torso_plate(200, 100, HIPS)
+    p = parts.torso_plate(_polygon(200, 100), HIPS)
     _ok(p)
     assert p.bounding_box().size.X == pytest.approx(200, abs=0.1)
 
 
 def test_torso_plate_tabs_carry_edge_brackets():
     # rear and side mounts on the edges: tabs grow the plate by half a bracket
-    p = parts.torso_plate(200, 100, [(-100, 0), (70, 50), (70, -50)])
+    p = parts.torso_plate(_polygon(200, 100), [(-100, 0), (70, 50), (70, -50)])
     _ok(p)
     ol = parts.SERVO_L + 2 * parts.SERVO_CLEARANCE + 2 * parts.WALL
     assert p.bounding_box().min.X == pytest.approx(-100 - ol / 2, abs=0.1)
@@ -201,14 +213,14 @@ def test_torso_plate_tabs_carry_edge_brackets():
 
 
 def test_torso_tiles_keeps_a_plate_that_fits():
-    tiles = parts.torso_tiles(200, 100, HIPS)
+    tiles = parts.torso_tiles(_polygon(200, 100), HIPS)
     assert len(tiles) == 1
     _ok(tiles[0])
     assert tiles[0].bounding_box().size.X == pytest.approx(200, abs=0.1)
 
 
 def test_torso_tiles_split_a_large_plate():
-    tiles = parts.torso_tiles(300, 150, HIPS)
+    tiles = parts.torso_tiles(_polygon(300, 150), HIPS)
     assert len(tiles) >= 2
     for tile in tiles:
         _ok(tile)
@@ -252,11 +264,22 @@ def test_caster_fork_axle_holes_are_collinear():
 
 def test_torso_mount_pattern_follows_the_slot_yaw():
     mounts = [(0, 50, 90 + 30), (60, 0, 0)]
-    p = parts.torso_plate(200, 100, mounts)
+    p = parts.torso_plate(_polygon(200, 100), mounts)
     _ok(p)
     for (x, y, yaw) in mounts:
         for px, py in _mount_points(x, y, yaw):
             assert _hole_is_free(p, px, py, 3.0)
     # the tab footprint is turned too: it reaches further in Y than a 0 deg one
-    flat = parts.torso_plate(200, 100, [(0, 50, 0)])
+    flat = parts.torso_plate(_polygon(200, 100), [(0, 50, 0)])
     assert p.bounding_box().max.Y > flat.bounding_box().max.Y - 1e-6
+
+
+def test_star_contour_torso_plate_matches_the_polygon():
+    poly = _star()
+    p = parts.torso_plate(poly, [])
+    _ok(p)
+    bb = p.bounding_box()
+    assert bb.size.X == pytest.approx(max(x for x, _ in poly) - min(x for x, _ in poly),
+                                      abs=0.1)
+    assert bb.size.Y == pytest.approx(max(y for _, y in poly) - min(y for _, y in poly),
+                                      abs=0.1)

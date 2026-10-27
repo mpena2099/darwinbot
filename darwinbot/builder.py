@@ -16,8 +16,10 @@ The layout is a list of morphology.Actuator(slot, kind, axis) in model order
 Parts are real: every joint is a Feetech STS3215 (7.4 V) with the torque and
 speed limits of its data sheet, minus a safety margin. Each servo adds a 60 g
 box, the torso carries a payload (ESP32, 2S LiPo, regulator), and links are
-printed. A child on a side slot of a link hangs from a printed elbow plate that
-bridges the child's elbow offset, so no module floats. See docs/hardware-dados.md.
+printed. The torso is the contour polygon split into eight triangular prisms
+(centre, v_k, v_k+1), so MuJoCo only sees convex geoms. A child on a side slot
+of a link hangs from a printed elbow plate that bridges the child's elbow
+offset, so no module floats. See docs/hardware-dados.md.
 
 Self-collision is ON: robot geoms (contype 2, conaffinity 3) touch each other
 and the terrain (1, 1). MuJoCo already skips parent/child pairs. `payload` (kg) is extra mass on the torso's payload box, for carrying tasks.
@@ -31,11 +33,11 @@ import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
-                                  SERVO_BOX, SKID_SIZE, SPIKE_LENGTH,
-                                  SPIKE_RADIUS, SPRING_DAMPING, TAIL_BAR_SIZE,
-                                  TAIL_TIP_RADIUS, TORSO_HEIGHT, Actuator,
-                                  ActuatorLayout, Morphology, elbow_distance,
-                                  plate_thick, spring_stiffness)
+                                  ELECTRONICS_BOX, SERVO_BOX, SKID_SIZE,
+                                  SPIKE_LENGTH, SPIKE_RADIUS, SPRING_DAMPING,
+                                  TAIL_BAR_SIZE, TAIL_TIP_RADIUS, TORSO_HEIGHT,
+                                  Actuator, ActuatorLayout, Morphology,
+                                  elbow_distance, plate_thick, spring_stiffness)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
@@ -78,6 +80,25 @@ def _f(*values) -> str:
 def spawn_height(morph: Morphology) -> float:
     """Torso centre height that puts the lowest point of the body just above z = 0."""
     return -morph.lowest_z() + SPAWN_CLEARANCE
+
+
+def _torso(morph: Morphology) -> Tuple[str, str]:
+    """Torso mesh assets and geoms: one triangular prism per contour edge,
+    each with the mass of its own volume of shell."""
+    poly = morph.torso_polygon()
+    h = TORSO_HEIGHT / 2
+    areas = [abs(a[0] * b[1] - b[0] * a[1]) / 2
+             for a, b in zip(poly, poly[1:] + poly[:1])]
+    assets, geoms = [], []
+    for k, (a, b) in enumerate(zip(poly, poly[1:] + poly[:1])):
+        verts = [(0, 0, -h), (a[0], a[1], -h), (b[0], b[1], -h),
+                 (0, 0, h), (a[0], a[1], h), (b[0], b[1], h)]
+        vertex = _f(*[v for p in verts for v in p])
+        assets.append(f'<mesh name="torso{k}" vertex="{vertex}"/>')
+        mass = SHELL_DENSITY * areas[k] * TORSO_HEIGHT
+        geoms.append(f'<geom type="mesh" mesh="torso{k}" mass="{mass:.6f}" '
+                     f'rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>')
+    return "\n    ".join(assets), "\n      ".join(geoms)
 
 
 def _frame_attrs(morph: Morphology, node) -> str:
@@ -242,6 +263,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
     assert layout == morph.layout()
     z0 = ground_z + spawn_height(morph)
     actuator_xml = "\n    ".join(actuators)
+    torso_assets, torso_geoms = _torso(morph)
 
     xml = f"""<mujoco model="darwinbot">
   <compiler angle="radian" autolimits="true"/>
@@ -256,6 +278,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
              rgb1="0.85 0.85 0.85" rgb2="0.70 0.70 0.70"/>
     <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"/>
     {terrain_assets}
+    {torso_assets}
   </asset>
   <worldbody>
     <light pos="0 0 4" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
@@ -263,9 +286,8 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
     <body name="torso" pos="{_f(spawn_x, 0, z0)}">
       <freejoint name="root"/>
       <camera name="track" mode="trackcom" pos="0 -1.8 0.9" xyaxes="1 0 0 0 0.45 0.9"/>
-      <geom type="box" size="{_f(morph.body_length / 2, morph.body_width / 2, TORSO_HEIGHT / 2)}"
-            density="{SHELL_DENSITY}" rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>
-      <geom type="box" size="{_f(min(0.05, morph.body_length / 2), 0.03, 0.015)}"
+      {torso_geoms}
+      <geom type="box" size="{_f(ELECTRONICS_BOX[0] / 2, ELECTRONICS_BOX[1] / 2, 0.015)}"
             mass="{PAYLOAD_MASS + payload}" contype="0" conaffinity="0" rgba="0.2 0.6 0.2 0.3"/>
       {legs}
     </body>

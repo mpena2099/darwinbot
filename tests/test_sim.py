@@ -17,7 +17,7 @@ from darwinbot.sim import Episode, Metrics, cost_of_transport, heading, wrap_ang
 
 
 LEGS = mo.encode(mo.template(2, wheels=False, yaw=True))
-WHEELS = mo.encode(mo.template(2, wheels=True, yaw=True, wheel_rad=0.06))
+WHEELS = mo.encode(mo.template(1, wheels=True, yaw=True, wheel_rad=0.06))
 
 
 def _ctrl(morph, amp=0.0, wheel=0.5, sigma=0.5):
@@ -38,6 +38,16 @@ def _ctrl(morph, amp=0.0, wheel=0.5, sigma=0.5):
 def test_every_terrain_compiles(name):
     episode = Episode(mo.decode(LEGS), te.TERRAINS[name](), seconds=1.0)
     assert episode.model.nu == len(episode.layout)
+
+
+def test_star_contour_builds_and_simulates():
+    morph = mo.template(1, wheels=True)
+    morph.contour = (0.5, 1.3) * 4
+    morph = mo.decode(mo.encode(morph))
+    episode = Episode(morph, te.flat(), seconds=1.0)
+    assert episode.buildable
+    metrics = episode.run(_ctrl(morph, amp=0.0, wheel=0.5))
+    assert not metrics.unstable
 
 
 def test_no_yaw_leg_has_one_fewer_actuator():
@@ -128,8 +138,11 @@ def test_mirrored_legs_move_alike():
 
 
 def test_overlapping_legs_are_not_buildable():
-    same = mo.template(2, wheels=True, wheel_rad=0.06, body_length=0.15)
-    spread = mo.template(2, wheels=True, wheel_rad=0.06)
+    # short links on a short torso put the wheels of adjacent side legs
+    # inside each other; the spread body has room
+    same = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.15,
+                       thigh=0.04, shin=0.04)
+    spread = mo.template(3, wheels=True, wheel_rad=0.06)
 
     assert not Episode(same, te.flat(), seconds=1.0).buildable
     assert Episode(spread, te.flat(), seconds=1.0).buildable
@@ -157,7 +170,8 @@ def test_printability_violation_is_not_buildable():
 
 def test_unbuildable_body_scores_unstable_without_simulating():
     from darwinbot.inner import optimise_controller
-    morph = mo.template(2, wheels=True, wheel_rad=0.06, body_length=0.15)
+    morph = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.15,
+                        thigh=0.04, shin=0.04)
     res = optimise_controller(morph, [te.flat()], budget=50, seconds=1.0)
 
     assert res.fitness == fitness.UNSTABLE_SCORE

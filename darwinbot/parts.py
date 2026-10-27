@@ -2,7 +2,8 @@
 parts.py
 --------
 Parametric printable parts (build123d) for the real DarwinBot: servo bracket,
-link, elbow plate, TPU foot, wheel and torso plate (one mount per used core slot). All dimensions in mm.
+link, elbow plate, TPU foot, wheel and torso plate (the extruded contour
+polygon, one mount per used core slot). All dimensions in mm.
 
 Conventions: a link lies along +X with the horn axis at the origin and the
 next servo axis at x = length_mm; servo and wheel axes point along Z.
@@ -12,8 +13,8 @@ Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 import math
 
 from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Locations,
-                       Part, Pos, Rot, Sphere, SlotOverall, extrude,
-                       export_stl as _export_stl, fillet)
+                       Part, Polygon, Pos, Rot, Sphere, SlotOverall, extrude,
+                       export_stl as _export_stl)
 
 # --- measure a real STS3215 and update ------------------------------------
 SERVO_L = 45.2          # body length (along the output axis offset direction)
@@ -283,17 +284,19 @@ def _footprint(yaw_deg: float):
     return ol * c + ow * s, ol * s + ow * c
 
 
-def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
-    """Base plate; each used core slot in `mounts` gets a tab under its servo
-    bracket and the common mounting pattern. A mount is (x, y, yaw_deg): the
-    slot position in mm and the yaw of the child on the core (its attachment
-    angle), which turns both the tab footprint and the pattern. A plain (x, y)
-    is turned 90 degrees on a side edge and 0 elsewhere. The bracket is
-    centred on the slot as in the simulation, so part of it overhangs the edge
-    and the tab carries it."""
+def torso_plate(polygon, mounts) -> Part:
+    """Extruded contour polygon (mm); each used core slot in `mounts` gets a tab
+    under its servo bracket and the common mounting pattern. A mount is
+    (x, y, yaw_deg): the slot position in mm and the yaw of the child on the
+    core (its attachment angle), which turns both the tab footprint and the
+    pattern. A plain (x, y) is turned 90 degrees on a side edge and 0
+    elsewhere. The bracket is centred on the slot as in the simulation, so part
+    of it overhangs the edge and the tab carries it."""
     t = PLATE_T
-    part = Box(length_mm, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    part = fillet(part.edges().filter_by(lambda e: abs(e.length - t) < 1e-6), 5)
+    pts = [(float(x), float(y)) for x, y in polygon]
+    part = extrude(Polygon(*pts, align=None), amount=t)
+    x0, x1, y0, y1 = _plate_bounds(polygon, mounts)
+    width_mm = max(float(y) for _, y in polygon) - min(float(y) for _, y in polygon)
     ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
     ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
     feet = []                                   # bracket footprints (x, y, extent x, extent y)
@@ -317,17 +320,21 @@ def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
     def free(sx):
         return all(abs(sx - x) > fx / 2 + 4 or abs(y) > fy / 2 + strap_w / 2 + 2
                    for x, y, fx, fy in feet)
-    xs = [-length_mm / 2 + 12 + i for i in range(int(length_mm / 2 - 12 - 35))]
+    length_mm = x1 - x0
+    xs = [x0 + 12 + i for i in range(int(length_mm / 2 - 12 - 35))]
     strap = next((sx for sx in xs if free(sx)), None)
     if strap is not None:
         part -= Pos(strap, 0, 0) * Box(4, strap_w, t * 3)
     return part
 
 
-def _plate_bounds(length_mm: float, width_mm: float, mounts):
+def _plate_bounds(polygon, mounts):
     """Bounding box of torso_plate in mm, brackets included."""
-    x0, x1 = -length_mm / 2, length_mm / 2
-    y0, y1 = -width_mm / 2, width_mm / 2
+    x0 = min(float(x) for x, _ in polygon)
+    x1 = max(float(x) for x, _ in polygon)
+    y0 = min(float(y) for _, y in polygon)
+    y1 = max(float(y) for _, y in polygon)
+    width_mm = y1 - y0
     for m in mounts:
         x, y, yaw = _mount(m, width_mm)
         fx, fy = _footprint(yaw)
@@ -336,10 +343,10 @@ def _plate_bounds(length_mm: float, width_mm: float, mounts):
     return x0, x1, y0, y1
 
 
-def tile_plan(length_mm: float, width_mm: float, mounts):
+def tile_plan(polygon, mounts):
     """Fewest equal whole-millimetre tiles of the torso that fit BED_MM:
     (x0, y0, tile width, tile height, nx, ny) in mm."""
-    x0, x1, y0, y1 = _plate_bounds(length_mm, width_mm, mounts)
+    x0, x1, y0, y1 = _plate_bounds(polygon, mounts)
     nx = max(1, math.ceil((x1 - x0) / BED_MM))
     ny = max(1, math.ceil((y1 - y0) / BED_MM))
     return (x0, y0, math.ceil((x1 - x0) / nx), math.ceil((y1 - y0) / ny), nx, ny)
@@ -361,11 +368,12 @@ def splice_plate(span_mm: float, width_mm: float = SPLICE_W,
     return part
 
 
-def torso_tiles(length_mm: float, width_mm: float, mounts) -> list[Part]:
-    """Printable torso pieces: torso_plate when it fits BED_MM, else the
-    fewest equal tiles (grid along X and Y), each cut drilled for a splice."""
-    plate = torso_plate(length_mm, width_mm, mounts)
-    x0, y0, tw, th, nx, ny = tile_plan(length_mm, width_mm, mounts)
+def torso_tiles(polygon, mounts) -> list[Part]:
+    """Printable torso pieces: torso_plate when its bounding box fits BED_MM,
+    else the fewest equal tiles (grid along X and Y), each cut drilled for a
+    splice."""
+    plate = torso_plate(polygon, mounts)
+    x0, y0, tw, th, nx, ny = tile_plan(polygon, mounts)
     if nx == 1 and ny == 1:
         return [plate]
     holes = []

@@ -4,8 +4,10 @@ morphology.py
 Body genome: a tree of real modules (Karl Sims / Revolve2 style).
 
 Modules
-  core   root, torso plate + ESP32 + LiPo. 8 slots: 0 front, 1 back,
-         2..4 left side (front, middle, rear), 5..7 right side
+  core   root, torso plate + ESP32 + LiPo. The torso is an 8-vertex star-shaped
+         polygon extruded to TORSO_HEIGHT, one vertex per old box direction
+         (front, corners and side midpoints). 8 slots sit on the contour:
+         0 front, 1 back, 2..4 left side (front, middle, rear), 5..7 right side
   joint  one STS3215 servo + a printed link. Slots: 0 tip, 1 left, 2 right
          (the side slots are an elbow at the end of the link)
   link   passive printed link, same slots as the joint
@@ -30,16 +32,16 @@ The block index is the stable slot id of the node (the controller is indexed
 by it). Block 0 is always the core. A block is
   [ACTIVE, PARENT, SLOT, ROT, TYPE, AXIS, LENGTH, WHEEL, FLIP,
    WIDTH, THICK, OFFSET, ANGLE]
-(for the core, LENGTH and WHEEL hold body length and width). LENGTH is the
+(for the core, LENGTH and WHEEL hold body length and width, and the unused
+genes PARENT, SLOT, ROT, TYPE, AXIS, FLIP, WIDTH and THICK hold the contour
+factors in CONTOUR_RANGE). LENGTH is the
 link length (40..200 mm); WIDTH and THICK are the link section (12..30 mm by
 3..10 mm, and for a spring THICK is the TPU blade, 2..8 mm); WHEEL is the wheel
 radius or, for a foot, the foot radius; ROT is
 the slot roll in [0, 2*pi). OFFSET and ANGLE are attachment fractions in
 [0, 1] whose meaning depends on the parent:
-  * core front/back: OFFSET slides the mount across the edge (y) and ANGLE
-    yaws it by up to +/-60 degrees;
-  * core sides: OFFSET slides the mount along the edge (x) by +/-30% of half
-    the body length and ANGLE yaws it the same way;
+  * core: OFFSET slides the mount along the contour by +/-30% of the edge to
+    the next or previous vertex and ANGLE yaws it by up to +/-60 degrees;
   * joint/link tip: OFFSET and ANGLE are ignored;
   * joint/link sides (elbow): OFFSET sets the elbow distance (25..80 mm) and
     ANGLE the elbow angle (30..150 degrees), so 0.5 is a 90 degree elbow.
@@ -84,8 +86,9 @@ BODY_BOUNDS = [
     (0.10, 0.25),   # body_width  (m)
 ]
 TORSO_HEIGHT = 0.06                       # m
+CONTOUR_RANGE = (0.4, 1.4)                # contour factor of a torso vertex
+ELECTRONICS_BOX = (0.10, 0.06)            # m, ESP32 + LiPo footprint, centred
 SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
-SIDE_X = (0.7, 0.0, -0.7)           # core side slots, fraction of half length
 ELBOW_OFFSET = (0.04 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
 
 # Printability: a part must print on a common bed and survive the servo stall torque.
@@ -110,6 +113,11 @@ AXIS_LOCAL = {"pitch": (0.0, 0.0, 1.0), "yaw": (0.0, 1.0, 0.0),
  WIDTH, THICK, OFFSET, ANGLE) = range(13)
 BLOCK_GENES  = 13
 MORPH_LENGTH = MAX_NODES * BLOCK_GENES
+# Core block genes that no core field needs hold the 8 contour factors.
+CONTOUR_GENES = (PARENT, SLOT, ROT, TYPE, AXIS, FLIP, WIDTH, THICK)
+
+# Core slot -> contour vertex. Slot 0 is front (+X), then counter-clockwise.
+CORE_VERTEX = {0: 0, 2: 1, 3: 2, 4: 3, 1: 4, 7: 5, 6: 6, 5: 7}
 
 N_SLOTS = {"core": 8, "joint": 3, "link": 3, "wheel": 0, "foot": 0,
            "spring": 3, "tail": 0, "skid": 0, "spike": 0, "caster": 0}
@@ -190,6 +198,7 @@ class Morphology:
     body_length: float
     body_width:  float
     nodes: Dict[int, Node] = field(default_factory=dict)
+    contour: Tuple[float, ...] = (1.0,) * 8
 
     # structure ----------------------------------------------------------
     def child_map(self) -> Dict[int, Dict[int, int]]:
@@ -230,7 +239,8 @@ class Morphology:
 
     def copy(self) -> "Morphology":
         return Morphology(self.body_length, self.body_width,
-                          {i: Node(**vars(n)) for i, n in self.nodes.items()})
+                          {i: Node(**vars(n)) for i, n in self.nodes.items()},
+                          tuple(self.contour))
 
     # counts ------------------------------------------------------------
     @property
@@ -280,6 +290,16 @@ class Morphology:
         return out
 
     # geometry (rest pose) ------------------------------------------------
+    def torso_polygon(self) -> List[Tuple[float, float]]:
+        """The 8 contour vertices in the torso frame, counter-clockwise from
+        the front: front midpoint, front-left corner, left midpoint, and so on.
+        A contour of all ones is the old body_length x body_width rectangle."""
+        l, w = self.body_length / 2, self.body_width / 2
+        box = [(l, 0.0), (l, w), (0.0, w), (-l, w),
+               (-l, 0.0), (-l, -w), (0.0, -w), (l, -w)]
+        return [(float(factor * x), float(factor * y))
+                for factor, (x, y) in zip(self.contour, box)]
+
     def slot_frame(self, parent: Node, slot: int,
                    child: Optional[Node] = None) -> Tuple[np.ndarray, np.ndarray]:
         """Offset and rotation of a slot in the frame of its parent. The
@@ -288,16 +308,15 @@ class Morphology:
         angle = 0.5 if child is None else child.angle
         yaw = (2.0 * angle - 1.0) * np.radians(60.0)
         if parent.kind == "core":
-            y = (2.0 * offset - 1.0) * 0.8 * self.body_width / 2
-            if slot == 0:
-                return np.array([self.body_length / 2, y, 0]), _rz(yaw)
-            if slot == 1:
-                return np.array([-self.body_length / 2, y, 0]), _rz(np.pi + yaw)
-            side = 1.0 if slot < 5 else -1.0
-            x = (SIDE_X[(slot - 2) % 3]
-                 + 0.3 * (2.0 * offset - 1.0)) * self.body_length / 2
-            return (np.array([x, side * self.body_width / 2, 0]),
-                    _rz(side * np.pi / 2 + yaw))
+            poly = self.torso_polygon()
+            k = CORE_VERTEX[slot]
+            t = (2.0 * offset - 1.0) * 0.3
+            a = poly[k]
+            b = poly[(k + 1) % 8] if t >= 0 else poly[(k - 1) % 8]
+            f = abs(t)
+            x, y = a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])
+            return (np.array([x, y, 0]),
+                    _rz(float(np.arctan2(y, x)) + yaw))
         if slot == 0:
             return np.array([parent.length, 0, 0]), _rz(0.0)
         side = 1.0 if slot == 1 else -1.0
@@ -383,8 +402,8 @@ class Morphology:
     @property
     def max_reach(self) -> float:
         """Largest distance from the torso centre to any point of the body."""
-        r = float(np.linalg.norm([self.body_length / 2, self.body_width / 2,
-                                  TORSO_HEIGHT / 2]))
+        r_xy = max(float(np.hypot(x, y)) for x, y in self.torso_polygon())
+        r = float(np.hypot(r_xy, TORSO_HEIGHT / 2))
         for i, (pos, rot) in self.frames().items():
             n = self.nodes[i]
             r = max(r, float(np.linalg.norm(pos)))
@@ -455,12 +474,27 @@ def _unscale(v: float, lo: float, hi: float) -> float:
     return float(np.clip((v - lo) / (hi - lo), 0.0, 1.0))
 
 
-def violations(morph: Morphology) -> List[str]:
-    """Printability checks: link bending strength, bed footprint, elbow reach.
+def _inside(x: float, y: float, poly: List[Tuple[float, float]]) -> bool:
+    """Point-in-polygon test (ray casting) for a simple polygon."""
+    inside = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+        if (y1 > y) != (y2 > y):
+            if x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+                inside = not inside
+    return inside
 
-    Torso size is not checked here: it will be split into tiles.
-    """
+
+def violations(morph: Morphology) -> List[str]:
+    """Printability checks: link bending strength, bed footprint, elbow reach,
+    and room for the electronics inside the torso contour."""
     out: List[str] = []
+    poly = morph.torso_polygon()
+    hx, hy = ELECTRONICS_BOX[0] / 2, ELECTRONICS_BOX[1] / 2
+    probes = [(sx * hx, sy * hy) for sx in (-1.0, 1.0) for sy in (-1.0, 1.0)]
+    probes += [(sx * hx, 0.0) for sx in (-1.0, 1.0)]
+    probes += [(0.0, sy * hy) for sy in (-1.0, 1.0)]
+    if not all(_inside(x, y, poly) for x, y in probes):
+        out.append("torso contour does not hold the electronics")
     for i, n in morph.nodes.items():
         if n.kind not in ("joint", "link", "spring"):
             continue
@@ -490,9 +524,11 @@ def decode(genes: np.ndarray) -> Morphology:
     assert genes.shape == (MORPH_LENGTH,), genes.shape
     blocks = genes.reshape(MAX_NODES, BLOCK_GENES)
 
+    contour = tuple(round(_scale(blocks[0, g], *CONTOUR_RANGE), 6)
+                    for g in CONTOUR_GENES)
     morph = Morphology(round(_scale(blocks[0, LENGTH], *BODY_BOUNDS[0]), 6),
                        round(_scale(blocks[0, WHEEL], *BODY_BOUNDS[1]), 6),
-                       {0: Node(0, "core")})
+                       {0: Node(0, "core")}, contour)
     kinds = {0: "core"}
     for i in range(1, MAX_NODES):
         kinds[i] = TYPE_KINDS[_pick(blocks[i, TYPE], len(TYPE_KINDS))]
@@ -560,6 +596,8 @@ def encode(morph: Morphology) -> np.ndarray:
     blocks[0, ACTIVE] = 1.0
     blocks[0, LENGTH] = _unscale(morph.body_length, *BODY_BOUNDS[0])
     blocks[0, WHEEL] = _unscale(morph.body_width, *BODY_BOUNDS[1])
+    for k, g in enumerate(CONTOUR_GENES):
+        blocks[0, g] = _unscale(morph.contour[k], *CONTOUR_RANGE)
     for i, n in morph.nodes.items():
         if i == 0:
             continue
@@ -688,7 +726,9 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
         if mirror:
             new.rot = (-node.rot) % (2 * np.pi)
             if par == 0:
-                new.angle = 1.0 - node.angle      # yaw mirrors around the torso
+                # contour position and yaw mirror around the torso
+                new.offset = round(1.0 - node.offset, 6)
+                new.angle = round(1.0 - node.angle, 6)
             if node.kind in ("joint", "spring") and node.axis != "yaw":
                 new.flip = not node.flip
         morph.nodes[i] = new
@@ -733,19 +773,28 @@ def template(n_pairs: int = 2, wheels: bool = False, yaw: bool = False,
     return morph
 
 
+def _random_contour(rng: np.random.Generator) -> Tuple[float, ...]:
+    """Half the random bodies get a free contour, half the old rectangle."""
+    if rng.random() < 0.5:
+        return tuple(round(float(rng.uniform(*CONTOUR_RANGE)), 6) for _ in range(8))
+    return (1.0,) * 8
+
+
 def _random_seed(rng: np.random.Generator) -> Morphology:
     wheels = bool(rng.random() < 0.35)
     yaw = bool(rng.random() < 0.5)
     n_pairs = int(rng.integers(1, 4))
     while n_pairs > 1 and 2 * n_pairs * (2 + yaw + wheels) > MAX_SERVOS:
         n_pairs -= 1
-    return template(n_pairs, wheels, yaw,
-                    thigh=round(float(rng.uniform(*LENGTH_RANGE)), 6),
-                    shin=round(float(rng.uniform(*LENGTH_RANGE)), 6),
-                    wheel_rad=round(float(rng.uniform(0.03, 0.05)), 6),
-                    body_length=round(float(rng.uniform(
-                        0.30 if n_pairs > 1 else 0.15, 0.40)), 6),
-                    body_width=round(float(rng.uniform(*BODY_BOUNDS[1])), 6))
+    morph = template(n_pairs, wheels, yaw,
+                     thigh=round(float(rng.uniform(*LENGTH_RANGE)), 6),
+                     shin=round(float(rng.uniform(*LENGTH_RANGE)), 6),
+                     wheel_rad=round(float(rng.uniform(0.03, 0.05)), 6),
+                     body_length=round(float(rng.uniform(
+                         0.30 if n_pairs > 1 else 0.15, 0.40)), 6),
+                     body_width=round(float(rng.uniform(*BODY_BOUNDS[1])), 6))
+    morph.contour = _random_contour(rng)
+    return morph
 
 
 # --------------------------------------------------------------------------
@@ -810,7 +859,7 @@ def _grow_limb(morph: Morphology, rng, slot: int) -> Optional[int]:
 def _random_tree(rng: np.random.Generator) -> Morphology:
     morph = Morphology(round(float(rng.uniform(*BODY_BOUNDS[0])), 6),
                        round(float(rng.uniform(*BODY_BOUNDS[1])), 6),
-                       {0: Node(0, "core")})
+                       {0: Node(0, "core")}, _random_contour(rng))
     for _ in range(int(rng.integers(1, 4))):
         slot = int(rng.choice([2, 3, 4, 0, 1], p=[.25, .15, .25, .2, .15]))
         if slot in morph.child_map().get(0, {}):
@@ -842,10 +891,16 @@ def _jitter(value: float, lo: float, hi: float, rng) -> float:
 def _op_param(morph, rng):
     n = morph.nodes[int(rng.choice(list(morph.nodes)))]
     if n.kind == "core":
-        if rng.random() < 0.5:
+        what = str(rng.choice(["length", "width", "contour"]))
+        if what == "length":
             morph.body_length = _jitter(morph.body_length, *BODY_BOUNDS[0], rng)
-        else:
+        elif what == "width":
             morph.body_width = _jitter(morph.body_width, *BODY_BOUNDS[1], rng)
+        else:
+            k = int(rng.integers(len(morph.contour)))
+            contour = list(morph.contour)
+            contour[k] = _jitter(contour[k], *CONTOUR_RANGE, rng)
+            morph.contour = tuple(contour)
         return
     choices = ["rot", "offset", "angle"]
     if n.kind in ("joint", "link", "spring"):
@@ -1038,7 +1093,11 @@ def graft(genes: np.ndarray, donor: np.ndarray,
 # --------------------------------------------------------------------------
 
 def summary(m: Morphology) -> str:
-    lines = [f"torso {m.body_length:.2f} x {m.body_width:.2f} m, "
+    poly = m.torso_polygon()
+    size_x = max(x for x, _ in poly) - min(x for x, _ in poly)
+    size_y = max(y for _, y in poly) - min(y for _, y in poly)
+    contour = " ".join(f"{c:.2f}" for c in m.contour)
+    lines = [f"torso {size_x:.2f} x {size_y:.2f} m, contour {contour}, "
              f"{m.n_nodes} modules, {m.n_servos} servos, {m.n_wheels} wheels, "
              f"{m.n_terminals} ground points, depth {m.max_depth}"]
     cm = m.child_map()

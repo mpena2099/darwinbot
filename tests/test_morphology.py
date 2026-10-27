@@ -12,6 +12,7 @@ from darwinbot import morphology as mo
 
 def _same(a, b):
     assert (a.body_length, a.body_width) == pytest.approx((b.body_length, b.body_width))
+    assert a.contour == pytest.approx(b.contour)
     assert sorted(a.nodes) == sorted(b.nodes)
     for i, n in a.nodes.items():
         m = b.nodes[i]
@@ -23,6 +24,8 @@ def _same(a, b):
 
 
 def _within_limits(m):
+    assert len(m.contour) == 8
+    assert all(mo.CONTOUR_RANGE[0] <= c <= mo.CONTOUR_RANGE[1] for c in m.contour)
     assert m.n_nodes <= mo.MAX_NODES
     assert m.n_servos <= mo.MAX_SERVOS
     assert m.max_depth <= mo.MAX_DEPTH
@@ -84,6 +87,38 @@ def test_repair_is_canonical():
     _same(mo.decode(genes), mo.decode(fixed))
 
 
+def test_contour_round_trip():
+    m = mo.decode(mo.encode(mo.template(1)))
+    m.contour = (0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.1, 0.9)
+    genes = mo.encode(m)
+    _same(m, mo.decode(genes))
+    assert np.allclose(mo.encode(mo.decode(genes)), genes)
+
+
+def test_ones_contour_is_the_old_rectangle():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    assert np.allclose(m.torso_polygon(), [
+        (0.2, 0.0), (0.2, 0.1), (0.0, 0.1), (-0.2, 0.1),
+        (-0.2, 0.0), (-0.2, -0.1), (0.0, -0.1), (0.2, -0.1)])
+
+
+def test_contour_too_small_for_the_electronics_is_a_violation():
+    tiny = mo.Morphology(0.15, 0.10, {0: mo.Node(0, "core")}, (0.4,) * 8)
+    assert "torso contour does not hold the electronics" in mo.violations(tiny)
+    assert "torso contour does not hold the electronics" not in mo.violations(
+        mo.template(1))
+
+
+def test_mirrored_core_mount_is_a_reflection_on_a_star_contour():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")},
+                      (0.5, 1.3) * 4)
+    m.nodes[1] = mo.Node(1, "joint", 0, 2, 0.0, "pitch", 0.10,
+                         offset=0.3, angle=0.3)
+    twin = mo.copy_subtree(m, 1, 0, mo.mirror_slot("core", 2), mirror=True)
+    left, right = m.frames()[1][0], m.frames()[twin][0]
+    assert right == pytest.approx([left[0], -left[1], left[2]])
+
+
 def test_slot_ids_are_stable_block_indices():
     m = mo.template(1)
     genes = mo.encode(m)
@@ -115,11 +150,13 @@ def _assert_mirrored(m, a, b):
     na, nb = m.nodes[a], m.nodes[b]
     assert (na.kind, na.axis, na.wheel_rad, na.foot_rad) == \
         (nb.kind, nb.axis, nb.wheel_rad, nb.foot_rad)
-    for field in ("length", "width", "thick", "offset"):
+    for field in ("length", "width", "thick"):
         assert getattr(na, field) == pytest.approx(getattr(nb, field))
-    if na.parent == 0:                    # yaw mirrors around the torso
+    if na.parent == 0:                    # position and yaw mirror around the torso
+        assert nb.offset == pytest.approx(1.0 - na.offset)
         assert nb.angle == pytest.approx(1.0 - na.angle)
     else:
+        assert nb.offset == pytest.approx(na.offset)
         assert nb.angle == pytest.approx(na.angle)
     assert nb.rot == pytest.approx((-na.rot) % (2 * np.pi))
     assert nb.flip == (na.flip if na.axis == "yaw" or na.kind != "joint" else not na.flip)

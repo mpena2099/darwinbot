@@ -1,5 +1,7 @@
 # DarwinBot
 
+**Evolving robots you can actually build.**
+
 Quality-diversity evolution of robot bodies and locomotion controllers, built
 from real parts so the result can be printed and assembled.
 

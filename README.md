@@ -1,4 +1,6 @@
-# darwinbot
+# DarwinBot
+
+**Evolving robots you can actually build.**
 
 [![tests](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml/badge.svg)](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

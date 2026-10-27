@@ -1,4 +1,5 @@
 site_name: DarwinBot
+site_description: Evolving robots you can actually build.
 site_url: https://mpena2099.github.io/darwinbot/
 repo_url: https://github.com/mpena2099/darwinbot
 docs_dir: docs

@@ -609,8 +609,8 @@ list, not in any single robot.
 
 ## Planned
 
-- **Organic parts on export**: topology optimisation of every printed part
-  after evolution, under the servo stall torque and the loads seen in
+- **Organic parts on export**, an optional step for whoever prints a robot:
+  topology optimisation of every printed part after evolution, under the servo stall torque and the loads seen in
   simulation, removing material where nothing is carried. The parts come out
   bone-like and lighter while the evolved body and its interfaces stay the same.
 - **Shapes drawn by an evolved network** (layer 4): a small CPPN in the genome

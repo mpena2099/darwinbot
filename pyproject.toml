@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 video = ["imageio[ffmpeg]"]
 gpu = ["jax[cuda12]", "mujoco-mjx"]
+warp = ["mujoco-warp>=3.17", "warp-lang>=1.18"]
 cad = ["build123d>=0.12"]
 docs = ["mkdocs-material>=9.5", "mkdocs>=1.6,<2"]   # MkDocs 2 drops what Material needs
 

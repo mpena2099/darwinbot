@@ -48,15 +48,17 @@ def main():
                    help="random seed (default: a new one every run, printed so "
                         "the run can be repeated)")
     p.add_argument("--out", default="checkpoints")
-    p.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
-                   help="simulate on the CPU (default) or with MJX on the GPU")
+    p.add_argument("--device", choices=("cpu", "gpu", "warp"), default="cpu",
+                   help="simulate on the CPU (default), with MJX (gpu) or with "
+                        "MuJoCo Warp (warp); warp and gpu only search, the "
+                        "archive is still scored on the CPU")
     p.add_argument("--popsize", type=int, default=None,
                    help="CMA-ES population (gpu default: 64)")
     p.add_argument("--seconds", type=float, default=5.0,
                    help="simulated seconds per episode (ignored on --resume)")
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain for every evaluation "
-                        "(default: 2 on cpu, 0 on gpu; ignored on --resume)")
+                        "(default: 2 on cpu and warp, 0 on gpu; ignored on --resume)")
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
@@ -79,11 +81,17 @@ def main():
         except ImportError:
             raise SystemExit("--device gpu needs JAX and MJX: "
                              "pip install -e '.[gpu]'")
+    if a.device == "warp":
+        try:
+            import mujoco_warp  # noqa: F401
+        except ImportError:
+            raise SystemExit("--device warp needs MuJoCo Warp: "
+                             "pip install -e '.[warp]'")
 
     if a.seed is None:
         a.seed = int.from_bytes(os.urandom(4), "little") >> 1
     print(f"[darwinbot] seed={a.seed}")
-    variants = a.variants if a.variants is not None else (2 if a.device == "cpu" else 0)
+    variants = a.variants if a.variants is not None else (0 if a.device == "gpu" else 2)
     common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,

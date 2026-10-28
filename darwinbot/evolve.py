@@ -387,10 +387,11 @@ def run(
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     os.makedirs(out_dir, exist_ok=True)
     rng = np.random.default_rng(seed)
-    if device == "gpu":
-        print("[darwinbot] gpu: workers ignored, tasks run one at a time")
+    if device in ("gpu", "warp"):
+        print(f"[darwinbot] {device}: workers ignored, tasks run one at a time")
         workers = 1
-        popsize = 64 if popsize is None else popsize
+        if device == "gpu":
+            popsize = 64 if popsize is None else popsize
     else:
         workers = workers or max(1, multiprocessing.cpu_count() - 1)
 
@@ -438,7 +439,8 @@ def run(
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
           f"batches={n_batches} batch_size={batch_size} "
           f"task={archive.task} payload={archive.payload} kg")
-    pool = None if device == "gpu" else multiprocessing.Pool(workers, _ignore_sigint)
+    pool = (None if device in ("gpu", "warp")
+            else multiprocessing.Pool(workers, _ignore_sigint))
     path = os.path.join(out_dir, "archive.pkl")
     saved = None                                  # batch count in the file on disk
     try:

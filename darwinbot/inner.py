@@ -102,10 +102,15 @@ def optimise_controller(
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
-    terrain (domain randomisation, CPU only). They are drawn once per body from
-    its seed, so all candidates face the same ones (common random numbers).
+    terrain (domain randomisation; not on device "gpu"). They are drawn once
+    per body from its seed, so all candidates face the same ones (common
+    random numbers).
     task picks the score (fitness.TASKS); payload is extra torso mass in kg.
     The behaviour descriptor is the same for every task.
+
+    device "warp" searches the controllers with MuJoCo Warp, one batch per
+    terrain for the whole generation, and re-scores the winner on the CPU: the
+    GPU only searches, what enters the archive is CPU-scored.
     """
     if variants > 0 and device == "gpu":
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
@@ -147,6 +152,54 @@ def optimise_controller(
         # The starting point counts: an inherited controller that already works
         # must not be lost just because CMA-ES never resamples it exactly.
         fit, scores, metrics = run_one(base, popsize or 1)
+    elif device == "warp":
+        from darwinbot.sim_warp import WarpBatchEpisode
+        batches = [WarpBatchEpisode(morph, t, seconds, payload) for t in terrains]
+        if not batches[0].buildable:
+            return _unbuildable(morph, base, terrains, batches[0].mass)
+
+        # The same variants as the CPU branch, drawn from the same generator:
+        # both devices then face the same randomised models.
+        var_sets = None
+        if variants > 0:
+            vrng = np.random.default_rng([seed, 1])    # leaves rng untouched
+            var_sets = [[randomize.perturb(b.episode.model, vrng)
+                         for _ in range(variants)] for b in batches]
+
+        def evaluate_batch(ctrls):
+            """One world per (controller, variant, command) and one run_batch per
+            terrain, so a whole generation is len(terrains) launches."""
+            cmds = commands(task)
+            nv, ncmd = max(variants, 1), len(cmds)
+            per_terrain = []
+            for i, b in enumerate(batches):
+                vs = var_sets[i] if var_sets else [None]
+                worlds = [(c, v, float(cmd)) for c in ctrls for v in vs
+                          for cmd in cmds]
+                per_terrain.append(b.run_batch(
+                    np.stack([w[0] for w in worlds]),
+                    np.array([w[2] for w in worlds]),
+                    None if var_sets is None else [w[1] for w in worlds]))
+            out = []
+            for i in range(len(ctrls)):
+                scores, metrics = [], []
+                for p in per_terrain:          # rebuild what evaluate() returns
+                    start = i * nv * ncmd
+                    runs = [p[start + j * ncmd:start + (j + 1) * ncmd]
+                            for j in range(nv)]
+                    scores.append(float(np.mean([task_score(ms, task)
+                                                 for ms in runs])))
+                    metrics.append(runs[0][0])        # variant 0, first command
+                out.append((aggregate(scores), scores, metrics))
+            return out
+
+        def run_one(c, n: int = 1):
+            return evaluate_batch(np.repeat(c[None], n, axis=0))[0]
+
+        def run_many(cs):
+            return evaluate_batch(np.stack(cs))
+
+        fit, scores, metrics = run_one(base, popsize or 1)
     else:
         episodes = [Episode(morph, t, seconds, payload) for t in terrains]
         if not episodes[0].buildable:
@@ -186,6 +239,10 @@ def optimise_controller(
         es.tell(candidates, losses)
 
     best.evals = evals
+    if device == "warp":
+        # The GPU only searched; the archive entry is scored on the CPU.
+        best.fitness, best.scores, best.metrics = evaluate(
+            [b.episode for b in batches], best.ctrl, var_sets, task)
     best.behaviour = behaviour_vector(morph, _nominal_flat(
         morph, terrains, best, variants, seconds, device, payload), task)
     return best
@@ -201,4 +258,5 @@ def _nominal_flat(morph, terrains, best, variants, seconds, device,
     if device == "gpu":
         from darwinbot.sim_gpu import BatchEpisode
         return BatchEpisode(morph, flat(), seconds, payload).run_batch(best.ctrl[None])[0]
+    # cpu and warp: the same CPU episode the archive is scored on.
     return Episode(morph, flat(), seconds, payload).run(best.ctrl)

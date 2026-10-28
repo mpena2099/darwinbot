@@ -4,6 +4,7 @@ experiments/train.py
 Run MAP-Elites over body plans, with CMA-ES learning each body's gait.
 
   python experiments/train.py                          # flat, defaults
+  python experiments/train.py --device auto            # benchmark, use the fastest
   python experiments/train.py --terrains terrain       # flat + rough + steps
   python experiments/train.py --batches 60 --workers 8
   python experiments/train.py --task turn --terrains step --payload 0.3
@@ -16,12 +17,16 @@ holds an archive is resumed, so the same command run again trains further.
 """
 
 import os
+import sys
 
 import argparse
 
 from darwinbot import evolve
 from darwinbot.fitness import TASKS
 from darwinbot.morphology import decode, summary
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import benchmark  # noqa: E402  (experiments/benchmark.py, the device measurement)
 
 PRESETS = {
     "steer":   dict(task="steer", terrains="terrain", payload=0.0),
@@ -30,6 +35,26 @@ PRESETS = {
     "step":    dict(task="steer", terrains="step", payload=0.0),
     "payload": dict(task="steer", terrains="terrain", payload=0.3),
 }
+
+
+def resolve_device(device, workers, cache_path=None):
+    """--device auto: the device measured on this machine (experiments/benchmark.py),
+    read from the cache, or measured and saved first when the cache is missing.
+    A given --workers wins over the cached one; any other device is returned as
+    it is, without touching the cache."""
+    if device != "auto":
+        return device, workers
+    result = benchmark.load(cache_path)
+    if result is None:
+        result = benchmark.measure()
+        benchmark.save(result, cache_path)
+    picked = result.get("device", "cpu")
+    if workers is None:
+        workers = result.get("workers")
+    print(f"[darwinbot] --device auto: {picked}"
+          f"{'' if workers is None else f' with {workers} workers'}, "
+          f"benchmarked {result.get('date', '?')} -> {benchmark.cache_path(cache_path)}")
+    return picked, workers
 
 
 def main():
@@ -48,10 +73,11 @@ def main():
                    help="random seed (default: a new one every run, printed so "
                         "the run can be repeated)")
     p.add_argument("--out", default="checkpoints")
-    p.add_argument("--device", choices=("cpu", "gpu", "warp"), default="cpu",
-                   help="simulate on the CPU (default), with MJX (gpu) or with "
-                        "MuJoCo Warp (warp); warp and gpu only search, the "
-                        "archive is still scored on the CPU")
+    p.add_argument("--device", choices=("cpu", "gpu", "warp", "auto"), default="cpu",
+                   help="simulate on the CPU (default), with MJX (gpu), with "
+                        "MuJoCo Warp (warp), or auto: benchmark this machine "
+                        "once and pick the fastest; with warp the GPU only "
+                        "searches, the archive is still scored on the CPU")
     p.add_argument("--popsize", type=int, default=None,
                    help="CMA-ES population (gpu default: 64)")
     p.add_argument("--seconds", type=float, default=5.0,
@@ -73,6 +99,8 @@ def main():
                    help="comma list of ready tasks run in sequence: "
                         + ", ".join(PRESETS) + " (each in checkpoints/<preset>)")
     a = p.parse_args()
+
+    a.device, a.workers = resolve_device(a.device, a.workers)
 
     if a.device == "gpu":
         try:

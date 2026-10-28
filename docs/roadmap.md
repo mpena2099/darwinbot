@@ -34,6 +34,11 @@
   limbs five modules deep, enough for a legless "lizard" with a waving tail but
   not for a snake. Lateral undulation also needs the direction-dependent
   friction above; sidewinding and concertina motion work without it.
+- **Wider wheel sizes**: wheel radius is limited to 30 to 60 mm, a
+  conservative choice rather than a physical limit. Opening it to about 25 to
+  100 mm would leave only the real checks: the wheel fits the print bed, the
+  servo body clears the ground, and the torque is enough, which the simulation
+  already tests. Large wheels could roll over rocks that stop today's ones.
 - **Coupled oscillators**: each joint's oscillator also feels its neighbours'
   phases, the way the spinal circuits of each leg synchronise a gait, instead
   of coordinating only through the body and the phase genes. Control only, no

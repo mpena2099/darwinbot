@@ -36,9 +36,9 @@ Na biologia, o **genótipo** é o DNA e o **fenótipo** é o organismo que ele
 produz. No DarwinBot:
 
 - o genótipo é um vetor de números entre 0 e 1;
-- o fenótipo é o corpo do robô: uma árvore de módulos (tronco, juntas com
-  servo, links, molas de TPU, rodas, pés, caudas, patins, espetos e rodas
-  livres).
+- o fenótipo é o corpo do robô: uma árvore de módulos (tronco, segmentos de
+  coluna, juntas com servo, links, molas de TPU, rodas, pés, caudas, patins,
+  espetos e rodas livres).
 
 ![Do genoma ao corpo](img/guide/genome_pt.png)
 
@@ -48,8 +48,11 @@ módulo é, o eixo da junta, o comprimento do link e assim por diante.
 
 As medidas são contínuas: o comprimento do link vai de 40 a 200 mm, a seção
 de 12 a 30 mm por 3 a 10 mm, o cotovelo tem distância e ângulo próprios, o
-encaixe gira em qualquer ângulo e pode ficar em qualquer ponto da borda do
-tronco. Cada bloco tem 13 genes. Os módulos passivos (mola, cauda com
+encaixe gira em qualquer ângulo e pode ficar em qualquer ponto da borda, do
+topo ou da base do tronco. O contorno do tronco é um polígono de 8 vértices
+que a evolução deforma, o link pode ser reto, em L ou em arco, o pé pode ser
+esfera, lâmina, pata ou garra, e o tronco pode ganhar até duas placas extras
+ligadas por servos de coluna. Cada bloco tem 15 genes. Os módulos passivos (mola, cauda com
 contrapeso, patim, espeto, roda livre) não têm servo.
 
 **No código:** `darwinbot/morphology.py`, funções `decode` (genoma para
@@ -67,7 +70,7 @@ O DarwinBot usa sete operadores, sorteados com pesos diferentes:
 
 | Operador | O que faz | Chance |
 |---|---|---|
-| `param` | ajusta uma medida contínua (comprimento, seção, cotovelo, rotação, raio); um ajuste em cada cinco é um salto grande | 30% |
+| `param` | ajusta uma medida contínua (comprimento, seção, cotovelo, rotação, raio, contorno do tronco, dobra do link, forma do pé); um ajuste em cada cinco é um salto grande | 30% |
 | `add` | acrescenta um módulo num encaixe livre | 20% |
 | `type` | troca o tipo de um módulo (junta vira link, mola, cauda, patim, espeto ou roda livre, por exemplo) | 15% |
 | `mirror` | copia um membro para o lado oposto, espelhado | 15% |
@@ -200,7 +203,7 @@ só é construível se cada peça couber numa mesa de 220 mm, se cada link
 aguentar o torque de travamento do servo (1,91 N*m) com tensão de flexão de
 no máximo 25 MPa (metade do que o PLA suporta) e se nenhuma peça se
 sobrepuser. O tronco não tem limite: é cortado em placas do tamanho da mesa,
-unidas por placas de emenda. Corpo que quebra uma regra é pontuado como não
+unidas por placas de emenda, e cada segmento de coluna é uma placa própria. Corpo que quebra uma regra é pontuado como não
 construível e nunca é simulado.
 
 ![Física variada](img/guide/randomize_pt.png)

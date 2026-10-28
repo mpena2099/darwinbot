@@ -12,6 +12,7 @@ from darwinbot import morphology as mo
 
 def _same(a, b):
     assert (a.body_length, a.body_width) == pytest.approx((b.body_length, b.body_width))
+    assert a.contour == pytest.approx(b.contour)
     assert sorted(a.nodes) == sorted(b.nodes)
     for i, n in a.nodes.items():
         m = b.nodes[i]
@@ -23,6 +24,8 @@ def _same(a, b):
 
 
 def _within_limits(m):
+    assert len(m.contour) == 8
+    assert all(mo.CONTOUR_RANGE[0] <= c <= mo.CONTOUR_RANGE[1] for c in m.contour)
     assert m.n_nodes <= mo.MAX_NODES
     assert m.n_servos <= mo.MAX_SERVOS
     assert m.max_depth <= mo.MAX_DEPTH
@@ -84,6 +87,38 @@ def test_repair_is_canonical():
     _same(mo.decode(genes), mo.decode(fixed))
 
 
+def test_contour_round_trip():
+    m = mo.decode(mo.encode(mo.template(1)))
+    m.contour = (0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.1, 0.9)
+    genes = mo.encode(m)
+    _same(m, mo.decode(genes))
+    assert np.allclose(mo.encode(mo.decode(genes)), genes)
+
+
+def test_ones_contour_is_the_old_rectangle():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    assert np.allclose(m.torso_polygon(), [
+        (0.2, 0.0), (0.2, 0.1), (0.0, 0.1), (-0.2, 0.1),
+        (-0.2, 0.0), (-0.2, -0.1), (0.0, -0.1), (0.2, -0.1)])
+
+
+def test_contour_too_small_for_the_electronics_is_a_violation():
+    tiny = mo.Morphology(0.15, 0.10, {0: mo.Node(0, "core")}, (0.4,) * 8)
+    assert "torso contour does not hold the electronics" in mo.violations(tiny)
+    assert "torso contour does not hold the electronics" not in mo.violations(
+        mo.template(1))
+
+
+def test_mirrored_core_mount_is_a_reflection_on_a_star_contour():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")},
+                      (0.5, 1.3) * 4)
+    m.nodes[1] = mo.Node(1, "joint", 0, 2, 0.0, "pitch", 0.10,
+                         offset=0.3, angle=0.3)
+    twin = mo.copy_subtree(m, 1, 0, mo.mirror_slot("core", 2), mirror=True)
+    left, right = m.frames()[1][0], m.frames()[twin][0]
+    assert right == pytest.approx([left[0], -left[1], left[2]])
+
+
 def test_slot_ids_are_stable_block_indices():
     m = mo.template(1)
     genes = mo.encode(m)
@@ -115,11 +150,13 @@ def _assert_mirrored(m, a, b):
     na, nb = m.nodes[a], m.nodes[b]
     assert (na.kind, na.axis, na.wheel_rad, na.foot_rad) == \
         (nb.kind, nb.axis, nb.wheel_rad, nb.foot_rad)
-    for field in ("length", "width", "thick", "offset"):
+    for field in ("length", "width", "thick"):
         assert getattr(na, field) == pytest.approx(getattr(nb, field))
-    if na.parent == 0:                    # yaw mirrors around the torso
+    if na.parent == 0:                    # position and yaw mirror around the torso
+        assert nb.offset == pytest.approx(1.0 - na.offset)
         assert nb.angle == pytest.approx(1.0 - na.angle)
     else:
+        assert nb.offset == pytest.approx(na.offset)
         assert nb.angle == pytest.approx(na.angle)
     assert nb.rot == pytest.approx((-na.rot) % (2 * np.pi))
     assert nb.flip == (na.flip if na.axis == "yaw" or na.kind != "joint" else not na.flip)
@@ -302,6 +339,68 @@ def test_link_longer_than_the_bed_is_a_violation():
     assert mo.violations(_single_link(0.030, 0.006, length=0.20))
 
 
+def test_bed_check_uses_the_path_bounding_box():
+    straight = _single_link(0.030, 0.006, length=0.20)
+    assert any("bed" in v for v in mo.violations(straight))
+    for profile, bend in (("L", np.pi / 2), ("arc", -np.pi / 2)):
+        bent = _single_link(0.030, 0.006, length=0.20)
+        bent.nodes[1].profile, bent.nodes[1].bend = profile, bend
+        assert not mo.violations(bent)
+
+
+def test_profile_and_foot_shape_round_trip():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", 0.10,
+                         profile="L", bend=np.radians(30))
+    m.nodes[2] = mo.Node(2, "link", 1, 0, 0.0, length=0.08,
+                         profile="arc", bend=-np.radians(45))
+    m.nodes[3] = mo.Node(3, "foot", 2, 0, 0.0, foot_rad=0.02,
+                         foot_shape="claw")
+    m.nodes[4] = mo.Node(4, "foot", 0, 2, 0.0, foot_rad=0.02,
+                         foot_shape="pad")
+    genes = mo.encode(m)
+    m2 = mo.decode(genes)
+    for i in (1, 2):
+        assert m2.nodes[i].profile == m.nodes[i].profile
+        assert m2.nodes[i].bend == pytest.approx(m.nodes[i].bend)
+    assert m2.nodes[3].foot_shape == "claw"
+    assert m2.nodes[4].foot_shape == "pad"
+    assert np.allclose(mo.encode(m2), genes)
+    # the profile/bend genes are ignored by a foot
+    genes[3 * mo.BLOCK_GENES + mo.PROFILE] = 1.0
+    genes[3 * mo.BLOCK_GENES + mo.BEND] = 1.0
+    assert mo.decode(genes).nodes[3].profile == "straight"
+    assert mo.decode(genes).nodes[3].bend == 0.0
+    # the AXIS gene picks the foot shape
+    genes[3 * mo.BLOCK_GENES + mo.AXIS] = 0.0
+    assert mo.decode(genes).nodes[3].foot_shape == mo.FOOT_SHAPES[0]
+
+
+@pytest.mark.parametrize("profile,bend", (("L", np.pi / 2),
+                                          ("arc", np.pi / 2)))
+def test_link_tip_for_bent_profiles(profile, bend):
+    node = mo.Node(1, "link", length=0.12, profile=profile, bend=bend)
+    path = mo.link_path(node)
+    assert sum(np.linalg.norm(b - a) for a, b in zip(path, path[1:])) == \
+        pytest.approx(node.length)
+    pos, rot = mo.link_tip(node)
+    assert rot == pytest.approx(mo._rz(np.pi / 2))
+    if profile == "L":                      # two 60 mm pieces, the second up
+        assert pos == pytest.approx([0.06, 0.06, 0.0])
+    else:                                   # three 40 mm pieces, 45 deg each
+        assert pos == pytest.approx([0.04 + 0.04 / np.sqrt(2),
+                                     0.04 / np.sqrt(2) + 0.04, 0.0])
+
+
+def test_mirror_negates_bend():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "link", 0, 2, 0.0, length=0.10,
+                         profile="L", bend=np.radians(60))
+    twin = mo.copy_subtree(m, 1, 0, mo.mirror_slot("core", 2), mirror=True)
+    assert m.nodes[twin].profile == "L"
+    assert m.nodes[twin].bend == pytest.approx(-np.radians(60))
+
+
 def _single_spring(blade=0.004):
     m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
     m.nodes[1] = mo.Node(1, "spring", 0, 3, 0.0, axis="yaw", length=0.10,
@@ -448,3 +547,114 @@ def test_scale_stretches_a_limb_within_range():
                 assert mo.LENGTH_RANGE[0] <= n.length <= mo.LENGTH_RANGE[1]
                 seen.add(round(n.length, 3))
     assert max(seen) > 0.15 and min(seen) < 0.07
+
+
+def _spine_body(n_segments=1):
+    """Template legs on the core plus a spine segment (and a leg on it)."""
+    m = mo.template(2)
+    first = max(m.nodes) + 1
+    m.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
+                             length=0.12, width=0.10)
+    m.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0, axis="pitch",
+                                 length=0.08)
+    m.nodes[first + 2] = mo.Node(first + 2, "joint", first, 6, 0, axis="pitch",
+                                 length=0.08)
+    if n_segments > 1:
+        m.nodes[first + 3] = mo.Node(first + 3, "segment", first, 0, 0,
+                                     axis="roll", length=0.10, width=0.10)
+    return m
+
+
+def test_segment_roundtrip_and_counts():
+    m = _spine_body()
+    seg = next(i for i, n in m.nodes.items() if n.kind == "segment")
+    back = mo.decode(mo.encode(m))
+    _same(back, mo.decode(mo.encode(back)))
+    assert sorted(back.nodes) == sorted(m.nodes)
+    assert back.n_segments == 1
+    assert back.n_servos == m.n_joints + m.n_wheels
+    assert back.n_joints == sum(n.kind in ("joint", "segment")
+                                for n in back.nodes.values())
+    # legs on the core (template) plus two on the segment; the segment is no limb
+    assert back.n_legs == mo.template(2).n_legs + 2
+    acts = [a for a in back.layout() if a.slot == seg]
+    assert acts == [mo.Actuator(seg, "joint", "pitch")]
+    assert [a.slot for a in back.layout()] == [i for i in back.order
+                                               if mo.is_joint(back.nodes[i].kind)
+                                               or back.nodes[i].kind == "wheel"]
+    assert mo.violations(back) == []
+
+
+def test_decode_drops_misplaced_and_extra_segments():
+    m = _spine_body(2)
+    assert mo.decode(mo.encode(m)).n_segments == 2
+    third = max(m.nodes) + 1
+    m.nodes[third] = mo.Node(third, "segment", max(m.nodes) - 1, 1, 0)
+    m.nodes[third + 1] = mo.Node(third + 1, "segment", 0, 2, 0)   # side slot
+    d = mo.decode(mo.encode(m))
+    assert d.n_segments == 2
+    assert all(n.slot in (0, 1) for n in d.nodes.values() if n.kind == "segment")
+    # a child on slot 1 of a segment is dropped
+    seg = next(i for i, n in m.nodes.items() if n.kind == "segment")
+    k = max(m.nodes) + 1
+    m.nodes[k] = mo.Node(k, "joint", seg, 1, 0)
+    d = mo.decode(mo.encode(m))
+    assert not any(n.parent == seg and n.slot == 1 for n in d.nodes.values())
+    assert (seg, 1) not in _spine_body().free_slots()
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_nothing_hangs_on_segment_slot_one(seed):
+    rng = np.random.default_rng(seed)
+    genes = mo.encode(_spine_body(2))
+    for _ in range(150):
+        genes = mo.mutate(genes, rng)
+        m = mo.decode(genes)
+        _within_limits(m)
+        assert m.n_segments <= mo.MAX_SEGMENTS
+        for n in m.nodes.values():
+            if n.kind == "segment":
+                assert n.parent >= 0 and n.slot in (0, 1)
+                assert m.nodes[n.parent].kind in ("core", "segment")
+            if n.parent >= 0 and m.nodes[n.parent].kind == "segment":
+                assert n.slot != 1
+        assert all(not (m.nodes[i].kind == "segment" and s == 1)
+                   for i, s in m.free_slots())
+
+
+def _face_body(slots=(8, 9, 10, 11)):
+    m = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    for k, slot in enumerate(slots, start=1):
+        m.nodes[k] = mo.Node(k, "joint", 0, slot, 0.0, angle=0.25 + 0.1 * k,
+                             offset=0.3 + 0.1 * k)
+    return m
+
+
+def test_face_slots_round_trip():
+    m = _face_body()
+    _same(m, mo.decode(mo.encode(m)))
+    assert mo.mirror_slot("core", 9) == 9
+    assert mo.N_SLOTS["segment"] == 8
+
+
+def test_face_slot_frame_points_up_and_down():
+    m = _face_body()
+    for k, slot in enumerate((8, 9, 10, 11), start=1):
+        n = m.nodes[k]
+        off, rot = m.slot_frame(m.nodes[0], slot, n)
+        up = 1.0 if slot < 10 else -1.0
+        assert off[2] == pytest.approx(up * mo.TORSO_HEIGHT / 2)
+        assert rot[:, 0] == pytest.approx([0, 0, up])
+        assert np.allclose(rot @ rot.T, np.eye(3)) and np.linalg.det(rot) > 0
+        assert abs(rot[2, 1]) < 1e-9 and abs(rot[2, 2]) < 1e-9   # Y and Z horizontal
+        yaw = (2 * n.angle - 1) * np.pi
+        assert rot[:, 1] == pytest.approx([-np.sin(yaw), np.cos(yaw), 0])
+        assert off[0] == pytest.approx(0.5 * m.torso_polygon()[0 if slot % 2 == 0 else 4][0])
+        assert abs(off[1]) <= mo.FACE_Y * m.body_width / 2 + 1e-9
+
+
+def test_bottom_mount_on_a_short_torso_is_buildable():
+    # the servo hangs outside the plate, so it never meets the electronics
+    short = mo.Morphology(0.15, 0.20, {0: mo.Node(0, "core"),
+                                       1: mo.Node(1, "joint", 0, 10, 0.0)})
+    assert not mo.violations(short)

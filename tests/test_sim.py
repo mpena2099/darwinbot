@@ -17,7 +17,7 @@ from darwinbot.sim import Episode, Metrics, cost_of_transport, heading, wrap_ang
 
 
 LEGS = mo.encode(mo.template(2, wheels=False, yaw=True))
-WHEELS = mo.encode(mo.template(2, wheels=True, yaw=True, wheel_rad=0.06))
+WHEELS = mo.encode(mo.template(1, wheels=True, yaw=True, wheel_rad=0.06))
 
 
 def _ctrl(morph, amp=0.0, wheel=0.5, sigma=0.5):
@@ -38,6 +38,16 @@ def _ctrl(morph, amp=0.0, wheel=0.5, sigma=0.5):
 def test_every_terrain_compiles(name):
     episode = Episode(mo.decode(LEGS), te.TERRAINS[name](), seconds=1.0)
     assert episode.model.nu == len(episode.layout)
+
+
+def test_star_contour_builds_and_simulates():
+    morph = mo.template(1, wheels=True)
+    morph.contour = (0.5, 1.3) * 4
+    morph = mo.decode(mo.encode(morph))
+    episode = Episode(morph, te.flat(), seconds=1.0)
+    assert episode.buildable
+    metrics = episode.run(_ctrl(morph, amp=0.0, wheel=0.5))
+    assert not metrics.unstable
 
 
 def test_no_yaw_leg_has_one_fewer_actuator():
@@ -91,6 +101,35 @@ def test_terminal_friction_lives_on_its_own_geom(kind, friction):
     assert episode.model.geom_friction[gid, 0] == pytest.approx(friction)
 
 
+def _profiled_body():
+    """Two bent links and one explicit foot of every shape."""
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    i = 1
+    for slot, profile, shape in ((0, "L", "sphere"), (1, "arc", "blade")):
+        m.nodes[i] = mo.Node(i, "joint", 0, slot, 0.0, "pitch", 0.06)
+        m.nodes[i + 1] = mo.Node(i + 1, "link", i, 0, 0.0, length=0.08,
+                                 profile=profile, bend=np.pi / 2)
+        m.nodes[i + 2] = mo.Node(i + 2, "foot", i + 1, 0, 0.0,
+                                 foot_rad=0.018, foot_shape=shape)
+        i += 3
+    m.nodes[i] = mo.Node(i, "foot", 0, 2, 0.0, foot_rad=0.018, foot_shape="pad")
+    m.nodes[i + 1] = mo.Node(i + 1, "foot", 0, 3, 0.0, foot_rad=0.018,
+                             foot_shape="claw")
+    return m
+
+
+def test_bent_links_and_every_foot_shape_simulate():
+    morph = _profiled_body()
+    episode = Episode(morph, te.flat(), seconds=0.6)
+    assert episode.buildable
+    assert episode.model.nu == len(episode.layout) == 2
+    metrics = episode.run(_ctrl(morph, amp=0.3))
+    assert not metrics.unstable
+    for value in (metrics.dx, metrics.dy, metrics.energy, metrics.mass,
+                  metrics.duty, metrics.height, metrics.wheel_share, metrics.yaw):
+        assert np.isfinite(value)
+
+
 def test_tail_counterweight_adds_its_mass():
     light = Episode(_terminal_body("tail", 0.02), te.flat(), seconds=1.0)
     heavy = Episode(_terminal_body("tail", 0.08), te.flat(), seconds=1.0)
@@ -128,8 +167,11 @@ def test_mirrored_legs_move_alike():
 
 
 def test_overlapping_legs_are_not_buildable():
-    same = mo.template(2, wheels=True, wheel_rad=0.06, body_length=0.15)
-    spread = mo.template(2, wheels=True, wheel_rad=0.06)
+    # short links on a short torso put the wheels of adjacent side legs
+    # inside each other; the spread body has room
+    same = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.15,
+                       thigh=0.04, shin=0.04)
+    spread = mo.template(3, wheels=True, wheel_rad=0.06)
 
     assert not Episode(same, te.flat(), seconds=1.0).buildable
     assert Episode(spread, te.flat(), seconds=1.0).buildable
@@ -157,7 +199,8 @@ def test_printability_violation_is_not_buildable():
 
 def test_unbuildable_body_scores_unstable_without_simulating():
     from darwinbot.inner import optimise_controller
-    morph = mo.template(2, wheels=True, wheel_rad=0.06, body_length=0.15)
+    morph = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.15,
+                        thigh=0.04, shin=0.04)
     res = optimise_controller(morph, [te.flat()], budget=50, seconds=1.0)
 
     assert res.fitness == fitness.UNSTABLE_SCORE
@@ -540,3 +583,44 @@ def test_steering_command_turns_a_robot_both_ways():
     ctrl[co.node_base(wheels[0].slot) + co.STEER_SHIFT] = 0.6   # one wheel steers
     left, straight, right = (ep.run(ctrl, None, c).yaw for c in (-1.0, 0.0, 1.0))
     assert (left - straight) * (right - straight) < 0   # opposite commands, opposite turns
+
+
+def test_spine_segment_builds_and_moves():
+    morph = mo.template(2)
+    first = max(morph.nodes) + 1
+    morph.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
+                                 length=0.12, width=0.10)
+    morph.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0,
+                                     axis="pitch", length=0.08)
+    morph = mo.decode(mo.encode(morph))
+    episode = Episode(morph, te.flat(), seconds=0.6)
+    assert episode.buildable
+    assert episode.model.nu == len(episode.layout) == morph.n_servos
+    ctrl = _ctrl(morph, amp=0.4)
+    metrics = episode.run(ctrl)
+    assert not metrics.unstable
+    for value in (metrics.dx, metrics.dy, metrics.energy, metrics.mass,
+                  metrics.duty, metrics.height, metrics.yaw):
+        assert np.isfinite(value)
+    jid = mujoco.mj_name2id(episode.model, mujoco.mjtObj.mjOBJ_JOINT,
+                            f"j{first}")
+    controller = episode.reset(ctrl)
+    swing = 0.0
+    for _ in range(episode.n_steps):
+        episode.step(controller)
+        swing = max(swing, abs(float(
+            episode.data.qpos[episode.model.jnt_qposadr[jid]])))
+    assert swing > 0.02
+
+
+def test_legs_on_the_bottom_face_build_and_simulate():
+    morph = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    for k, (slot, rot) in enumerate(((10, 0.0), (11, 0.0), (3, 3 * np.pi / 2),
+                                     (6, 3 * np.pi / 2)), start=1):
+        morph.nodes[k] = mo.Node(k, "joint", 0, slot, rot)
+    morph = mo.decode(mo.encode(morph))
+    assert morph.n_legs == 4 and morph.lowest_z() < -mo.TORSO_HEIGHT / 2
+    episode = Episode(morph, te.flat(), seconds=0.6)
+    assert episode.buildable
+    metrics = episode.run(_ctrl(morph, amp=0.3))
+    assert np.isfinite([metrics.dx, metrics.dy, metrics.energy]).all()

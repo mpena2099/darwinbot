@@ -16,8 +16,10 @@ The layout is a list of morphology.Actuator(slot, kind, axis) in model order
 Parts are real: every joint is a Feetech STS3215 (7.4 V) with the torque and
 speed limits of its data sheet, minus a safety margin. Each servo adds a 60 g
 box, the torso carries a payload (ESP32, 2S LiPo, regulator), and links are
-printed. A child on a side slot of a link hangs from a printed elbow plate that
-bridges the child's elbow offset, so no module floats. See docs/hardware-dados.md.
+printed. The torso is the contour polygon split into eight triangular prisms
+(centre, v_k, v_k+1), so MuJoCo only sees convex geoms. A child on a side slot
+of a link hangs from a printed elbow plate that bridges the child's elbow
+offset, so no module floats. See docs/hardware-dados.md.
 
 Self-collision is ON: robot geoms (contype 2, conaffinity 3) touch each other
 and the terrain (1, 1). MuJoCo already skips parent/child pairs. `payload` (kg) is extra mass on the torso's payload box, for carrying tasks.
@@ -31,11 +33,14 @@ import numpy as np
 
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
-                                  SERVO_BOX, SKID_SIZE, SPIKE_LENGTH,
-                                  SPIKE_RADIUS, SPRING_DAMPING, TAIL_BAR_SIZE,
-                                  TAIL_TIP_RADIUS, TORSO_HEIGHT, Actuator,
-                                  ActuatorLayout, Morphology, elbow_distance,
-                                  plate_thick, spring_stiffness)
+                                  CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
+                                  ELECTRONICS_BOX, SEGMENT_HEIGHT, SERVO_BOX,
+                                  SKID_SIZE, SPIKE_LENGTH, SPIKE_RADIUS,
+                                  SPRING_DAMPING, TAIL_BAR_SIZE, TAIL_TIP_RADIUS,
+                                  TORSO_HEIGHT, Actuator, ActuatorLayout,
+                                  Morphology, elbow_distance, link_path,
+                                  link_tip, plate_thick, segment_box,
+                                  spring_stiffness)
 
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
@@ -80,6 +85,34 @@ def spawn_height(morph: Morphology) -> float:
     return -morph.lowest_z() + SPAWN_CLEARANCE
 
 
+def _torso(morph: Morphology) -> Tuple[str, str]:
+    """Torso mesh assets and geoms: one triangular prism per contour edge,
+    each with the mass of its own volume of shell."""
+    poly = morph.torso_polygon()
+    h = TORSO_HEIGHT / 2
+    areas = [abs(a[0] * b[1] - b[0] * a[1]) / 2
+             for a, b in zip(poly, poly[1:] + poly[:1])]
+    assets, geoms = [], []
+    for k, (a, b) in enumerate(zip(poly, poly[1:] + poly[:1])):
+        verts = [(0, 0, -h), (a[0], a[1], -h), (b[0], b[1], -h),
+                 (0, 0, h), (a[0], a[1], h), (b[0], b[1], h)]
+        vertex = _f(*[v for p in verts for v in p])
+        assets.append(f'<mesh name="torso{k}" vertex="{vertex}"/>')
+        mass = SHELL_DENSITY * areas[k] * TORSO_HEIGHT
+        geoms.append(f'<geom type="mesh" mesh="torso{k}" mass="{mass:.6f}" '
+                     f'rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>')
+    return "\n    ".join(assets), "\n      ".join(geoms)
+
+
+def _segment_geoms(node) -> str:
+    """Second torso plate of a segment, centred after its spine servo."""
+    centre, half = segment_box(node)
+    mass = SHELL_DENSITY * node.length * node.width * SEGMENT_HEIGHT
+    return (f'<geom name="segment{node.id}" type="box" pos="{_f(*centre)}" '
+            f'size="{_f(*half)}" mass="{mass:.6f}" '
+            f'rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>')
+
+
 def _frame_attrs(morph: Morphology, node) -> str:
     off, rot = morph.rel_frame(node)
     return f'pos="{_f(*off)}" xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
@@ -115,21 +148,67 @@ def _servo_dress(axis_local) -> str:
     return f"{bracket}\n{horn}"
 
 
-def _link_geom(node, rgba: str = LINK_RGBA) -> str:
-    return (f'<geom type="box" pos="{_f(node.length / 2, 0, 0)}" '
-            f'size="{_f(node.length / 2, node.width / 2, plate_thick(node) / 2)}" '
-            f'density="{LINK_DENSITY}" rgba="{rgba}" {ROBOT_GEOM}/>')
+def _rot_z(a: float) -> np.ndarray:
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=float)
+
+
+def _xyaxes(rot: np.ndarray) -> str:
+    return f'xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
+
+
+def _link_geoms(node, rgba: str = LINK_RGBA) -> str:
+    """One box geom per piece of the link path; the last piece carries the
+    tip name that sim.terminal_geoms uses for a free end."""
+    pts = link_path(node)
+    out = []
+    for k, (a, b) in enumerate(zip(pts, pts[1:])):
+        d = b - a
+        rot = _rot_z(float(np.arctan2(d[1], d[0])))
+        name = f' name="tip{node.id}"' if k == len(pts) - 2 else ""
+        out.append(f'<geom{name} type="box" pos="{_f(*((a + b) / 2))}" '
+                   f'{_xyaxes(rot)} '
+                   f'size="{_f(np.linalg.norm(d) / 2, node.width / 2, plate_thick(node) / 2)}" '
+                   f'density="{LINK_DENSITY}" rgba="{rgba}" {ROBOT_GEOM}/>')
+    return "\n        ".join(out)
 
 
 def _elbow_geom(parent, child, slot: int) -> str:
     """Printed elbow plate from the link tip to the side slot `slot` (1 left,
-    2 right), where the child module is mounted."""
+    2 right), where the child module is mounted. It follows the tip rotation
+    of a bent link."""
     side = 1.0 if slot == 1 else -1.0
     d = elbow_distance(child)
+    tip, rot = link_tip(parent)
+    pos = tip + rot @ np.array([0.0, side * d / 2, 0.0])
     return (f'<geom name="elbow{child.id}" type="box" '
-            f'pos="{_f(parent.length, side * d / 2, 0)}" '
+            f'pos="{_f(*pos)}" {_xyaxes(rot)} '
             f'size="{_f(parent.width / 2, d / 2, plate_thick(parent) / 2)}" '
             f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {ROBOT_GEOM}/>')
+
+
+def _foot_geoms(node, friction: float = 1.0) -> str:
+    """Foot of the shape picked by the AXIS gene. All TPU. The pad is a disc
+    with its axis along local X (the limb direction), so its flat face looks
+    down when the limb points down; the claws spread in the local XY plane."""
+    r = node.foot_rad
+    geom = f'density="{LIMB_DENSITY}" rgba="0.2 0.2 0.2 1"'
+    if node.foot_shape == "blade":
+        return (f'<geom type="box" size="{_f(r, r / 3 / 2, r / 2)}" '
+                f'{geom} {ROBOT_GEOM}/>')
+    if node.foot_shape == "pad":
+        return (f'<geom type="cylinder" fromto="{_f(-r / 6, 0, 0, r / 6, 0, 0)}" '
+                f'size="{r:.4f}" {geom} {ROBOT_GEOM}/>')
+    if node.foot_shape == "claw":
+        out = []
+        for a in (-CLAW_SPREAD, 0.0, CLAW_SPREAD):
+            end = np.array([np.cos(a), np.sin(a), 0.0]) * CLAW_LENGTH * r
+            out.append(f'<geom type="capsule" fromto="{_f(0, 0, 0, *end)}" '
+                       f'size="{CLAW_RADIUS * r:.4f}" {geom} '
+                       f'{_special_geom(SPIKE_FACTOR, friction)}/>')
+        return "\n        ".join(out)
+    return (f'<geom type="sphere" size="{r:.4f}" density="{LIMB_DENSITY}" '
+            f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
@@ -148,9 +227,21 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
                  f'range="{-rng} {rng}"/>\n{_servo_box()}\n{_servo_dress(AXIS_LOCAL[node.axis])}\n'
-                 f'{_link_geom(node)}')
+                 f'{_link_geoms(node)}')
+    elif node.kind == "segment":
+        name = f"j{i}"
+        rng = JOINT_RANGE[node.axis]
+        sign = -1.0 if node.flip else 1.0
+        axis = sign * np.array(AXIS_LOCAL[node.axis])
+        actuators.append(
+            f'<position name="{name}" joint="{name}" kp="{JOINT_KP}" kv="0" '
+            f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
+        layout.append(Actuator(i, "joint", node.axis))
+        inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
+                 f'range="{-rng} {rng}"/>\n{_servo_box()}\n'
+                 f'{_servo_dress(AXIS_LOCAL[node.axis])}\n{_segment_geoms(node)}')
     elif node.kind == "link":
-        inner = _link_geom(node)
+        inner = _link_geoms(node)
     elif node.kind == "spring":
         sign = -1.0 if node.flip else 1.0
         axis = sign * np.array(AXIS_LOCAL[node.axis])
@@ -158,7 +249,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                  f'stiffness="{spring_stiffness(node):.8g}" '
                  f'damping="{SPRING_DAMPING}" frictionloss="0" armature="0" '
                  f'range="{-SPRING_RANGE} {SPRING_RANGE}"/>\n'
-                 f'{_link_geom(node, SPRING_RGBA)}')
+                 f'{_link_geoms(node, SPRING_RGBA)}')
     elif node.kind == "wheel":
         pos, rot = frames[i]
         name = f"w{i}"
@@ -193,8 +284,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                   rgba="0.1 0.1 0.1 1" {ROBOT_GEOM}/>
           </body>"""
     elif node.kind == "foot":
-        inner = (f'<geom type="sphere" size="{node.foot_rad:.4f}" density="{LIMB_DENSITY}" '
-                 f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+        inner = _foot_geoms(node, friction)
     elif node.kind == "tail":
         mass = max(node.tail_mass, 1e-6)   # a zero-mass geom would be degenerate
         inner = (f'<geom name="tail{i}" type="box" pos="{_f(node.length / 2, 0, 0)}" '
@@ -242,6 +332,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
     assert layout == morph.layout()
     z0 = ground_z + spawn_height(morph)
     actuator_xml = "\n    ".join(actuators)
+    torso_assets, torso_geoms = _torso(morph)
 
     xml = f"""<mujoco model="darwinbot">
   <compiler angle="radian" autolimits="true"/>
@@ -256,6 +347,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
              rgb1="0.85 0.85 0.85" rgb2="0.70 0.70 0.70"/>
     <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"/>
     {terrain_assets}
+    {torso_assets}
   </asset>
   <worldbody>
     <light pos="0 0 4" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
@@ -263,9 +355,8 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
     <body name="torso" pos="{_f(spawn_x, 0, z0)}">
       <freejoint name="root"/>
       <camera name="track" mode="trackcom" pos="0 -1.8 0.9" xyaxes="1 0 0 0 0.45 0.9"/>
-      <geom type="box" size="{_f(morph.body_length / 2, morph.body_width / 2, TORSO_HEIGHT / 2)}"
-            density="{SHELL_DENSITY}" rgba="0.25 0.35 0.75 1" {ROBOT_GEOM}/>
-      <geom type="box" size="{_f(min(0.05, morph.body_length / 2), 0.03, 0.015)}"
+      {torso_geoms}
+      <geom type="box" size="{_f(ELECTRONICS_BOX[0] / 2, ELECTRONICS_BOX[1] / 2, 0.015)}"
             mass="{PAYLOAD_MASS + payload}" contype="0" conaffinity="0" rgba="0.2 0.6 0.2 0.3"/>
       {legs}
     </body>

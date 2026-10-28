@@ -11,14 +11,16 @@ is integrated every physics step from the actuator forces (load feedback). A bod
 at spawn (overlapping legs) is not buildable and is never simulated.
 """
 
+import math
 from collections import deque
 from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+from numba import njit
 
 from darwinbot.builder import build_mjcf
-from darwinbot.controller import CONTROL_DT, Controller
+from darwinbot.controller import CONTROL_DT, Controller, advance_phases
 from darwinbot.morphology import Morphology, violations
 from darwinbot.terrain import Terrain
 
@@ -89,13 +91,19 @@ def terminal_geoms(model: mujoco.MjModel, morph: Morphology):
     geoms, wheel = [], []
     for i, _, _ in morph.terminal_points():
         is_wheel = morph.nodes[i].kind == "wheel"
+        tip = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"tip{i}")
+        if tip >= 0:                 # the last piece of a joint, link or spring
+            geoms.append(tip)
+            wheel.append(is_wheel)
+            continue
         body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY,
                                  f"{'w' if is_wheel else 'n'}{i}")
         first = model.body_geomadr[body]
         # physical geoms only: the look-only bracket and horn have contype 0
         own = [g for g in range(first, first + model.body_geomnum[body])
                if model.geom_contype[g] != 0]
-        # Links are boxes now; a free tip has no non-box geom to pick.
+        # Foot and terminal shapes: prefer a non-box geom for contact; a free
+        # tip was already resolved by its name above.
         non_box = [g for g in own if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX]
         geoms.append(non_box[0] if non_box else
                      max(own, key=lambda g: abs(model.geom_pos[g][0])
@@ -124,6 +132,18 @@ def is_buildable(model: mujoco.MjModel) -> bool:
     return not any(robot[c.geom1] and robot[c.geom2] for c in data.contact)
 
 
+@njit(cache=True)
+def _bad_state(qacc, qvel) -> bool:
+    """A non-finite acceleration or a runaway velocity (|qvel| > 1e3)."""
+    for a in qacc:
+        if not math.isfinite(a):
+            return True
+    for v in qvel:
+        if abs(v) > 1e3:
+            return True
+    return False
+
+
 class Episode:
     def __init__(self, morph: Morphology, terrain: Terrain,
                  seconds: float = EPISODE_SECONDS, payload: float = 0.0):
@@ -145,6 +165,7 @@ class Episode:
         self.reach = morph.max_reach
         self._robot = self.model.geom_contype == 2
         self._tgeoms, self._twheel = terminal_geoms(self.model, morph)
+        self._hit = np.zeros(self.model.ngeom, dtype=bool)
         self._k = 0
         assert self.model.nu == len(self.layout)
 
@@ -162,9 +183,7 @@ class Episode:
         already reset the state), time went backwards, or the state is bad."""
         d = self.data
         return (any(d.warning[w].number > 0 for w in BLOWUP_WARNINGS)
-                or d.time < t_prev
-                or not np.isfinite(d.qacc).all()
-                or bool(np.abs(d.qvel).max() > 1e3))
+                or d.time < t_prev or _bad_state(d.qacc, d.qvel))
 
     def step(self, controller: Controller):
         if self._k % self.hold == 0:
@@ -178,8 +197,11 @@ class Episode:
         d = self.data
         g = d.contact.geom[:d.ncon]
         a, b = g[:, 0], g[:, 1]
-        hit = np.concatenate([a[~self._robot[b]], b[~self._robot[a]]])
-        return np.isin(self._tgeoms, hit)
+        hit = self._hit
+        hit[:] = False
+        hit[a[~self._robot[b]]] = True
+        hit[b[~self._robot[a]]] = True
+        return hit[self._tgeoms]
 
     def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0) -> Metrics:
         """
@@ -187,49 +209,59 @@ class Episode:
         stepped instead (same sizes, so the MjData is reused) and every new
         command reaches the servos variant.latency control periods late; until
         the first one arrives the targets stay at zero.
+
+        The loop is the hot path of training: MuJoCo views and constants are
+        bound once and the per-step phase update and state check are compiled
+        (Numba), with the same operations in the same order as the NumPy
+        versions, so the results match them bit for bit.
         """
         m, d = self.model, self.data
         sim_model = variant.model if variant is not None else m
         controller = self.reset(ctrl, sim_model, command)
         queue = (deque([np.zeros(m.nu)] * variant.latency)
                  if variant is not None and variant.latency > 0 else None)
-        x0, y0 = d.xpos[self.torso][:2].copy()
+        xmat, xpos = d.xmat[self.torso], d.xpos[self.torso]
+        force, velocity, qacc, qvel = (d.actuator_force, d.actuator_velocity,
+                                       d.qacc, d.qvel)
+        warnings = [d.warning[w] for w in BLOWUP_WARNINGS]
+        x0, y0 = xpos[:2].copy()
         dt = m.opt.timestep
+        hold = self.hold
+        step = mujoco.mj_step
+        theta, omega, sigma = controller.theta, controller.omega, controller.params.sigma
         energy = 0.0
-        yaw, prev = 0.0, heading(d.xmat[self.torso])
+        yaw, prev = 0.0, math.atan2(xmat[3], xmat[0])
         fell = unstable = False
         t_prev = 0.0
         touch = np.zeros(len(self._tgeoms))
         zsum, ticks = 0.0, 0
 
         for n in range(1, self.n_steps + 1):
-            if variant is None:
-                self.step(controller)
-            else:
-                if self._k % self.hold == 0:
-                    target = controller.targets(d.time)
-                    if queue is not None:
-                        queue.append(target)
-                        target = queue.popleft()
-                    d.ctrl[:] = target
-                self._k += 1
-                mujoco.mj_step(sim_model, d)
-                controller.advance(dt, d.actuator_force)
-            energy += float(np.abs(d.actuator_force * d.actuator_velocity).sum()) * dt
+            if self._k % hold == 0:
+                target = controller.targets(d.time)
+                if queue is not None:
+                    queue.append(target)
+                    target = queue.popleft()
+                d.ctrl[:] = target
+            self._k += 1
+            step(sim_model, d)
+            advance_phases(theta, omega, sigma, force, dt)
+            energy += float(np.abs(force * velocity).sum()) * dt
             # Per-step wrapped differences: the sum is the unwrapped heading change.
-            now = heading(d.xmat[self.torso])
+            now = math.atan2(xmat[3], xmat[0])
             yaw += float(wrap_angle(now - prev))
             prev = now
-            if self._blew_up(t_prev):
+            if (warnings[0].number or warnings[1].number or warnings[2].number
+                    or d.time < t_prev or _bad_state(qacc, qvel)):
                 unstable = True
                 break
             t_prev = d.time
-            if d.xmat[self.torso][8] < UPRIGHT_MIN:
+            if xmat[8] < UPRIGHT_MIN:
                 fell = True
                 break
-            if n % self.hold == 0:          # behaviour sampled once per control tick
+            if n % hold == 0:          # behaviour sampled once per control tick
                 touch += self._touching()
-                zsum += float(d.xpos[self.torso][2])
+                zsum += float(xpos[2])
                 ticks += 1
 
         x, y = d.xpos[self.torso][:2]

@@ -2,18 +2,20 @@
 parts.py
 --------
 Parametric printable parts (build123d) for the real DarwinBot: servo bracket,
-link, elbow plate, TPU foot, wheel and torso plate (one mount per used core slot). All dimensions in mm.
+link, elbow plate, TPU foot, wheel and torso plate (the extruded contour
+polygon, one mount per used core slot). All dimensions in mm.
 
 Conventions: a link lies along +X with the horn axis at the origin and the
-next servo axis at x = length_mm; servo and wheel axes point along Z.
+next servo axis at x = length_mm, or at the end of its L/arc path; servo and
+wheel axes point along Z. Feet come in the FOOT_SHAPES of morphology.py.
 Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 """
 
 import math
 
 from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Locations,
-                       Part, Pos, Rot, Sphere, SlotOverall, extrude,
-                       export_stl as _export_stl, fillet)
+                       Part, Polygon, Pos, Rot, Sphere, SlotOverall, extrude,
+                       export_stl as _export_stl)
 
 # --- measure a real STS3215 and update ------------------------------------
 SERVO_L = 45.2          # body length (along the output axis offset direction)
@@ -119,17 +121,44 @@ def servo_bracket() -> Part:
 
 
 def link(length_mm: float, width_mm: float = LINK_W,
-         thick_mm: float = LINK_T) -> Part:
-    """Plate between two servo axes (horn at x=0, next bracket at x=length).
+         thick_mm: float = LINK_T, profile: str = "straight",
+         bend_deg: float = 0.0) -> Part:
+    """Plate between two servo axes (horn at x=0, next bracket at the tip).
     Both ends carry a round boss of END_BOSS_D (or the width, if wider), so the
-    horn holes stay inside the material for any width."""
+    horn holes stay inside the material for any width. An L link is two equal
+    bars and an arc three, turned about Z so the whole path keeps its length;
+    each piece is a straight bar and the pieces are unioned."""
     if length_mm < width_mm:
         raise ValueError("link too short")
-    part = _bar(0.0, length_mm, width_mm, thick_mm)
+    pts = _link_path_mm(length_mm, profile, bend_deg)
+    part = None
+    for a, b in zip(pts, pts[1:]):
+        yaw = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+        seg = math.hypot(b[0] - a[0], b[1] - a[1])
+        bar = Pos(a[0], a[1], 0) * Rot(Z=yaw) * _bar(0.0, seg, width_mm, thick_mm)
+        part = bar if part is None else part + bar
     part -= _horn_holes(thick_mm)
-    # bracket end: the common mounting pattern plus a bore for the cable
-    part -= Pos(length_mm, 0, 0) * _link_end_pattern(thick_mm)
+    # bracket end at the tip, turned by the total bend
+    tip = pts[-1]
+    part -= Pos(tip[0], tip[1], 0) * Rot(Z=0.0 if profile == "straight" else bend_deg) \
+        * _link_end_pattern(thick_mm)
     return part
+
+
+def _link_path_mm(length_mm: float, profile: str, bend_deg: float):
+    """Polyline of a link in mm, starting at the origin, same as
+    morphology.link_path."""
+    pieces = {"straight": 1, "L": 2, "arc": 3}[profile]
+    step = length_mm / pieces
+    turn = math.radians(bend_deg) / (pieces - 1) if pieces > 1 else 0.0
+    pts = [(0.0, 0.0)]
+    angle = 0.0
+    for k in range(pieces):
+        if k:
+            angle += turn
+        x, y = pts[-1]
+        pts.append((x + step * math.cos(angle), y + step * math.sin(angle)))
+    return pts
 
 
 def _link_end_pattern(thick_mm: float, yaw_deg: float = 0.0) -> Part:
@@ -181,11 +210,39 @@ def spring(width_mm: float = LINK_W, blade_mm: float = 4.0) -> Part:
     return part
 
 
-def foot(radius_mm: float = FOOT_R) -> Part:
-    """Rounded cap (print in TPU): hemisphere over a socket for the shin.
-    Scaled from the 9 mm foot; the socket keeps its diameter and the radius is
-    clamped so the wall around it stays at least 2 mm."""
+def _socketed(shape: Part, back_x: float) -> Part:
+    """Add the shin socket to a foot shape: a hub on its back face (x = back_x,
+    the side the limb comes from) drilled for the same socket as the sphere."""
+    wall = FOOT_SOCKET_D / 2 + 2
+    hub = Pos(back_x, 0, 0) * Rot(Y=-90) * Cylinder(
+        wall, 12, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    hole = Pos(back_x - 12, 0, 0) * Rot(Y=90) * Cylinder(
+        FOOT_SOCKET_D / 2, 9, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return shape + hub - hole
+
+
+def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
+    """TPU tip in one of the FOOT_SHAPES. The sphere is the rounded cap over a
+    socket for the shin. The blade is a long thin box, the pad a disc with its
+    axis along X (so its flat face looks down when the limb points down) and
+    the claw three toes spread in the XY plane. Scaled from the 9 mm foot; the
+    socket keeps its diameter and the radius is clamped so the wall around it
+    stays at least 2 mm."""
     r = max(radius_mm, FOOT_MIN_R)
+    if shape == "blade":
+        return _socketed(Box(2 * r, r / 3, r), -r)
+    if shape == "pad":
+        return _socketed(Rot(Y=90) * Cylinder(r, r / 3), -r / 6)
+    if shape == "claw":
+        part = None
+        for a in (-30.0, 0.0, 30.0):
+            toe = Rot(Z=a) * Rot(Y=90) * Cylinder(
+                r / 5, 1.5 * r, align=(Align.CENTER, Align.CENTER, Align.MIN))
+            end = Pos(1.5 * r * math.cos(math.radians(a)),
+                      1.5 * r * math.sin(math.radians(a)), 0) * Sphere(r / 5)
+            toe += end
+            part = toe if part is None else part + toe
+        return _socketed(part, 0.0)
     with BuildPart() as b:
         Sphere(r)
     dome = b.part - Pos(0, 0, -r) * Box(4 * r, 4 * r, 2 * r)
@@ -267,11 +324,18 @@ def caster_fork() -> Part:
 
 def _mount(m, width_mm: float):
     """(x, y, yaw in degrees) of a torso mount. A mount given as (x, y) is
-    turned to face outward: 90 degrees on a side edge, otherwise 0."""
-    if len(m) == 3:
+    turned to face outward: 90 degrees on a side edge, otherwise 0. A fourth
+    element True marks a face mount (see _face)."""
+    if len(m) >= 3:
         return float(m[0]), float(m[1]), float(m[2])
     x, y = m
     return float(x), float(y), 90.0 if abs(abs(y) - width_mm / 2) < 1e-3 else 0.0
+
+
+def _face(m) -> bool:
+    """True for a mount on the top or bottom face of the torso: drilled through
+    the plate with the mounting pattern, no edge tab."""
+    return len(m) > 3 and bool(m[3])
 
 
 def _footprint(yaw_deg: float):
@@ -283,21 +347,27 @@ def _footprint(yaw_deg: float):
     return ol * c + ow * s, ol * s + ow * c
 
 
-def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
-    """Base plate; each used core slot in `mounts` gets a tab under its servo
-    bracket and the common mounting pattern. A mount is (x, y, yaw_deg): the
-    slot position in mm and the yaw of the child on the core (its attachment
-    angle), which turns both the tab footprint and the pattern. A plain (x, y)
-    is turned 90 degrees on a side edge and 0 elsewhere. The bracket is
-    centred on the slot as in the simulation, so part of it overhangs the edge
-    and the tab carries it."""
+def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
+    """Extruded contour polygon (mm); each used core slot in `mounts` gets a tab
+    under its servo bracket and the common mounting pattern. A mount is
+    (x, y, yaw_deg): the slot position in mm and the yaw of the child on the
+    core (its attachment angle), which turns both the tab footprint and the
+    pattern; a fourth element True (a face mount) drills the pattern only,
+    with no tab. A plain (x, y) is turned 90 degrees on a side edge and 0
+    elsewhere. The bracket is centred on the slot as in the simulation, so part
+    of it overhangs the edge and the tab carries it. `electronics=False` skips
+    the board holes and battery strap, for a segment plate."""
     t = PLATE_T
-    part = Box(length_mm, width_mm, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    part = fillet(part.edges().filter_by(lambda e: abs(e.length - t) < 1e-6), 5)
+    pts = [(float(x), float(y)) for x, y in polygon]
+    part = extrude(Polygon(*pts, align=None), amount=t)
+    x0, x1, y0, y1 = _plate_bounds(polygon, mounts)
+    width_mm = max(float(y) for _, y in polygon) - min(float(y) for _, y in polygon)
     ol = SERVO_L + 2 * SERVO_CLEARANCE + 2 * WALL
     ow = SERVO_W + 2 * SERVO_CLEARANCE + 2 * WALL
     feet = []                                   # bracket footprints (x, y, extent x, extent y)
     for m in mounts:
+        if _face(m):
+            continue
         x, y, yaw = _mount(m, width_mm)
         fx, fy = _footprint(yaw)
         feet.append((x, y, fx, fy))
@@ -306,6 +376,8 @@ def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
     for m in mounts:
         x, y, yaw = _mount(m, width_mm)
         part -= Pos(x, y, 0) * _mount_holes(t, yaw)
+    if not electronics:
+        return part
     # ESP32 board hole pattern, centred behind the origin.
     # PLACEHOLDER: 58 x 23 mm is a guess. Check it against your board
     # (candidates in docs/hardware-dados.md) before printing.
@@ -317,18 +389,24 @@ def torso_plate(length_mm: float, width_mm: float, mounts) -> Part:
     def free(sx):
         return all(abs(sx - x) > fx / 2 + 4 or abs(y) > fy / 2 + strap_w / 2 + 2
                    for x, y, fx, fy in feet)
-    xs = [-length_mm / 2 + 12 + i for i in range(int(length_mm / 2 - 12 - 35))]
+    length_mm = x1 - x0
+    xs = [x0 + 12 + i for i in range(int(length_mm / 2 - 12 - 35))]
     strap = next((sx for sx in xs if free(sx)), None)
     if strap is not None:
         part -= Pos(strap, 0, 0) * Box(4, strap_w, t * 3)
     return part
 
 
-def _plate_bounds(length_mm: float, width_mm: float, mounts):
+def _plate_bounds(polygon, mounts):
     """Bounding box of torso_plate in mm, brackets included."""
-    x0, x1 = -length_mm / 2, length_mm / 2
-    y0, y1 = -width_mm / 2, width_mm / 2
+    x0 = min(float(x) for x, _ in polygon)
+    x1 = max(float(x) for x, _ in polygon)
+    y0 = min(float(y) for _, y in polygon)
+    y1 = max(float(y) for _, y in polygon)
+    width_mm = y1 - y0
     for m in mounts:
+        if _face(m):
+            continue
         x, y, yaw = _mount(m, width_mm)
         fx, fy = _footprint(yaw)
         x0, x1 = min(x0, x - fx / 2), max(x1, x + fx / 2)
@@ -336,10 +414,10 @@ def _plate_bounds(length_mm: float, width_mm: float, mounts):
     return x0, x1, y0, y1
 
 
-def tile_plan(length_mm: float, width_mm: float, mounts):
+def tile_plan(polygon, mounts):
     """Fewest equal whole-millimetre tiles of the torso that fit BED_MM:
     (x0, y0, tile width, tile height, nx, ny) in mm."""
-    x0, x1, y0, y1 = _plate_bounds(length_mm, width_mm, mounts)
+    x0, x1, y0, y1 = _plate_bounds(polygon, mounts)
     nx = max(1, math.ceil((x1 - x0) / BED_MM))
     ny = max(1, math.ceil((y1 - y0) / BED_MM))
     return (x0, y0, math.ceil((x1 - x0) / nx), math.ceil((y1 - y0) / ny), nx, ny)
@@ -361,11 +439,12 @@ def splice_plate(span_mm: float, width_mm: float = SPLICE_W,
     return part
 
 
-def torso_tiles(length_mm: float, width_mm: float, mounts) -> list[Part]:
-    """Printable torso pieces: torso_plate when it fits BED_MM, else the
-    fewest equal tiles (grid along X and Y), each cut drilled for a splice."""
-    plate = torso_plate(length_mm, width_mm, mounts)
-    x0, y0, tw, th, nx, ny = tile_plan(length_mm, width_mm, mounts)
+def torso_tiles(polygon, mounts) -> list[Part]:
+    """Printable torso pieces: torso_plate when its bounding box fits BED_MM,
+    else the fewest equal tiles (grid along X and Y), each cut drilled for a
+    splice."""
+    plate = torso_plate(polygon, mounts)
+    x0, y0, tw, th, nx, ny = tile_plan(polygon, mounts)
     if nx == 1 and ny == 1:
         return [plate]
     holes = []

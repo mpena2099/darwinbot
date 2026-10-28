@@ -128,8 +128,9 @@ def test_mount_positions_follow_used_slots():
     pos = mount_positions_mm(m)
     assert len(pos) == len(m.child_map()[0]) == 4
     assert all(abs(abs(y) - m.body_width * 500) < 1e-6 for _, y, _ in pos)
-    # side slots face outward: yaw +-90 degrees
-    assert all(abs(abs(yaw) - 90) < 1e-6 for _, _, yaw in pos)
+    # every mount faces outward, along the radius of its contour point
+    for x, y, yaw in pos:
+        assert yaw == pytest.approx(np.degrees(np.arctan2(y, x)))
 
 
 def test_random_trees_export(tmp_path):
@@ -231,3 +232,71 @@ def test_rolled_wheel_keeps_its_sign():
 def test_load_full_scale_is_written(tmp_path):
     export_robot(_elite(), tmp_path, "t", stl=False)
     assert read_control_file(tmp_path / "control.json")["load_full_scale"] == 0.7
+
+
+def _profiled_tree():
+    """An L link, an arc link and one explicit foot of every shape."""
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    i = 1
+    for slot, profile, shape in ((0, "L", "sphere"), (1, "arc", "blade")):
+        m.nodes[i] = mo.Node(i, "joint", 0, slot, 0.0, "pitch", 0.06)
+        m.nodes[i + 1] = mo.Node(i + 1, "link", i, 0, 0.0, length=0.08,
+                                 profile=profile, bend=np.pi / 2)
+        m.nodes[i + 2] = mo.Node(i + 2, "foot", i + 1, 0, 0.0,
+                                 foot_rad=0.018, foot_shape=shape)
+        i += 3
+    m.nodes[i] = mo.Node(i, "foot", 0, 2, 0.0, foot_rad=0.018, foot_shape="pad")
+    m.nodes[i + 1] = mo.Node(i + 1, "foot", 0, 3, 0.0, foot_rad=0.018,
+                             foot_shape="claw")
+    return m
+
+
+def test_bent_links_and_foot_shapes_export_non_empty_stls(tmp_path):
+    pytest.importorskip("build123d")
+    out = tmp_path / "robot"
+    export_robot(_elite(_profiled_tree()), out, "profiled")
+    stls = set(os.listdir(out / "parts"))
+    assert {"link_80x20x6_L90.stl", "link_80x20x6_arc90.stl"} <= stls
+    assert {"foot_18.stl", "foot_blade_18.stl", "foot_pad_18.stl",
+            "foot_claw_18.stl"} <= stls
+    for name in stls:
+        assert (out / "parts" / name).stat().st_size > 0
+
+
+def test_segment_plate_and_spine_servo_row(tmp_path):
+    m = mo.template(2)
+    first = max(m.nodes) + 1
+    m.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
+                             length=0.12, width=0.10)
+    m.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0, axis="pitch",
+                                 length=0.08)
+    elite = _elite(m)
+    morph = mo.decode(elite.morph)
+    seg = next(i for i, n in morph.nodes.items() if n.kind == "segment")
+    rows = {item: q for item, q, _ in bom_rows(morph)}
+    assert rows["segment_plate_120x100.stl"] == 1
+    assert rows["Feetech STS3215 servo, 7.4 V"] == morph.n_servos
+    assert "spine servo" in parent_chain(morph, seg)
+    out = tmp_path / "robot"
+    export_robot(elite, out, "spine", stl=True)
+    assert (out / "parts" / "segment_plate_120x100.stl").stat().st_size > 0
+    text = (out / "assembly.md").read_text()
+    assert text.count("spine servo") >= 1
+    ctl = read_control_file(out / "control.json")
+    assert len(ctl["servos"]) == morph.n_servos
+
+
+def test_face_mounts_export(tmp_path):
+    m = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 8, 0.0, angle=0.7)
+    m.nodes[2] = mo.Node(2, "joint", 0, 11, 0.0)
+    m.nodes[3] = mo.Node(3, "joint", 0, 3, 3 * np.pi / 2)
+    pos = mount_positions_mm(m)
+    assert [len(p) for p in pos] == [3, 4, 4]       # side slot 3, then 8 and 11
+    assert "top front" in parent_chain(m, 1) and "bottom rear" in parent_chain(m, 2)
+    pytest.importorskip("build123d")
+    out = tmp_path / "robot"
+    export_robot(_elite(m), out, "face-robot")
+    assert any(s.startswith("torso_") for s in os.listdir(out / "parts"))
+    text = (out / "assembly.md").read_text()
+    assert "top front" in text and "bottom rear" in text

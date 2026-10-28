@@ -30,8 +30,7 @@ darwinbot/
 ├── docs/               # hardware data, control file format
 ├── checkpoints/        # archive.pkl and plots
 ├── exports/            # export.py output (ignored by git)
-├── pyproject.toml
-└── requirements.txt
+└── pyproject.toml
 ```
 
 ## Related work

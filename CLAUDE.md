@@ -69,6 +69,13 @@ Mais adiante:
 - Sensor de distância: ToF (VL53L0X) como olho simples e, depois, câmera (OV2640 no ESP32-S3). Necessário para desviar, navegar e para predador e presa; vem junto de uma tarefa com objetivo no ambiente.
 - Predador e presa, bem mais adiante: perseguidor programado e depois um segundo arquivo que evolui junto. Depende de sensores no robô.
 
+Extensão, fora do objetivo do projeto: missões com ROS 2. O DarwinBot entrega corpo e marcha (o papel da medula); a missão (explorar, achar algo, voltar) fica numa camada ROS 2 acima (Nav2, percepção, máquina de estados), sem evoluir missões. Precisaria de:
+
+- Exportar URDF junto dos STL (módulo vira `<link>` com a malha, servo vira `<joint>`), para RViz, Gazebo e MoveIt. Tradução direta da árvore.
+- Comando de velocidade: o Nav2 manda `Twist` com velocidade para a frente e de giro; hoje só há o comando de giro. Um segundo par de genes por junta, como o da direção, para a evolução aprender a acelerar ou desacelerar sob comando. É a única parte que mexe na evolução.
+- Odometria: contar passos erra muito em pernas; pede IMU e, de preferência, sensor de distância ou câmera.
+- micro-ROS no ESP32: camada opcional de firmware em volta do núcleo de controle, que publica `joint_states` (posição, velocidade e carga, e o IMU quando houver) e recebe o `Twist`. O robô não precisa de ROS 2 para andar.
+
 ## Convenções e armadilhas
 
 - Mudou o genoma ou a física de forma incompatível: incrementar `BODY_MODEL` em `evolve.py`; arquivos antigos passam a ser recusados com mensagem clara.

@@ -73,3 +73,29 @@
 - **Predator and prey**, much later: a pursuer to escape or a target to catch,
   first scripted, then evolving in a second archive. It needs the robot to
   sense the other one, so it waits for sensors.
+
+## Extension: missions with ROS 2
+
+Beyond the project's own goal. DarwinBot evolves a body and a way of moving,
+roughly what a spinal cord does for an animal; a mission (explore, find
+something, come back) needs a brain on top that decides where to go and why.
+ROS 2 already has that layer (Nav2 for routes and obstacles, perception,
+task state machines), so the idea is to plug a finished robot into it rather
+than evolve missions. What it would take:
+
+- **URDF export**: write each evolved robot as URDF next to the STLs (every
+  module a `<link>` with its mesh, every servo a `<joint>`), so it opens in
+  RViz, Gazebo, MoveIt and the rest of the ROS 2 tools. The body is already a
+  tree of links and joints, so this is a direct translation.
+- **Speed command**: Nav2 sends a `Twist` with forward and turning speed;
+  today a robot takes only the turn command and walks at its own pace. A
+  second gene pair per joint, like the steering one, would let evolution learn
+  to go faster or slower when told. This is the one part that touches
+  evolution itself.
+- **Odometry**: navigating needs the robot to estimate where it is. Counting
+  steps drifts badly on legs, so this needs the IMU and, better, the distance
+  sensor or a camera (see Later).
+- **micro-ROS on the ESP32**: an optional firmware layer around the existing
+  control core that publishes `joint_states` (position, speed and load of
+  every servo, and the IMU once there is one) and takes the `Twist`, mapped to
+  the commands the core already takes. The robot does not need ROS 2 to walk.

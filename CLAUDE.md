@@ -47,14 +47,20 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 
 ## Planejado
 
+Próximos, nesta ordem:
+
+- Terrenos adversários (ideia do "parasita" de Hillis e do POET): guardar os terrenos sorteados e as variações de física em que as elites mais falham e avaliar todos também neles; um "hall da fama" desses casos deixa o `validate.py` mais rigoroso.
+- Tarefa `getup` (levantar-se): o robô nasce de cabeça para baixo, a queda não encerra o episódio e a pontuação mede se ele termina em pé. Mexe em `sim.py` e `sim_gpu.py` (orientação do spawn e detecção de queda) e em `fitness.py`.
+- Mutação proposta por LLM: um modelo de linguagem lê um corpo e as notas dele e propõe uma mudança, como mais um operador de mutação. Puxa contra o princípio de não entregar desenhos humanos prontos, então é experimento: gera só parte dos filhos, a mutação comum continua, e um treino com ela é comparado com um sem.
+
+Mais adiante:
+
 - Peças orgânicas na exportação, etapa opcional para quem for imprimir: otimização topológica de cada peça impressa depois da evolução, sob o torque de travamento do servo e as cargas medidas na simulação, tirando material onde não há esforço. O corpo evoluído e as interfaces (furação, soquetes) não mudam; a peça fica mais leve e com aspecto de osso.
 - Tendões elásticos que cruzam juntas: tendões de TPU impressos que atravessam uma ou duas juntas e guardam energia (o canguru quica nos tendões; o posterior da coxa move quadril e joelho juntos). O MuJoCo simula tendões nativamente.
 - Atrito que depende da direção: escamas impressas que deslizam para a frente e travam para trás, como a barriga da cobra.
 - Osciladores acoplados: o oscilador de cada junta também sente a fase das vizinhas, como os circuitos da medula sincronizam a marcha. Só controle, sem peça nova; mexe em `controller.py`, `sim_gpu.py`, firmware e `BODY_MODEL`.
 - Circuitos fechados criados pela evolução: um gene de "ligamento" que prende com pino a ponta de uma peça a outra peça do corpo, para que mecanismos como o de quatro barras surjam sozinhos (a mandíbula do bodião e os ligamentos cruzados do joelho são quatro barras), sem módulo pronto. Difícil: o circuito precisa fechar na pose de spawn para ser construível, cadeias fechadas são menos estáveis no MuJoCo, e a impressão pede pinos e folga.
 - Formas desenhadas por uma rede evoluída (camada 4): uma CPPN no genoma desenha cada pé e o tronco como superfície implícita (Cheney et al., 2013), dividida em pedaços convexos para o MuJoCo e checada por elementos finitos.
-- Tarefa `getup` (levantar-se): o robô nasce de cabeça para baixo, a queda não encerra o episódio e a pontuação mede se ele termina em pé. Mexe em `sim.py` e `sim_gpu.py` (orientação do spawn e detecção de queda) e em `fitness.py`.
-- Terrenos adversários (ideia do "parasita" de Hillis e do POET): guardar os terrenos sorteados e as variações de física em que as elites mais falham e avaliar todos também neles; um "hall da fama" desses casos deixa o `validate.py` mais rigoroso. Vem depois da forma livre e antes do `getup`.
 - Sensor de equilíbrio: um IMU no ESP32 (MPU-6050, por exemplo) com a inclinação do tronco entrando no controlador, para cada perna corrigir o tombo. Hoje o controlador só sente a carga de cada servo, então a evolução prefere corpos estáveis por si (largos, baixos, com muitos apoios ou rodas); um bípede de pé precisa disso. Mexe em `controller.py`, `sim.py`, `sim_gpu.py`, firmware e `BODY_MODEL`.
 - Predador e presa, bem mais adiante: perseguidor programado e depois um segundo arquivo que evolui junto. Depende de sensores no robô.
 

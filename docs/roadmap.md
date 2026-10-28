@@ -1,5 +1,24 @@
 # Roadmap
 
+## Next
+
+- **Adversarial terrains**: instead of drawing rough and rubble terrains at
+  random, keep the terrains and physics variants where the current elites fail
+  most and score everyone on them too, the way Hillis evolved hard test cases
+  as "parasites" and POET evolves terrains alongside its walkers. A hall of
+  fame of these hard cases would also make `validate.py` stricter.
+- **Getting up** (`--task getup`): the robot starts upside down and scores by
+  ending upright, so a fall no longer ends the episode. Bodies that can right
+  themselves look very different from bodies that only walk.
+- **Mutations proposed by a language model**: an LLM reads a body and its
+  scores and proposes a change, as one mutation operator among the others.
+  A language model brings what it learned from robots people designed, which
+  pulls against the idea of evolution finding bodies on its own, so this is an
+  experiment: it supplies only part of the offspring, the usual mutation stays,
+  and a run with it is compared with a run without it.
+
+## Later
+
 - **Organic parts on export**, an optional step for whoever prints a robot:
   topology optimisation of every printed part after evolution, under the servo stall torque and the loads seen in
   simulation, removing material where nothing is carried. The parts come out
@@ -23,14 +42,6 @@
   draws each foot and the torso as an implicit surface (as Cheney et al. did for
   soft robots in 2013), split into convex pieces for MuJoCo and checked for
   strength by finite elements.
-- **Getting up** (`--task getup`): the robot starts upside down and scores by
-  ending upright, so a fall no longer ends the episode. Bodies that can right
-  themselves look very different from bodies that only walk.
-- **Adversarial terrains**: instead of drawing rough and rubble terrains at
-  random, keep the terrains and physics variants where the current elites fail
-  most and score everyone on them too, the way Hillis evolved hard test cases
-  as "parasites" and POET evolves terrains alongside its walkers. A hall of
-  fame of these hard cases would also make `validate.py` stricter.
 - **Balance sense**: an IMU on the ESP32 (an MPU-6050, for example) feeding the
   torso's tilt back into the controller, so each leg can correct a lean. Today
   the controller only feels each servo's load, so evolution favours bodies that

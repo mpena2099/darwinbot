@@ -28,6 +28,12 @@
   hamstring moves hip and knee together (MuJoCo simulates tendons natively).
 - **Direction-dependent friction**: printed scales that slide forwards and
   grip backwards, the way a snake's belly scales push it along.
+- **More vertebrae**: allow six to eight torso segments instead of two, so
+  long bodies with repeated vertebrae can appear, the way nature builds snakes
+  and centipedes. Today a body has at most three articulated torso pieces and
+  limbs five modules deep, enough for a legless "lizard" with a waving tail but
+  not for a snake. Lateral undulation also needs the direction-dependent
+  friction above; sidewinding and concertina motion work without it.
 - **Coupled oscillators**: each joint's oscillator also feels its neighbours'
   phases, the way the spinal circuits of each leg synchronise a gait, instead
   of coordinating only through the body and the phase genes. Control only, no

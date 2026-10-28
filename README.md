@@ -24,6 +24,9 @@ ESP32.
 | ![Evolved body plans](docs/img/robots.png) | ![Printable parts of the best robot](docs/img/parts.png) |
 | Wheels, legs and hybrids, each the best of its region of the map. | Every part fits a 220 mm print bed and survives the servo's stall torque. |
 
+Trained on four environments: flat floor, bumps, stairs and rubble
+([all environments](https://mpena2099.github.io/darwinbot/environments/)).
+
 [Full results →](https://mpena2099.github.io/darwinbot/results/) (numbers, the
 archive map and training progress)
 

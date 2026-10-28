@@ -64,6 +64,9 @@ Mais adiante:
 - Circuitos fechados criados pela evolução: um gene de "ligamento" que prende com pino a ponta de uma peça a outra peça do corpo, para que mecanismos como o de quatro barras surjam sozinhos (a mandíbula do bodião e os ligamentos cruzados do joelho são quatro barras), sem módulo pronto. Difícil: o circuito precisa fechar na pose de spawn para ser construível, cadeias fechadas são menos estáveis no MuJoCo, e a impressão pede pinos e folga.
 - Formas desenhadas por uma rede evoluída (camada 4): uma CPPN no genoma desenha cada pé e o tronco como superfície implícita (Cheney et al., 2013), dividida em pedaços convexos para o MuJoCo e checada por elementos finitos.
 - Sensor de equilíbrio: um IMU no ESP32 (MPU-6050, por exemplo) com a inclinação do tronco entrando no controlador, para cada perna corrigir o tombo. Hoje o controlador só sente a carga de cada servo, então a evolução prefere corpos estáveis por si (largos, baixos, com muitos apoios ou rodas); um bípede de pé precisa disso. Mexe em `controller.py`, `sim.py`, `sim_gpu.py`, firmware e `BODY_MODEL`.
+- Sensor de contato nos pés: microinterruptor ou FSR em cada pé, como os receptores da sola; o retorno de carga passaria a usar o contato real em vez da carga do servo, que é indireta e ruidosa.
+- Servos de tamanhos diferentes: servos menores da Feetech no mesmo barramento (STS3032, mais leve e mais fraco); a evolução escolhe junta por junta entre forte e pesado ou fraco e leve, como os músculos grandes do quadril e os pequenos dos dedos.
+- Sensor de distância: ToF (VL53L0X) como olho simples e, depois, câmera (OV2640 no ESP32-S3). Necessário para desviar, navegar e para predador e presa; vem junto de uma tarefa com objetivo no ambiente.
 - Predador e presa, bem mais adiante: perseguidor programado e depois um segundo arquivo que evolui junto. Depende de sensores no robô.
 
 ## Convenções e armadilhas

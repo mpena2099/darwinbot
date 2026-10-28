@@ -58,6 +58,18 @@
   the controller only feels each servo's load, so evolution favours bodies that
   are stable on their own (wide, low, many supports or wheels); a body that
   stands upright on two legs needs this to survive.
+- **Foot contact sensors**: a microswitch or force sensor (FSR) in each foot,
+  like the touch receptors of a sole. Today the robot feels the ground only
+  through each servo's load, an indirect and noisy signal; the load feedback
+  could use real contact instead. Cheap and light, one wire per foot.
+- **Servos of different sizes**: Feetech makes smaller servos on the same bus
+  (the STS3032, lighter and weaker). Evolution would choose, joint by joint,
+  between a strong heavy servo and a weak light one, like the large hip muscles
+  and the small ones of the toes.
+- **Distance sensing**: a time-of-flight sensor (a VL53L0X, for example) as a
+  simple eye that measures how far the obstacle ahead is, and later a camera
+  (the ESP32-S3 takes an OV2640). Needed for avoiding obstacles, navigating and
+  predator and prey, so it comes with a task that has a goal in the world.
 - **Predator and prey**, much later: a pursuer to escape or a target to catch,
   first scripted, then evolving in a second archive. It needs the robot to
   sense the other one, so it waits for sensors.

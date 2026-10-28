@@ -10,3 +10,11 @@ the side of a link, TPU flexure springs, tails, skids, spikes and caster wheels,
 and self-collision between limbs. Link mass comes from the PLA geometry, and a
 link must keep its bending stress under the servo stall torque at or below 25 MPa. The
 sources and the values still to be checked are in [hardware-dados.md](hardware-dados.md).
+
+The same STS3215 works in two modes, set by the firmware at power-up: position
+mode, which turns to an angle within one full turn (4096 steps), for joints,
+and wheel mode, which spins continuously at a set speed, for wheels. Evolution
+decides each servo's role through the module it carries (`joint` or `wheel`),
+and the role stays fixed while the robot runs. In both modes the servo reports
+position, speed, load, voltage and temperature; the load is what the
+controller's feedback uses.

@@ -52,6 +52,8 @@ import numpy as np   # noqa: E402
 
 from darwinbot import morphology as mo   # noqa: E402
 from darwinbot.builder import build_mjcf   # noqa: E402
+from darwinbot.controller import random_controller   # noqa: E402
+from darwinbot.sim import Episode   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
 
 BODIES = {"quadruped": lambda: mo.template(2),
@@ -128,6 +130,42 @@ def bench_warp(xml, seconds, nworld):
     return nworld * periods * every / dt, first, overflow
 
 
+def _cpg_chunk(job):
+    body, terrain, seconds, ctrls = job
+    ep = Episode(BODIES[body](), get_terrains(terrain)[0], seconds)
+    for c in ctrls:
+        ep.run(c)
+    return len(ctrls)
+
+
+def bench_cpg(body, terrain, seconds, sizes, workers, cpu_episodes):
+    """Training episodes per second, CPG included: sim.Episode on every core
+    against sim_warp.WarpBatchEpisode, one batch of controllers at a time."""
+    rng = np.random.default_rng(0)
+    ctrls = [random_controller(rng) for _ in range(cpu_episodes)]
+    t = time.perf_counter()
+    with Pool(workers) as pool:
+        done = sum(pool.map(_cpg_chunk, [(body, terrain, seconds, ctrls[i::workers])
+                                         for i in range(workers)]))
+    cpu = done / (time.perf_counter() - t)
+    print(f"\n{body} on {terrain}, CPG, {seconds:g} s episodes: CPU {workers} cores "
+          f"{cpu:7.1f} episodes/s")
+    from darwinbot.sim_warp import WarpBatchEpisode
+    t = time.perf_counter()
+    batch = WarpBatchEpisode(BODIES[body](), get_terrains(terrain)[0], seconds)
+    setup = time.perf_counter() - t
+    for n in sizes:
+        cs = np.array([random_controller(rng) for _ in range(n)])
+        t = time.perf_counter()
+        batch.run_batch(cs)                    # first call of a size captures the graph
+        first = time.perf_counter() - t
+        t = time.perf_counter()
+        batch.run_batch(cs)
+        rate = n / (time.perf_counter() - t)
+        print(f"  warp {n:5d} worlds: {rate:8.1f} episodes/s  {rate / cpu:6.2f}x CPU"
+              f"  (body setup {setup:4.1f} s, first run {first:5.1f} s)")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--bodies", default=",".join(BODIES))
@@ -136,7 +174,16 @@ def main():
     p.add_argument("--worlds", default="64,256,1024,4096")
     p.add_argument("--cpu-worlds", type=int, default=16)
     p.add_argument("--workers", type=int, default=os.cpu_count())
+    p.add_argument("--cpg", action="store_true",
+                   help="whole training episodes (CPG included) through sim_warp")
+    p.add_argument("--episode-seconds", type=float, default=5.0)
     a = p.parse_args()
+    if a.cpg:
+        sizes = [int(s) for s in a.worlds.split(",")]
+        for body in a.bodies.split(","):
+            for terrain in a.terrains.split(","):
+                bench_cpg(body, terrain, a.episode_seconds, sizes, a.workers, 4 * a.workers)
+        return
 
     try:
         import warp as wp

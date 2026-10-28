@@ -3,8 +3,10 @@
 name: docs
 
 on:
-  push:
-    branches: [main]
+  # Manual only while the repository is private (GitHub Pages and Actions
+  # minutes need it public). When it goes public, restore:
+  #   push:
+  #     branches: [main]
   workflow_dispatch:
 
 permissions:

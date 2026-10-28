@@ -16,6 +16,7 @@ import time
 
 import mujoco
 
+from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
@@ -46,7 +47,7 @@ def load(path, cell):
     return archive, archive.cells[key]
 
 
-def record(episode, ctrl, path, seconds, fps=30):
+def record(episode, ctrl, path, seconds, fps=30, command=0.0):
     try:
         import imageio
     except ImportError:
@@ -55,7 +56,7 @@ def record(episode, ctrl, path, seconds, fps=30):
         return
 
     renderer = mujoco.Renderer(episode.model, height=480, width=640)
-    cpg = episode.reset(ctrl)
+    cpg = episode.reset(ctrl, command=command)
     dt = episode.model.opt.timestep
     every = max(1, int(round(1.0 / (fps * dt))))
     fps = 1.0 / (every * dt)       # the rate the frame step really gives
@@ -74,10 +75,16 @@ def record(episode, ctrl, path, seconds, fps=30):
     print(f"wrote {path} ({frames} frames, {frames / fps:.1f} s)")
 
 
-def watch(episode, ctrl, speed=1.0):
+STEER_KEYS = {263: -1.0, 262: 1.0, 265: 0.0, 264: 0.0}   # GLFW left, right, up, down
+
+
+def watch(episode, ctrl, speed=1.0, command=0.0):
+    """Open the viewer. The arrow keys steer while it runs: left -1, right +1,
+    up or down straight; the phases carry on, only the command changes."""
     from mujoco import viewer
 
-    cpg = episode.reset(ctrl)
+    cpg = episode.reset(ctrl, command=command)
+    keys = []
     dt = episode.model.opt.timestep
     wall_dt = dt / speed     # real seconds per simulation step
 
@@ -87,9 +94,15 @@ def watch(episode, ctrl, speed=1.0):
     stop = []
     previous = signal.signal(signal.SIGINT, lambda *_: stop.append(True))
     try:
-        with viewer.launch_passive(episode.model, episode.data) as handle:
+        with viewer.launch_passive(episode.model, episode.data,
+                                   key_callback=keys.append) as handle:
             while handle.is_running() and not stop:
                 t0 = time.perf_counter()
+                while keys:
+                    key = keys.pop(0)
+                    if key in STEER_KEYS:
+                        cpg.params = Params(ctrl, episode.layout, STEER_KEYS[key])
+                        print(f"command {STEER_KEYS[key]:+.0f}")
                 episode.step(cpg)
                 handle.sync()
                 time.sleep(max(0.0, wall_dt - (time.perf_counter() - t0)))
@@ -116,6 +129,9 @@ def main():
                    help="recording length")
     p.add_argument("--speed", type=float, default=1.0,
                    help="viewer playback speed, e.g. 0.25 for slow motion")
+    p.add_argument("--command", type=float, default=0.0,
+                   help="steering command from -1 (left) to +1 (right); in the "
+                        "viewer the arrow keys change it")
     p.add_argument("--list", action="store_true",
                    help="print every archive cell with its fitness, duty, height and servos, then exit")
     a = p.parse_args()
@@ -143,9 +159,9 @@ def main():
     episode = Episode(morph, terrain, payload=archive.payload)
     print(f"terrain {terrain.name}")
     if a.record:
-        record(episode, elite.ctrl, a.record, a.seconds)
+        record(episode, elite.ctrl, a.record, a.seconds, command=a.command)
     else:
-        watch(episode, elite.ctrl, a.speed)
+        watch(episode, elite.ctrl, a.speed, a.command)
 
 
 if __name__ == "__main__":

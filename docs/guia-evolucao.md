@@ -66,16 +66,17 @@ pequeno, mas é o que permite à mutação mexer à vontade sem gerar
 ## 3. Mutação
 
 A variação vem da **mutação**: pegar um robô que funciona e mudar um pouco.
-O DarwinBot usa seis operadores, sorteados com pesos diferentes:
+O DarwinBot usa sete operadores, sorteados com pesos diferentes:
 
 | Operador | O que faz | Chance |
 |---|---|---|
-| `param` | ajusta um pouco uma medida contínua (comprimento, seção, cotovelo, rotação, raio, contorno do tronco, dobra do link, forma do pé) | 35% |
+| `param` | ajusta uma medida contínua (comprimento, seção, cotovelo, rotação, raio, contorno do tronco, dobra do link, forma do pé); um ajuste em cada cinco é um salto grande | 30% |
 | `add` | acrescenta um módulo num encaixe livre | 20% |
 | `type` | troca o tipo de um módulo (junta vira link, mola, cauda, patim, espeto ou roda livre, por exemplo) | 15% |
 | `mirror` | copia um membro para o lado oposto, espelhado | 15% |
 | `remove` | tira um membro inteiro | 10% |
 | `copy` | copia um membro para outro encaixe | 5% |
+| `scale` | estica ou encolhe um membro inteiro, de metade ao dobro | 5% |
 
 O `mirror` merece atenção: simetria ajuda a andar, e duplicar um membro que
 já funciona é um atalho que a evolução natural também usa (pense nos pares
@@ -84,9 +85,11 @@ de patas de um inseto).
 **No código:** `MUTATIONS` e as funções `_op_*` em `morphology.py`.
 
 Muitos algoritmos genéticos também usam **cruzamento** (misturar o genoma de
-dois pais). O DarwinBot não usa: misturar metade de um corpo com metade de
-outro quase sempre quebra os dois. É uma escolha comum quando o genoma
-descreve estruturas, não listas de números independentes.
+dois pais). Cortar dois corpos ao meio e trocar as metades quase sempre quebra
+os dois, então o DarwinBot usa uma forma mais suave, o **enxerto**: um membro
+inteiro de outro robô do mapa é encaixado numa vaga livre do pai, às vezes
+espelhado do outro lado. Um em cada cinco filhos nasce assim. Karl Sims usou a
+mesma ideia nas criaturas dele, em 1994.
 
 ## 4. A nota (fitness)
 
@@ -214,7 +217,7 @@ README). Treinos pequenos levam minutos.
 
 1. **Um treino mínimo** para ver o ciclo:
    ```
-   python experiments/train.py --terrains flat --init 6 --batches 3 --batch-size 4 --budget-init 20 --budget-child 10 --workers 1 --variants 0 --out /tmp/exp1
+   python experiments/train.py --terrains flat --init 6 --batches 3 --batch-size 4 --budget-init 20 --budget-child 10 --workers 1 --variants 0 --seed 1 --out /tmp/exp1
    python experiments/replay.py --archive /tmp/exp1/archive.pkl --list
    ```
    Observe a coluna `cells` do log do `train.py` crescer a cada lote: são os
@@ -236,7 +239,7 @@ README). Treinos pequenos levam minutos.
 | Fenótipo | o robô construído a partir do genoma |
 | Fitness / nota | quão bem o robô cumpre a tarefa |
 | Mutação | mudança aleatória no genoma de um filho |
-| Cruzamento | mistura do genoma de dois pais (não usado aqui) |
+| Cruzamento | mistura do genoma de dois pais (aqui, enxerto de um membro inteiro) |
 | Elite | o melhor robô guardado numa região do mapa |
 | Descritor | uma medida de comportamento que define a região de um robô |
 | CPG | gerador central de padrões, o controle rítmico das juntas |

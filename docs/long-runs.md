@@ -42,7 +42,20 @@ on Kaggle's free sessions instead:
   GPU (MJX) for the same body and batch sizes from 16 to 1024. A GPU only helps
   when it simulates hundreds of copies at once and every new body costs it a
   compile, so this tells whether it pays off here. The same comparison runs
-  locally with `python tools/kaggle/bench_gpu.py`.
+  locally with `python tools/kaggle/bench_gpu.py`. On a free Kaggle GPU (2x T4)
+  MJX ran 0.6 to 1.5 episodes per second at any batch size from 16 to 1024,
+  against 13 to 15 on the session's 4 CPU cores, spent 17 to 47 s compiling
+  every body, and cannot collide a wheel (cylinder) with a box, which rules out
+  wheeled robots on steps and rubble. Training stays on the CPU.
 
 Upload a notebook with *Create > New Notebook > File > Import Notebook*. While
 the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.
+
+Kaggle hands over a session's output only when it ends. To follow a run while
+it trains, push `tools/kaggle/train_kernel.py` as a script kernel instead (with
+the code uploaded as a private dataset, see its docstring): every 15 minutes it
+publishes `train.log` and `archive.pkl` as a new version of a private dataset,
+which `kaggle datasets download <user>/darwinbot-progress -p progress` (then unzip)
+fetches. It needs an API token: Kaggle secrets reach only runs started from the
+website, so for pushed versions the kernel reads it from a private dataset
+(`darwinbot-secret`, a `token.txt` with a token made only for this).

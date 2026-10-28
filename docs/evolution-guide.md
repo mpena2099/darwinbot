@@ -67,16 +67,17 @@ impossible "monsters".
 ## 3. Mutation
 
 Variation comes from **mutation**: take a robot that works and change it a
-little. DarwinBot uses six operators, drawn with different weights:
+little. DarwinBot uses seven operators, drawn with different weights:
 
 | Operator | What it does | Chance |
 |---|---|---|
-| `param` | nudges a continuous measure (length, section, elbow, roll, radius, trunk outline, link bend, foot shape) | 35% |
+| `param` | changes a continuous measure (length, section, elbow, roll, radius, trunk outline, link bend, foot shape); one change in five is a large jump | 30% |
 | `add` | adds a module in a free socket | 20% |
 | `type` | swaps a module's type (a joint becomes a link, spring, tail, skid, spike or caster, for example) | 15% |
 | `mirror` | copies a limb to the opposite side, mirrored | 15% |
 | `remove` | removes a whole limb | 10% |
 | `copy` | copies a limb to another socket | 5% |
+| `scale` | stretches or shrinks a whole limb, from half to double | 5% |
 
 The `mirror` operator deserves attention: symmetry helps walking, and
 duplicating a limb that already works is a shortcut that natural evolution
@@ -85,9 +86,11 @@ also uses (think of an insect's pairs of legs).
 **In the code:** `MUTATIONS` and the `_op_*` functions in `morphology.py`.
 
 Many genetic algorithms also use **crossover** (mixing the genome of two
-parents). DarwinBot does not: mixing half of one body with half of another
-almost always breaks both. It is a common choice when the genome describes
-structures rather than lists of independent numbers.
+parents). Cutting two bodies in half and swapping the halves almost always
+breaks both, so DarwinBot uses a gentler form, the **graft**: a whole limb of
+another robot on the map is attached to a free slot of the parent, sometimes
+mirrored on the other side. One child in five is born this way. Karl Sims used
+the same idea for his creatures in 1994.
 
 ## 4. The score (fitness)
 
@@ -221,7 +224,7 @@ the README). Small trainings take minutes.
 
 1. **A minimal training** to see the cycle:
    ```
-   python experiments/train.py --terrains flat --init 6 --batches 3 --batch-size 4 --budget-init 20 --budget-child 10 --workers 1 --variants 0 --out /tmp/exp1
+   python experiments/train.py --terrains flat --init 6 --batches 3 --batch-size 4 --budget-init 20 --budget-child 10 --workers 1 --variants 0 --seed 1 --out /tmp/exp1
    python experiments/replay.py --archive /tmp/exp1/archive.pkl --list
    ```
    Watch the `cells` column of the `train.py` log grow with each batch: those
@@ -243,7 +246,7 @@ the README). Small trainings take minutes.
 | Phenotype | the robot built from the genome |
 | Fitness / score | how well the robot performs the task |
 | Mutation | a random change in a child's genome |
-| Crossover | mixing the genome of two parents (not used here) |
+| Crossover | mixing the genome of two parents (here, grafting a whole limb) |
 | Elite | the best robot kept in a region of the map |
 | Descriptor | a behavior measurement that defines a robot's region |
 | CPG | central pattern generator, the rhythmic control of the joints |

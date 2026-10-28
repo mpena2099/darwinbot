@@ -54,6 +54,9 @@ A máquina do dono é um notebook de 4 núcleos: comandos pesados com `nice -n 1
 - Circuitos fechados criados pela evolução: um gene de "ligamento" que prende com pino a ponta de uma peça a outra peça do corpo, para que mecanismos como o de quatro barras surjam sozinhos (a mandíbula do bodião e os ligamentos cruzados do joelho são quatro barras), sem módulo pronto. Difícil: o circuito precisa fechar na pose de spawn para ser construível, cadeias fechadas são menos estáveis no MuJoCo, e a impressão pede pinos e folga.
 - Formas desenhadas por uma rede evoluída (camada 4): uma CPPN no genoma desenha cada pé e o tronco como superfície implícita (Cheney et al., 2013), dividida em pedaços convexos para o MuJoCo e checada por elementos finitos.
 - Tarefa `getup` (levantar-se): o robô nasce de cabeça para baixo, a queda não encerra o episódio e a pontuação mede se ele termina em pé. Mexe em `sim.py` e `sim_gpu.py` (orientação do spawn e detecção de queda) e em `fitness.py`.
+- Terrenos adversários (ideia do "parasita" de Hillis e do POET): guardar os terrenos sorteados e as variações de física em que as elites mais falham e avaliar todos também neles; um "hall da fama" desses casos deixa o `validate.py` mais rigoroso. Vem depois da forma livre e antes do `getup`.
+- Sensor de equilíbrio: um IMU no ESP32 (MPU-6050, por exemplo) com a inclinação do tronco entrando no controlador, para cada perna corrigir o tombo. Hoje o controlador só sente a carga de cada servo, então a evolução prefere corpos estáveis por si (largos, baixos, com muitos apoios ou rodas); um bípede de pé precisa disso. Mexe em `controller.py`, `sim.py`, `sim_gpu.py`, firmware e `BODY_MODEL`.
+- Predador e presa, bem mais adiante: perseguidor programado e depois um segundo arquivo que evolui junto. Depende de sensores no robô.
 
 ## Convenções e armadilhas
 

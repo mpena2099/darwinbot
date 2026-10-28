@@ -1,9 +1,13 @@
 """
 test_sim_warp.py
 ----------------
-MuJoCo Warp batch episodes against the CPU reference, and a longer statistical
-run. Skipped when mujoco_warp (the optional warp extra) is not installed.
+MuJoCo Warp batch episodes against the CPU reference: the nominal body, the
+per-world physics and latency of randomize.Variant, other terrains, and a
+longer statistical run. Skipped when mujoco_warp (the optional warp extra) is
+not installed.
 """
+
+import dataclasses
 
 import numpy as np
 import pytest
@@ -13,6 +17,7 @@ pytest.importorskip("mujoco_warp")
 
 from darwinbot import controller as co
 from darwinbot import morphology as mo
+from darwinbot import randomize
 from darwinbot import terrain as te
 from darwinbot.sim import Episode
 from darwinbot.sim_warp import WarpBatchEpisode
@@ -26,16 +31,9 @@ def _ref(morph, ctrls, commands, seconds):
     return [cpu.run(c, None, float(m)) for c, m in zip(ctrls, commands)]
 
 
-@pytest.mark.parametrize("wheels", [False, True])
-def test_short_parity(wheels):
-    morph = mo.template(2, wheels=wheels)
-    rng = np.random.default_rng(0)
-    ctrls = np.stack([co.random_controller(rng) for _ in range(4)])
-    commands = np.array([-1.0, 0.0, 1.0, 0.0])
-    batch = WarpBatchEpisode(morph, te.get_terrains("flat")[0], seconds=1.0,
-                             device=DEVICE)
-    got = batch.run_batch(ctrls, commands)
-    for i, (g, r) in enumerate(zip(got, _ref(morph, ctrls, commands, 1.0))):
+def _check(got, ref):
+    """The tolerances of test_short_parity, world by world."""
+    for i, (g, r) in enumerate(zip(got, ref)):
         assert abs(g.dx - r.dx) <= 0.01 + 0.05 * abs(r.dx), (i, g.dx, r.dx)
         assert abs(g.dy - r.dy) <= 0.01 + 0.05 * abs(r.dy), (i, g.dy, r.dy)
         assert abs(g.yaw - r.yaw) <= 0.05, (i, g.yaw, r.yaw)
@@ -45,6 +43,47 @@ def test_short_parity(wheels):
         assert abs(g.duty - r.duty) <= 0.1, (i, g.duty, r.duty)
         assert abs(g.height - r.height) <= 0.03, (i, g.height, r.height)
         assert abs(g.duration - r.duration) <= 1e-4, (i, g.duration, r.duration)
+
+
+@pytest.mark.parametrize("wheels", [False, True])
+def test_short_parity(wheels):
+    morph = mo.template(2, wheels=wheels)
+    rng = np.random.default_rng(0)
+    ctrls = np.stack([co.random_controller(rng) for _ in range(4)])
+    commands = np.array([-1.0, 0.0, 1.0, 0.0])
+    batch = WarpBatchEpisode(morph, te.get_terrains("flat")[0], seconds=1.0,
+                             device=DEVICE)
+    _check(batch.run_batch(ctrls, commands),
+           _ref(morph, ctrls, commands, 1.0))
+
+
+def test_variants_parity():
+    morph = mo.template(2)
+    terrain = te.get_terrains("flat")[0]
+    rng = np.random.default_rng(2)
+    ctrls = np.stack([co.random_controller(rng) for _ in range(6)])
+    cpu = Episode(morph, terrain, seconds=1.0)
+    variants = [randomize.perturb(cpu.model, np.random.default_rng(10 + i))
+                for i in range(6)]
+    # One world without delay (the ring must pass it through) and one at the
+    # deepest delay of randomize.DEFAULT.
+    variants[0] = dataclasses.replace(variants[0], latency=0)
+    variants[1] = dataclasses.replace(variants[1], latency=2)
+    batch = WarpBatchEpisode(morph, terrain, seconds=1.0, device=DEVICE)
+    _check(batch.run_batch(ctrls, 0.0, variants),
+           [cpu.run(c, v, 0.0) for c, v in zip(ctrls, variants)])
+
+
+@pytest.mark.parametrize("name", ["rubble", "steps", "soft", "downhill",
+                                  "slippery"])
+def test_terrains(name):
+    morph = mo.template(2)
+    terrain = te.get_terrains(name)[0]
+    rng = np.random.default_rng(2)
+    ctrls = np.stack([co.random_controller(rng) for _ in range(3)])
+    cpu = Episode(morph, terrain, seconds=1.0)
+    batch = WarpBatchEpisode(morph, terrain, seconds=1.0, device=DEVICE)
+    _check(batch.run_batch(ctrls), [cpu.run(c, None, 0.0) for c in ctrls])
 
 
 def test_statistical_parity():

@@ -3,7 +3,8 @@ sim_warp.py
 -----------
 WarpBatchEpisode: the same body, terrain and controller semantics as
 sim.Episode, simulated with MuJoCo Warp. Every world in the batch is one
-controller on one copy of the body, so a CMA-ES population is a single batch.
+controller on one copy of the body, with its own physics and command latency
+when given a randomize.Variant, so a CMA-ES population is a single batch.
 
 One control period (servo targets, `hold` physics steps with a phase and
 book-keeping kernel after each of them, then the behaviour sample) is the unit
@@ -28,6 +29,9 @@ from darwinbot.terrain import Terrain
 NCONMAX = 96        # contacts per world; the default guess overflows on a 4-legged body
 NJMAX = 256         # constraint rows per world: 4 per contact, plus limits
 RUNAWAY_VEL = 1e3   # same threshold as sim._bad_state
+VARIANT_FIELDS = ("geom_friction", "body_mass", "body_inertia",
+                  "actuator_forcerange", "actuator_gainprm", "actuator_biasprm",
+                  "dof_frictionloss")   # exactly what randomize.perturb changes
 
 
 @wp.kernel
@@ -40,14 +44,36 @@ def _targets(
     amp2: wp.array2d(dtype=float),
     phase2: wp.array2d(dtype=float),
     ramp_time: float,
-    ctrl: wp.array2d(dtype=float),
+    targets: wp.array2d(dtype=float),
 ):
     """Servo targets from the current phases, as controller.servo_targets."""
     w, a = wp.tid()
     th = theta[w, a]
     fade = wp.min(1.0, time[w] / ramp_time)
-    ctrl[w, a] = fade * (offset[w, a] + amp1[w, a] * wp.sin(th + phase1[w, a])
-                         + amp2[w, a] * wp.sin(2.0 * th + phase2[w, a]))
+    targets[w, a] = fade * (offset[w, a] + amp1[w, a] * wp.sin(th + phase1[w, a])
+                            + amp2[w, a] * wp.sin(2.0 * th + phase2[w, a]))
+
+
+@wp.kernel
+def _delay(
+    targets: wp.array2d(dtype=float),
+    latency: wp.array(dtype=int),
+    ring: wp.array3d(dtype=float),
+    tick: wp.array(dtype=int),
+    nu: int,
+    nlat: int,
+    ctrl: wp.array2d(dtype=float),
+):
+    """Push this tick's targets through the per-world ring, as the deque of
+    sim.Episode.run: a target reaches the servos `latency` ticks late and the
+    first ones are zero. The counter lives on the device so a graph replays it.
+    """
+    w = wp.tid()
+    t = tick[w]
+    for a in range(nu):
+        ring[w, t % nlat, a] = targets[w, a]
+        ctrl[w, a] = ring[w, (t - latency[w] + nlat) % nlat, a]
+    tick[w] = t + 1
 
 
 @wp.kernel
@@ -200,6 +226,7 @@ class WarpBatchEpisode:
         self.reach = ep.reach
         self.twheel = ep._twheel
         self._cache = {}
+        self._vmodels = {}
         if not self.buildable:
             return                  # run_batch reports it, as inner._unbuildable
         self.model = mjw.put_model(ep.model)
@@ -214,29 +241,46 @@ class WarpBatchEpisode:
 
     # ---- device buffers, one set per batch size ----
 
-    def _batch(self, n: int) -> dict:
-        b = self._cache.get(n)
+    def _batch_model(self, n: int):
+        """The model with the fields a variant can change, in n copies."""
+        m = self._vmodels.get(n)
+        if m is None:
+            m = mjw.put_model(self.episode.model,
+                              batch_sizes={f: n for f in VARIANT_FIELDS})
+            self._vmodels[n] = m
+        return m
+
+    def _batch(self, n: int, variants=None) -> dict:
+        """Buffers for n worlds. A variant batch carries the model fields per
+        world and a ring as deep as its deepest delay, so it is cached apart."""
+        nlat = 1 + max([v.latency for v in variants or () if v is not None] or [0])
+        key = n if variants is None else (n, nlat)
+        b = self._cache.get(key)
         if b is not None:
             return b
         dev = self.device
         nu = self.nu
+        model = self.model if variants is None else self._batch_model(n)
 
         def zeros(shape, dtype=wp.float32):
             return wp.zeros(shape, dtype=dtype, device=dev)
 
-        b = {"d": mjw.make_data(self.episode.model, nworld=n,
-                                nconmax=NCONMAX, njmax=NJMAX),
+        b = {"model": model,
+             "d": mjw.make_data(self.episode.model, nworld=n,
+                                 nconmax=NCONMAX, njmax=NJMAX),
              "omega": zeros(n), "x0": zeros(n), "y0": zeros(n),
              "prev": zeros(n), "dx": zeros(n), "dy": zeros(n),
              "energy": zeros(n), "duration": zeros(n), "yaw": zeros(n),
              "zsum": zeros(n), "ticks": zeros(n, wp.int32),
              "done": zeros(n, wp.int32), "fell": zeros(n, wp.int32),
              "unstable": zeros(n, wp.int32), "touch": zeros((n, self.n_tips)), "hit": zeros((n, self.n_tips)),
-             "theta": zeros((n, nu))}
+             "theta": zeros((n, nu)), "target": zeros((n, nu)),
+             "ring": zeros((n, nlat, nu)),
+             "latency": zeros(n, wp.int32), "tick": zeros(n, wp.int32)}
         for name in ("amp1", "phase1", "offset", "amp2", "phase2", "sigma"):
             b[name] = zeros((n, nu))
         b["graph"] = self._capture(b) if self.device.is_cuda else None
-        self._cache[n] = b
+        self._cache[key] = b
         return b
 
     def _capture(self, b: dict):
@@ -253,9 +297,12 @@ class WarpBatchEpisode:
         dev = self.device
         wp.launch(_targets, dim=(d.nworld, self.nu), device=dev, inputs=[
             d.time, b["theta"], b["amp1"], b["phase1"], b["offset"], b["amp2"],
-            b["phase2"], RAMP_TIME], outputs=[d.ctrl])
+            b["phase2"], RAMP_TIME], outputs=[b["target"]])
+        wp.launch(_delay, dim=d.nworld, device=dev, inputs=[
+            b["target"], b["latency"], b["ring"], b["tick"], self.nu,
+            b["ring"].shape[1]], outputs=[d.ctrl])
         for _ in range(steps):
-            mjw.step(self.model, d)
+            mjw.step(b["model"], d)
             wp.launch(_advance_phases, dim=d.nworld, device=dev, inputs=[
                 b["theta"], b["omega"], b["sigma"], d.actuator_force,
                 self.nu, self.dt])
@@ -278,10 +325,10 @@ class WarpBatchEpisode:
     def _reset(self, b: dict) -> None:
         """Every world back to the spawn pose (mj_resetData + mj_forward)."""
         d = b["d"]
-        mjw.reset_data(self.model, d)
-        mjw.forward(self.model, d)
-        for name, arr in b.items():
-            if name not in ("d", "graph"):
+        mjw.reset_data(b["model"], d)
+        mjw.forward(b["model"], d)
+        for arr in b.values():
+            if isinstance(arr, wp.array):
                 arr.zero_()
         # The spawn pose is the same in every world: read it once.
         xpos = d.xpos.numpy()[:, self.torso]
@@ -290,16 +337,35 @@ class WarpBatchEpisode:
         b["y0"].assign(xpos[:, 1])
         b["prev"].assign(np.arctan2(xmat[:, 1, 0], xmat[:, 0, 0]))
 
-    def run_batch(self, ctrls: np.ndarray, commands=0.0) -> List[Metrics]:
+    def _variant_fields(self, model, variants: list) -> None:
+        """The fields randomize.perturb changes, one world per variant."""
+        nominal = self.episode.model
+        for f in VARIANT_FIELDS:
+            getattr(model, f).assign(np.stack([
+                getattr(v.model if v is not None else nominal, f)
+                for v in variants]))
+
+    def run_batch(self, ctrls: np.ndarray, commands=0.0,
+                  variants=None) -> List[Metrics]:
+        """One episode per controller. `variants` is one randomize.Variant per
+        world (None is the nominal one): its physics replaces the model fields
+        and its latency delays the servo targets, as sim.Episode.run."""
         ctrls = np.asarray(ctrls, dtype=float).reshape(-1, CTRL_LENGTH)
         n = len(ctrls)
         assert n > 0
+        if variants is not None:
+            assert len(variants) == n
         if not self.buildable:
             return [Metrics(0.0, 0.0, 0.0, False, True, 0.0, self.mass)] * n
         cmds = np.broadcast_to(np.asarray(commands, dtype=float), (n,))
         ps = [Params(c, self.layout, float(cmd)) for c, cmd in zip(ctrls, cmds)]
-        b = self._batch(n)
+        b = self._batch(n, variants)
         self._reset(b)
+        if variants is not None:
+            self._variant_fields(b["model"], variants)
+            b["latency"].assign(np.array(
+                [v.latency if v is not None else 0 for v in variants],
+                dtype=np.int32))
         b["omega"].assign(np.array([p.omega for p in ps]))
         for name in ("amp1", "phase1", "offset", "amp2", "phase2", "sigma"):
             b[name].assign(np.stack([getattr(p, name) for p in ps]))

@@ -22,7 +22,8 @@ The code comes from a private dataset holding `git archive` of the repository
 A run longer than one session continues in the next: attach PROGRESS_DATASET
 itself as a data source and push again. The kernel copies its archive.pkl to
 RESUME_TO under the checkpoints folder, where `train.py --preset` resumes from
-it, and the new session publishes newer versions of the same dataset.
+it, and the new session publishes newer versions of the same dataset. Islands
+(tools/kaggle/islands.py) set RESUME_DATASET to the merged archive instead.
 """
 
 import glob
@@ -38,6 +39,7 @@ PROGRESS_DATASET = "your-user/darwinbot-progress"
 TOKEN_DATASET = "darwinbot-secret"   # slug of the private dataset with token.txt
 PUBLISH_EVERY = 900        # s
 RESUME_TO = "steer/archive.pkl"   # where --preset steer looks for its archive
+RESUME_DATASET = ""        # dataset to resume from; empty: PROGRESS_DATASET itself
 TIME_LIMIT = 41000         # s, under the 12 h session limit
 
 WORK = "/kaggle/working"
@@ -110,7 +112,7 @@ def publish() -> None:
 def main():
     code = fetch_code()
     os.chdir(code)
-    slug = PROGRESS_DATASET.split("/")[1]
+    slug = (RESUME_DATASET or PROGRESS_DATASET).split("/")[1]
     previous = glob.glob(f"/kaggle/input/**/{slug}/**/archive.pkl", recursive=True)
     if previous:
         os.makedirs(os.path.dirname(f"{OUT}/{RESUME_TO}"), exist_ok=True)

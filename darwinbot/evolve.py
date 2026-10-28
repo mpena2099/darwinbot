@@ -286,6 +286,48 @@ class Archive:
                 "qd_score": float(sum(f + 5.0 for f in fits))}
 
 
+MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload")
+
+
+def merge(archives: List[Archive]) -> Archive:
+    """
+    One archive from several runs of the same setup (islands): every cell keeps
+    the best elite found by any of them. The CVT centroids are fixed
+    (CVT_SEED), so a cell means the same in every run. Runs that resumed from a
+    common archive share the start of their history; the merged history keeps
+    that shared part plus one entry for the merge, and evals count the shared
+    work once.
+    """
+    if not archives:
+        raise ValueError("nothing to merge")
+    first = archives[0]
+    for a in archives[1:]:
+        for k in MERGE_KEYS:
+            if getattr(a, k) != getattr(first, k):
+                raise ValueError(f"archives differ in {k}: "
+                                 f"{getattr(first, k)!r} vs {getattr(a, k)!r}")
+    shared = 0
+    while (all(len(a.history) > shared for a in archives)
+           and all(a.history[shared] == first.history[shared] for a in archives)):
+        shared += 1
+    base_evals = first.history[shared - 1]["evals"] if shared else 0
+
+    out = pickle.loads(pickle.dumps(first))
+    lineage: Dict[str, tuple] = {}
+    for a in archives:
+        lineage.update(a.lineage)
+    for a in archives[1:]:
+        for e in a.cells.values():
+            out.insert(e, lineage.get(elite_id(e.morph, e.ctrl), (None,))[0])
+    out.lineage = {**lineage, **out.lineage}
+    out.batch = max(a.batch for a in archives)
+    out.evals = base_evals + sum(a.evals - base_evals for a in archives)
+    s = out.stats()
+    s.update(added=0, seconds=0.0, merged=len(archives))
+    out.history = first.history[:shared] + [s]
+    return out
+
+
 def _ignore_sigint():
     """Pool workers leave Ctrl+C to the main process, which stops them."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)

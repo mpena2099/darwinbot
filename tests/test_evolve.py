@@ -354,3 +354,63 @@ def test_budget_grows_with_joints_up_to_a_cap():
 def test_legs_axis_separates_leg_counts():
     base = [0.5, 0.1, 8.0, 0.0, 5.0]
     assert evolve.cell_of(base + [2.0]) != evolve.cell_of(base + [6.0])
+
+
+def _archive_with(*elites, history=()):
+    a = evolve.Archive(terrains="flat")
+    for e in elites:
+        a.insert(e)
+    a.history = list(history)
+    return a
+
+
+def test_merge_keeps_the_best_elite_of_every_cell():
+    near, far = [0.9, 0.3, 8, 0.0, 1.0, 2], [0.1, 1.2, 4, 0.0, 30.0, 0]
+    a = _archive_with(_elite(1.0, near))
+    b = _archive_with(_elite(2.0, near, genes=np.full(mo.MORPH_LENGTH, 0.4)),
+                      _elite(0.5, far))
+    out = evolve.merge([a, b])
+    assert len(out.cells) == 2
+    assert out.cells[evolve.cell_of(near)].fitness == 2.0
+    assert out.cells[evolve.cell_of(far)].fitness == 0.5
+    assert a.cells[evolve.cell_of(near)].fitness == 1.0      # inputs untouched
+    assert set(a.lineage) | set(b.lineage) <= set(out.lineage)
+
+
+def test_merge_counts_shared_history_once():
+    common = [{"batch": 0, "evals": 100}, {"batch": 1, "evals": 200}]
+    a = _archive_with(_elite(1.0, [0.9, 0.3, 8, 0.0, 1.0, 2]),
+                      history=common + [{"batch": 2, "evals": 260}])
+    b = _archive_with(_elite(1.5, [0.9, 0.3, 8, 0.0, 1.0, 2]),
+                      history=common + [{"batch": 2, "evals": 250}])
+    a.batch, a.evals, b.batch, b.evals = 3, 260, 3, 250
+    out = evolve.merge([a, b])
+    assert out.batch == 3
+    assert out.evals == 200 + 60 + 50
+    assert out.history[:2] == common and out.history[-1]["merged"] == 2
+    assert len(out.history) == 3
+
+
+def test_merge_refuses_different_setups():
+    a = evolve.Archive(terrains="flat")
+    b = evolve.Archive(terrains="terrain")
+    with pytest.raises(ValueError, match="terrains"):
+        evolve.merge([a, b])
+    with pytest.raises(ValueError):
+        evolve.merge([])
+
+
+def test_merged_islands_resume(tmp_path):
+    runs = []
+    for i in range(2):
+        out = tmp_path / f"island{i}"
+        runs.append(evolve.run(n_init=2, n_batches=1, batch_size=2, budget_init=6,
+                               budget_child=4, workers=1, seed=i, out_dir=str(out)))
+    merged = evolve.merge(runs)
+    assert len(merged.cells) >= max(len(r.cells) for r in runs)
+    path = tmp_path / "merged.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(merged, f)
+    again = evolve.run(n_batches=1, batch_size=2, budget_child=4, workers=1,
+                       out_dir=str(tmp_path / "next"), resume=str(path))
+    assert again.batch == merged.batch + 1

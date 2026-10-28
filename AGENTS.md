@@ -26,6 +26,8 @@ python experiments/export.py --type <type>    # exports/<type>/
 python experiments/plot_archive.py
 python tools/terrain_sheet.py --archive <archive.pkl>    # docs/img/terrains.png
 python tools/parts_sheet.py exports/<type>    # every printed part on one image
+python experiments/merge_archives.py a.pkl b.pkl --out merged.pkl   # islands: best elite per cell
+python tools/kaggle/islands.py --user <you> --code-dataset <you>/darwinbot-code   # islands on Kaggle
 ```
 
 The maintainer's machine is a 4-core laptop: run heavy commands with `nice -n 19`, and use at most 1 worker for tests and short check runs. Long runs go to Kaggle CPU sessions (`tools/kaggle/`).

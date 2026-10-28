@@ -54,9 +54,12 @@ on Kaggle's free sessions instead:
   with 256, 18 to 20 times with 1024 and 22 to 27 times with 4096, for
   quadruped, hexapod and wheeled bodies on flat ground and on rubble, wheels on
   rocks included. A new body costs under 3 s; the first one compiles for about
-  a minute. Training does not use it yet: the CPG has to run on the GPU too, and
-  the GPU computes in float32, so a GPU-trained robot is still validated on the
-  CPU.
+  a minute. With the CPG on the GPU too (`darwinbot/sim_warp.py`,
+  `bench_warp.py --cpg`, whole 5 s training episodes), the T4 ran 6 to 7 times
+  the 4 CPU cores with 64 controllers at once, 18 to 21 times with 256 and 39 to
+  49 times with 1024, on flat ground and rubble, for legs and wheels. Training
+  does not use it yet; the GPU computes in float32, so the plan is to keep
+  scoring archive entries on the CPU.
 
 Upload a notebook with *Create > New Notebook > File > Import Notebook*. While
 the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.

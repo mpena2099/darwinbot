@@ -333,6 +333,22 @@ def _ignore_sigint():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
+def _cuda_devices() -> int:
+    import warp as wp
+    return max(1, wp.get_cuda_device_count())
+
+
+def _warp_worker(counter, n_gpus: int):
+    """Pool initializer for --device warp: bind this worker to the next GPU."""
+    _ignore_sigint()
+    with counter.get_lock():
+        i = counter.value
+        counter.value += 1
+    import warp as wp
+    if wp.get_cuda_device_count() > 0:
+        wp.set_device(f"cuda:{i % n_gpus}")
+
+
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
@@ -387,11 +403,13 @@ def run(
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     os.makedirs(out_dir, exist_ok=True)
     rng = np.random.default_rng(seed)
-    if device in ("gpu", "warp"):
-        print(f"[darwinbot] {device}: workers ignored, tasks run one at a time")
+    if device == "gpu":
+        print("[darwinbot] gpu: workers ignored, tasks run one at a time")
         workers = 1
-        if device == "gpu":
-            popsize = 64 if popsize is None else popsize
+        popsize = 64 if popsize is None else popsize
+    elif device == "warp":
+        # One process per worker, spread over the GPUs; by default one per GPU.
+        workers = workers or _cuda_devices()
     else:
         workers = workers or max(1, multiprocessing.cpu_count() - 1)
 
@@ -439,8 +457,14 @@ def run(
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
           f"batches={n_batches} batch_size={batch_size} "
           f"task={archive.task} payload={archive.payload} kg")
-    pool = (None if device in ("gpu", "warp")
-            else multiprocessing.Pool(workers, _ignore_sigint))
+    if device == "gpu" or (device == "warp" and workers == 1):
+        pool = None
+    elif device == "warp":
+        # CUDA does not survive fork: spawned workers, each bound to one GPU.
+        ctx = multiprocessing.get_context("spawn")
+        pool = ctx.Pool(workers, _warp_worker, (ctx.Value("i", 0), _cuda_devices()))
+    else:
+        pool = multiprocessing.Pool(workers, _ignore_sigint)
     path = os.path.join(out_dir, "archive.pkl")
     saved = None                                  # batch count in the file on disk
     try:

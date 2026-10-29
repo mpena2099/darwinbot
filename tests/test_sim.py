@@ -570,6 +570,16 @@ def test_steer_score_rewards_turning_the_way_asked():
                               "steer") == fitness.UNSTABLE_SCORE
 
 
+def test_spinning_on_the_spot_does_not_beat_walking():
+    """Turn credit stops at TURN_CAP: a body that spins five times each way
+    but never walks scores below one that walks and turns a little."""
+    spinner = [_metrics(), _metrics(yaw=30.0), _metrics(yaw=-30.0)]
+    walker = [_metrics(dx=1.0), _metrics(dx=0.5, yaw=0.5), _metrics(dx=0.5, yaw=-0.5)]
+    assert fitness.task_score(walker, "steer") > fitness.task_score(spinner, "steer")
+    capped = [_metrics(), _metrics(yaw=fitness.TURN_CAP), _metrics(yaw=-fitness.TURN_CAP)]
+    assert fitness.task_score(spinner, "steer") == fitness.task_score(capped, "steer")
+
+
 def test_steering_command_turns_a_robot_both_ways():
     """A wheeled body whose wheels answer the command turns each way."""
     morph = mo.template(2, wheels=True)

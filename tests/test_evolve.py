@@ -426,5 +426,6 @@ def test_rescore_keeps_cells_and_lineage(tmp_path):
     out = rescore(archive, workers=1)
     assert set(out.cells) == set(archive.cells)
     assert out.lineage == archive.lineage and out.batch == archive.batch
+    assert out.history[-1]["rescored"] and len(out.history) == len(archive.history) + 1
     for c, e in out.cells.items():
         assert np.allclose(e.ctrl, archive.cells[c].ctrl)

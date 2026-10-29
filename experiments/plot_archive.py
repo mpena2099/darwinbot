@@ -74,8 +74,16 @@ def history(archive):
     ax2.plot(evals, [entry["cells"] for entry in archive.history],
              color="tab:green", linestyle="--", label="cells")
     ax2.set_ylabel("filled cells")
-    handles = ax.get_lines() + ax2.get_lines()
-    ax.legend(handles, [h.get_label() for h in handles], loc="best")
+    for entry in archive.history:      # rescore_archive.py: the scoring rules changed here
+        if entry.get("rescored"):
+            ax.axvline(entry["evals"], color="grey", linestyle=":", linewidth=1)
+            ax.annotate(entry["rescored"] if isinstance(entry["rescored"], str)
+                        else "scoring rules changed", (entry["evals"], 0.3),
+                        xycoords=("data", "axes fraction"), ha="left", va="bottom",
+                        fontsize=8, color="grey", rotation=90)
+    handles = [h for h in ax.get_lines() + ax2.get_lines()
+               if not h.get_label().startswith("_")]
+    ax.legend(handles, [h.get_label() for h in handles], loc="upper left")
     ax.set_title("archive progress")
     return fig
 

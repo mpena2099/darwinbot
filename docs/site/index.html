@@ -78,6 +78,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
       <div><dt>Duty</dt><dd id="d-duty">-</dd></div>
       <div><dt>Torso height</dt><dd id="d-height">-</dd></div>
       <div><dt>Servos</dt><dd id="d-servos">-</dd></div>
+      <div><dt>Legs</dt><dd id="d-legs">-</dd></div>
       <div><dt>Cost of transport</dt><dd id="d-cot">-</dd></div>
     </dl>
   </section>
@@ -338,6 +339,7 @@ async function load(idx) {
   $("d-duty").textContent = r.duty.toFixed(2);
   $("d-height").textContent = r.height.toFixed(2);
   $("d-servos").textContent = r.servos;
+  $("d-legs").textContent = r.legs ?? "-";
   $("d-cot").textContent = r.cot.toFixed(2);
   try {
     const res = await fetch("data/" + encodeURIComponent(r.file));

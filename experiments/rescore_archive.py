@@ -44,7 +44,8 @@ def _score(job):
     return fit, scores
 
 
-def rescore(archive: Archive, workers: int, seed: int = 0) -> Archive:
+def rescore(archive: Archive, workers: int, seed: int = 0,
+            note: str = "scoring rules changed") -> Archive:
     cells = list(archive.cells.values())
     jobs = [(e.morph, e.ctrl, archive.terrains, archive.seconds, archive.variants,
              archive.task, archive.payload, seed) for e in cells]
@@ -55,6 +56,9 @@ def rescore(archive: Archive, workers: int, seed: int = 0) -> Archive:
     for e, (fit, scores) in zip(cells, results):
         out.insert(Elite(e.morph, e.ctrl, fit, scores, e.born, e.behaviour))
     out.lineage = dict(archive.lineage)
+    s = out.stats()
+    s.update(added=0, seconds=0.0, rescored=note)
+    out.history = list(archive.history) + [s]
     return out
 
 
@@ -64,11 +68,13 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--workers", type=int, default=os.cpu_count())
     p.add_argument("--seed", type=int, default=0, help="seed of the randomised variants")
+    p.add_argument("--note", default="scoring rules changed",
+                   help="label of the rescoring in the progress plot")
     a = p.parse_args()
     with open(a.archive, "rb") as f:
         archive = pickle.load(f)
     before = archive.stats()
-    out = rescore(archive, a.workers, a.seed)
+    out = rescore(archive, a.workers, a.seed, a.note)
     after = out.stats()
     with open(a.out + ".tmp", "wb") as f:
         pickle.dump(out, f)

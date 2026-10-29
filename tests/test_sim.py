@@ -559,7 +559,7 @@ def test_skid_and_spike_friction_follows_the_terrain(terrain, ground):
 
 def test_steer_score_rewards_turning_the_way_asked():
     straight = _metrics(dx=1.0)
-    left, right = _metrics(yaw=2.0), _metrics(yaw=-2.0)       # yaw > 0 is a left turn
+    left, right = _metrics(dx=0.5, yaw=2.0), _metrics(dx=0.5, yaw=-2.0)   # yaw > 0 is a left turn
     both = fitness.task_score([straight, left, right], "steer")
     wrong = fitness.task_score([straight, right, left], "steer")
     only_straight = fitness.task_score([straight, straight, straight], "steer")
@@ -571,13 +571,20 @@ def test_steer_score_rewards_turning_the_way_asked():
 
 
 def test_spinning_on_the_spot_does_not_beat_walking():
-    """Turn credit stops at TURN_CAP: a body that spins five times each way
-    but never walks scores below one that walks and turns a little."""
+    """Turn credit stops at TURN_CAP and at the distance travelled: a body
+    that spins five times each way but never walks scores no more than one
+    that stands still, and below one that walks and turns a little."""
     spinner = [_metrics(), _metrics(yaw=30.0), _metrics(yaw=-30.0)]
     walker = [_metrics(dx=1.0), _metrics(dx=0.5, yaw=0.5), _metrics(dx=0.5, yaw=-0.5)]
     assert fitness.task_score(walker, "steer") > fitness.task_score(spinner, "steer")
     capped = [_metrics(), _metrics(yaw=fitness.TURN_CAP), _metrics(yaw=-fitness.TURN_CAP)]
     assert fitness.task_score(spinner, "steer") == fitness.task_score(capped, "steer")
+    still = [_metrics(), _metrics(), _metrics()]
+    assert fitness.task_score(spinner, "steer") == fitness.task_score(still, "steer")
+    # A short curve earns only as much turn credit as the distance it covered.
+    short = [_metrics(), _metrics(dx=0.05, yaw=1.0), _metrics(dx=0.05, yaw=-1.0)]
+    far = [_metrics(), _metrics(dx=0.5, yaw=1.0), _metrics(dx=0.5, yaw=-1.0)]
+    assert fitness.task_score(short, "steer") < fitness.task_score(far, "steer")
 
 
 def test_steering_command_turns_a_robot_both_ways():

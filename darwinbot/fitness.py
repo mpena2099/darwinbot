@@ -20,8 +20,9 @@ For the "steer" task every evaluation runs three episodes under the steering
 commands of COMMANDS: straight (0), left (-1) and right (+1). The straight one
 scores as "forward"; a turning one scores the heading change towards the side
 asked for (yaw is positive to the left), TURN_SCALE metres per radian, up to
-TURN_CAP: obeying the command is enough, so spinning on the spot for several
-turns cannot outscore walking:
+TURN_CAP, and never more than the distance the torso travelled in that
+episode: the robot has to walk a curve, and spinning on the spot earns
+nothing:
 
 score = 0.5 * straight + 0.25 * (left + right)
 
@@ -80,7 +81,8 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         return UNSTABLE_SCORE
     turns = []
     for m, c in zip(ms[1:], commands(task)[1:]):
-        s = TURN_SCALE * min(-c * m.yaw, TURN_CAP) - ENERGY_W * m.energy / (m.mass * G)
+        turn = min(TURN_SCALE * min(-c * m.yaw, TURN_CAP), math.hypot(m.dx, m.dy))
+        s = turn - ENERGY_W * m.energy / (m.mass * G)
         turns.append(s - FALL_PENALTY if m.fell else s)
     return float(0.5 * score(ms[0], "forward") + 0.5 * np.mean(turns))
 

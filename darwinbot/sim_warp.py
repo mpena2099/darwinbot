@@ -14,7 +14,10 @@ metrics mean the same as sim.Episode. A non-buildable body is reported the way
 inner.py reports it.
 """
 
+from contextlib import nullcontext
 from typing import List
+
+import mujoco
 
 import mujoco_warp as mjw
 import numpy as np
@@ -26,8 +29,9 @@ from darwinbot.sim import (EPISODE_SECONDS, UPRIGHT_MIN, Metrics, Episode,
                            behaviour)
 from darwinbot.terrain import Terrain
 
-NCONMAX = 96        # contacts per world; the default guess overflows on a 4-legged body
-NJMAX = 256         # constraint rows per world: 4 per contact, plus limits
+NCONMAX = 128       # contacts per world; the default guess overflows on a 4-legged body
+NJMAX = 1024        # constraint rows per world: 256 overflowed on large evolved bodies
+PAD = 32            # batch sizes round up to this, so few graphs are captured per body
 RUNAWAY_VEL = 1e3   # same threshold as sim._bad_state
 VARIANT_FIELDS = ("geom_friction", "body_mass", "body_inertia",
                   "actuator_forcerange", "actuator_gainprm", "actuator_biasprm",
@@ -230,6 +234,14 @@ class WarpBatchEpisode:
         if not self.buildable:
             return                  # run_batch reports it, as inner._unbuildable
         self.model = mjw.put_model(ep.model)
+        self.model.opt.warn_overflow = 0      # overflowed worlds are marked unstable instead
+        # Every world starts at the same spawn pose: torso x, y and heading.
+        mujoco.mj_resetData(ep.model, ep.data)
+        mujoco.mj_forward(ep.model, ep.data)
+        pos, mat = ep.data.xpos[ep.torso], ep.data.xmat[ep.torso]
+        self._spawn = (float(pos[0]), float(pos[1]), float(np.arctan2(mat[3], mat[0])))
+        # Its own CUDA stream, so the terrains of one generation run concurrently.
+        self.stream = wp.Stream(self.device) if self.device.is_cuda else None
         self.nu, self.nv = ep.model.nu, ep.model.nv
         dev = self.device
         self.n_tips = len(ep._tgeoms)
@@ -247,6 +259,7 @@ class WarpBatchEpisode:
         if m is None:
             m = mjw.put_model(self.episode.model,
                               batch_sizes={f: n for f in VARIANT_FIELDS})
+            m.opt.warn_overflow = 0
             self._vmodels[n] = m
         return m
 
@@ -285,9 +298,12 @@ class WarpBatchEpisode:
 
     def _capture(self, b: dict):
         """Record one control period, for replay with wp.capture_launch."""
-        with wp.ScopedCapture() as capture:
+        with self._on_stream(), wp.ScopedCapture() as capture:
             self._period(b, self.hold, sample=True)
         return capture.graph
+
+    def _on_stream(self):
+        return wp.ScopedStream(self.stream) if self.stream is not None else nullcontext()
 
     # ---- the loop ----
 
@@ -330,12 +346,9 @@ class WarpBatchEpisode:
         for arr in b.values():
             if isinstance(arr, wp.array):
                 arr.zero_()
-        # The spawn pose is the same in every world: read it once.
-        xpos = d.xpos.numpy()[:, self.torso]
-        xmat = d.xmat.numpy()[:, self.torso]
-        b["x0"].assign(xpos[:, 0])
-        b["y0"].assign(xpos[:, 1])
-        b["prev"].assign(np.arctan2(xmat[:, 1, 0], xmat[:, 0, 0]))
+        b["x0"].fill_(self._spawn[0])
+        b["y0"].fill_(self._spawn[1])
+        b["prev"].fill_(self._spawn[2])
 
     def _variant_fields(self, model, variants: list) -> None:
         """The fields randomize.perturb changes, one world per variant."""
@@ -350,33 +363,54 @@ class WarpBatchEpisode:
         """One episode per controller. `variants` is one randomize.Variant per
         world (None is the nominal one): its physics replaces the model fields
         and its latency delays the servo targets, as sim.Episode.run."""
+        return self.finish(self.start(ctrls, commands, variants))
+
+    def start(self, ctrls: np.ndarray, commands=0.0, variants=None):
+        """Launch run_batch without waiting for it (on this episode's stream);
+        finish() collects the metrics. Batches are padded to a multiple of PAD
+        with copies of the first world."""
         ctrls = np.asarray(ctrls, dtype=float).reshape(-1, CTRL_LENGTH)
         n = len(ctrls)
         assert n > 0
         if variants is not None:
             assert len(variants) == n
         if not self.buildable:
-            return [Metrics(0.0, 0.0, 0.0, False, True, 0.0, self.mass)] * n
+            return n, None
         cmds = np.broadcast_to(np.asarray(commands, dtype=float), (n,))
-        ps = [Params(c, self.layout, float(cmd)) for c, cmd in zip(ctrls, cmds)]
-        b = self._batch(n, variants)
-        self._reset(b)
+        size = -(-n // PAD) * PAD
+        pad = [0] * (size - n)
+        ctrls = np.concatenate([ctrls, ctrls[pad]])
+        cmds = np.concatenate([cmds, cmds[pad]])
         if variants is not None:
-            self._variant_fields(b["model"], variants)
-            b["latency"].assign(np.array(
-                [v.latency if v is not None else 0 for v in variants],
-                dtype=np.int32))
-        b["omega"].assign(np.array([p.omega for p in ps]))
-        for name in ("amp1", "phase1", "offset", "amp2", "phase2", "sigma"):
-            b[name].assign(np.stack([getattr(p, name) for p in ps]))
-        periods, rest = divmod(self.n_steps, self.hold)
-        for _ in range(periods):
-            if b["graph"] is not None:
-                wp.capture_launch(b["graph"])
-            else:
-                self._period(b, self.hold, sample=True)
-        if rest:                       # a last partial period samples nothing
-            self._period(b, rest, sample=False)
+            variants = list(variants) + [variants[0]] * len(pad)
+        ps = [Params(c, self.layout, float(cmd)) for c, cmd in zip(ctrls, cmds)]
+        b = self._batch(size, variants)
+        with self._on_stream():
+            self._reset(b)
+            if variants is not None:
+                self._variant_fields(b["model"], variants)
+                b["latency"].assign(np.array(
+                    [v.latency if v is not None else 0 for v in variants],
+                    dtype=np.int32))
+            b["omega"].assign(np.array([p.omega for p in ps]))
+            for name in ("amp1", "phase1", "offset", "amp2", "phase2", "sigma"):
+                b[name].assign(np.stack([getattr(p, name) for p in ps]))
+            periods, rest = divmod(self.n_steps, self.hold)
+            for _ in range(periods):
+                if b["graph"] is not None:
+                    wp.capture_launch(b["graph"])
+                else:
+                    self._period(b, self.hold, sample=True)
+            if rest:                       # a last partial period samples nothing
+                self._period(b, rest, sample=False)
+        return n, b
+
+    def finish(self, token) -> List[Metrics]:
+        n, b = token
+        if b is None:
+            return [Metrics(0.0, 0.0, 0.0, False, True, 0.0, self.mass)] * n
+        if self.stream is not None:
+            wp.synchronize_stream(self.stream)
         return self._metrics(b, n)
 
     def _metrics(self, b: dict, n: int) -> List[Metrics]:
@@ -385,6 +419,8 @@ class WarpBatchEpisode:
                                          "fell", "unstable", "zsum", "ticks",
                                          "touch")}
         out["touch"] = out["touch"].astype(float)
+        # A world that ran out of contact or constraint room was simulated wrong.
+        out["unstable"] = out["unstable"] | (b["d"].overflow.numpy() != 0)
         res = []
         for i in range(n):
             duty, height, share = behaviour(out["touch"][i], self.twheel,

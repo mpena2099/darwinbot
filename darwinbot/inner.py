@@ -176,10 +176,11 @@ def optimise_controller(
                 vs = var_sets[i] if var_sets else [None]
                 worlds = [(c, v, float(cmd)) for c in ctrls for v in vs
                           for cmd in cmds]
-                per_terrain.append(b.run_batch(
+                per_terrain.append(b.start(      # the terrains run concurrently
                     np.stack([w[0] for w in worlds]),
                     np.array([w[2] for w in worlds]),
                     None if var_sets is None else [w[1] for w in worlds]))
+            per_terrain = [b.finish(t) for b, t in zip(batches, per_terrain)]
             out = []
             for i in range(len(ctrls)):
                 scores, metrics = [], []

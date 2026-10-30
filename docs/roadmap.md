@@ -143,6 +143,18 @@
   rule; on the bench, fit the real servo's friction from measurements. An
   analysis tool for the Results page and the simulator, not a source of
   robots.
+- **Walking or rolling as the ground asks** (a wheel-stall reflex): today a
+  robot with legs ending in wheels has one rhythm, legs and wheels together.
+  A new gene per joint would let the wheels' load drive the legs' amplitude:
+  free wheels keep the legs still and the robot rolls; a wheel stalled against
+  an obstacle makes the legs start stepping, as a Tachikoma does. A local
+  reflex, not a decision, and the STS3215 reports load in wheel mode too.
+  Changes the controller, the firmware and the control file: new `BODY_MODEL`.
+- **A walk or roll command**: a second command next to steering, with two genes
+  per joint, trained by testing each robot in both modes (walking on steps,
+  rolling on flat ground). Predictable, and fits the ROS 2 extension, which
+  would send "roll" or "walk" as a high-level order; costs more episodes per
+  evaluation.
 - **Balance sense**: an IMU on the ESP32 (an MPU-6050, for example) feeding the
   torso's tilt back into the controller, so each leg can correct a lean. Today
   the controller only feels each servo's load, so evolution favours bodies that

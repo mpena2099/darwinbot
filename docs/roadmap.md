@@ -108,6 +108,18 @@
   draws each foot and the torso as an implicit surface (as Cheney et al. did for
   soft robots in 2013), split into convex pieces for MuJoCo and checked for
   strength by finite elements.
+- **Adapting on the real robot with Bayesian optimisation**: once a robot is
+  built, use the archive as a prior and try a handful of its gaits on the real
+  robot (about ten trials), as in Cully et al.'s Intelligent Trial and Error
+  (2015), until one works on the real floor; the same method lets a damaged
+  robot find a new gait. Bayesian optimisation can also tune the simulator
+  (friction, gear play, delay) to match servo measurements on the bench.
+- **Formulas that explain the archive** (symbolic regression): search for
+  short equations behind the results, such as how speed grows with wheel
+  radius or leg length, or condense an evolved controller into a readable
+  rule; on the bench, fit the real servo's friction from measurements. An
+  analysis tool for the Results page and the simulator, not a source of
+  robots.
 - **Balance sense**: an IMU on the ESP32 (an MPU-6050, for example) feeding the
   torso's tilt back into the controller, so each leg can correct a lean. Today
   the controller only feels each servo's load, so evolution favours bodies that

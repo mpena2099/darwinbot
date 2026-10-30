@@ -76,6 +76,17 @@
   limbs five modules deep, enough for a legless "lizard" with a waving tail but
   not for a snake. Lateral undulation also needs the direction-dependent
   friction above; sidewinding and concertina motion work without it.
+- **Growth rules for the body**: instead of describing a body part by part,
+  the genome would hold a rule that grows it ("a segment sprouts a leg on each
+  side and another segment, five times"), as L-systems and Karl Sims'
+  recursive graphs do and as genes do in animals. Symmetry and repetition come
+  for free, so a centipede or a snake is one short rule rather than twenty
+  tuned nodes. It replaces the genome, so it needs a new `BODY_MODEL`.
+- **Controllers as evolved programs** (an idea only): genetic programming
+  could invent the controller's rules, such as reflexes driven by servo load,
+  instead of tuning the fixed CPG. The program would also have to run on the
+  ESP32, as a tree in the control file read by the firmware, and keeping it in
+  step with the Python is harder.
 - **Wider wheel sizes**: wheel radius is limited to 30 to 60 mm, a
   conservative choice rather than a physical limit. Opening it to about 25 to
   100 mm would leave only the real checks: the wheel fits the print bed, the

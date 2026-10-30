@@ -13,11 +13,12 @@
   heading change in the straight episode, as the lateral drift already is, and
   count only forward progress in a turn, so a curve driven in reverse earns
   nothing. Both are about obeying the command; one short run measures them.
-- **A cost for each servo**: nothing in the score or the archive favours a
-  simpler body, and the best robots use 13 to 16 servos, the most expensive
-  to build. A small cost per servo, or the servo count back as an archive
-  axis, would give simple robots room. It changes what the project rewards, so
-  it waits for a decision.
+- **Servo count back as an archive axis**: nothing in the score or the
+  archive favours a simpler body, and the best robots use 13 to 16 servos, the
+  most expensive to build. With the servo count as an axis next to the number
+  of legs, simple robots get cells of their own instead of competing with the
+  big ones; the score inside each cell stays the same. It changes the archive
+  cells, so it needs a new run.
 - **Torso tilt**: only a full fall costs score today, so a robot that runs
   tilted, close to tipping over, loses nothing. A term for the torso's mean
   tilt, or distance multiplied by a stability factor as in some quadruped

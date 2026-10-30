@@ -7,6 +7,17 @@
   dragging itself in circles, still earns half the turn credit. Counting the
   worse turn instead rewards only robots that obey both commands. To be
   measured with a short run against the current rule.
+- **Hold the heading when told to go straight**: the straight episode lasts
+  8 s, so a robot that slowly curves loses almost nothing; over 30 s some of
+  today's best rovers end up going sideways or back to the start. Subtract the
+  heading change in the straight episode, as the lateral drift already is, and
+  count only forward progress in a turn, so a curve driven in reverse earns
+  nothing. Both are about obeying the command; one short run measures them.
+- **A cost for each servo**: nothing in the score or the archive favours a
+  simpler body, and the best robots use 13 to 16 servos, the most expensive
+  to build. A small cost per servo, or the servo count back as an archive
+  axis, would give simple robots room. It changes what the project rewards, so
+  it waits for a decision.
 - **Adversarial terrains**: instead of drawing rough and rubble terrains at
   random, keep the terrains and physics variants where the current elites fail
   most and score everyone on them too, the way Hillis evolved hard test cases

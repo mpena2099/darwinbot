@@ -2,6 +2,11 @@
 
 ## Next
 
+- **Score the worse of the two turns**: the `steer` task averages the left and
+  right turns, so a robot that only turns one way, such as a one-servo wheel
+  dragging itself in circles, still earns half the turn credit. Counting the
+  worse turn instead rewards only robots that obey both commands. To be
+  measured with a short run against the current rule.
 - **Adversarial terrains**: instead of drawing rough and rubble terrains at
   random, keep the terrains and physics variants where the current elites fail
   most and score everyone on them too, the way Hillis evolved hard test cases

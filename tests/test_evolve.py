@@ -190,6 +190,16 @@ def test_run_logs_novelty_and_uniform_selection(tmp_path):
     assert all("novelty" in h for h in archive.history)
 
 
+def test_cma_mae_emitter_runs_and_fills_cells(tmp_path):
+    archive = evolve.run(n_init=3, n_batches=2, batch_size=4, budget_init=4,
+                         budget_child=4, workers=1, episode_seconds=0.5,
+                         variants=0, out_dir=str(tmp_path), emitter="cma-mae")
+    assert archive.batch == 3 and archive.cells        # the random start plus 2 batches
+    assert all(len(e.morph) == evolve.morpho.MORPH_LENGTH for e in archive.cells.values())
+    with pytest.raises(ValueError):
+        evolve.run(emitter="nope", out_dir=str(tmp_path))
+
+
 def test_grid_archive_from_before_cvt_is_rejected():
     from ribs.archives import GridArchive
     state = dict(evolve.Archive(terrains="flat").__dict__)

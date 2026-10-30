@@ -20,6 +20,15 @@ their novelty (mean distance to the k nearest elites in descriptor space), or
 uniformly with parent_selection="uniform". The child starts its inner
 optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
+
+With emitter="cma-mae", half of every batch comes from a CMA-MAE emitter
+instead (Fontaine and Nikolaidis, 2023): a separable CMA-ES over the body
+genome learns which directions fill new cells or raise old ones, ranked
+against a soft copy of the archive whose thresholds rise slowly
+(MAE_LEARNING_RATE). The other half keeps the tree mutations and grafts, which
+add and remove whole limbs. An emitted body starts from the controller of the
+elite whose genome is nearest. The emitter lives only for the run: on resume
+it starts again from the archive.
 """
 
 import hashlib
@@ -35,10 +44,11 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from ribs.archives import CVTArchive
+from ribs.emitters import EvolutionStrategyEmitter
 
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
-from darwinbot.fitness import TASKS
+from darwinbot.fitness import TASKS, UNSTABLE_SCORE
 from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
@@ -49,6 +59,7 @@ CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
 PARENT_SELECTIONS = ("novelty", "uniform")
+EMITTERS = ("mutation", "cma-mae")
 
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
@@ -334,6 +345,10 @@ def _ignore_sigint():
 
 
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
+MAE_SHARE = 0.5         # emitter="cma-mae": share of each batch from the CMA-MAE emitter
+MAE_LEARNING_RATE = 0.01   # how fast the soft archive's thresholds follow the elites
+MAE_THRESHOLD_MIN = -1.0   # starting threshold of every cell; unbuildable bodies stay below
+MAE_SIGMA0 = 0.1        # genes are in [0, 1]
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
 
@@ -378,7 +393,10 @@ def run(
     parent_selection: str = "novelty",
     task: str = "forward",
     payload: float = 0.0,
+    emitter: str = "mutation",
 ) -> Archive:
+    if emitter not in EMITTERS:
+        raise ValueError(f"emitter must be one of {EMITTERS}")
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
     if task not in TASKS:
@@ -408,15 +426,70 @@ def run(
     def new_seed():
         return int(rng.integers(0, 2**31 - 1))
 
+    mae = {"archive": None, "emitter": None, "asked": {}}
+
+    def emitted(n: int) -> list:
+        """n bodies from the CMA-MAE emitter, each with the controller of the
+        elite nearest in genome space."""
+        if mae["emitter"] is None:
+            soft = CVTArchive(solution_dim=morpho.MORPH_LENGTH, centroids=_centroids(),
+                              ranges=[(0.0, 1.0)] * N_DESCRIPTORS,
+                              learning_rate=MAE_LEARNING_RATE,
+                              threshold_min=MAE_THRESHOLD_MIN, seed=new_seed())
+            elites = list(archive.cells.values())
+            soft.add(solution=[e.morph for e in elites],
+                     objective=[e.fitness for e in elites],
+                     measures=[normalise(e.behaviour) for e in elites])
+            x0 = max(elites, key=lambda e: e.fitness).morph
+            mae["archive"] = soft
+            mae["emitter"] = EvolutionStrategyEmitter(
+                soft, x0=x0, sigma0=MAE_SIGMA0, ranker="imp", es="sep_cma_es",
+                batch_size=n, seed=new_seed())
+        # No bounds for the ES: many genes sit at 0 or 1, and resampling until
+        # all 300 fall inside [0, 1] would almost never end. Clip instead; the
+        # emitter is told the clipped bodies, which are the ones evaluated.
+        bodies = np.clip(mae["emitter"].ask(), 0.0, 1.0)
+        cells = archive.cells.values()
+        genomes = np.array([e.morph for e in cells])
+        ctrls = [e for e in cells]
+        tasks = []
+        for body in bodies:
+            near = ctrls[int(np.argmin(((genomes - body) ** 2).sum(axis=1)))]
+            mae["asked"][body.tobytes()] = None
+            tasks.append((body, near.ctrl, terrains, budget_child, 0.12, new_seed(),
+                          archive.seconds, device, popsize, archive.variants,
+                          elite_id(near.morph, near.ctrl), archive.task, archive.payload))
+        return tasks
+
+    def tell_emitter(results: list) -> None:
+        """Hand the emitter its bodies' scores, in the order it asked for them."""
+        if not mae["asked"]:
+            return
+        for genes, _, fit, _, evals, behaviour, _ in results:
+            key = np.asarray(genes).tobytes()
+            if key in mae["asked"]:
+                measures = (normalise(behaviour) if evals and behaviour is not None
+                            else np.zeros(N_DESCRIPTORS))
+                mae["asked"][key] = (fit if evals else UNSTABLE_SCORE, measures)
+        order = list(mae["asked"])
+        sol = np.array([np.frombuffer(k, dtype=np.float64) for k in order])
+        obj = np.array([mae["asked"][k][0] for k in order])
+        meas = np.array([mae["asked"][k][1] for k in order])
+        info = mae["archive"].add(solution=sol, objective=obj, measures=meas)
+        mae["emitter"].tell(sol, obj, meas, info)
+        mae["asked"] = {}
+
     def make_batch() -> list:
         if not archive.cells:
             return [(morpho.random_morphology(rng), None, terrains,
                      budget_init, 0.25, new_seed(), archive.seconds,
                      device, popsize, archive.variants, None,
                      archive.task, archive.payload) for _ in range(n_init)]
-        parents = archive.sample_elites(batch_size, rng, parent_selection)
-        tasks = []
-        for i in range(batch_size):
+        n_emit = int(round(MAE_SHARE * batch_size)) if emitter == "cma-mae" else 0
+        n_mut = batch_size - n_emit
+        parents = archive.sample_elites(n_mut, rng, parent_selection)
+        tasks = emitted(n_emit) if n_emit else []
+        for i in range(n_mut):
             if rng.random() < random_frac:
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
@@ -424,7 +497,7 @@ def run(
                               archive.task, archive.payload))
             else:
                 if rng.random() < GRAFT_P:        # crossover with another elite
-                    donor = parents["solution"][(i + 1) % batch_size]
+                    donor = parents["solution"][(i + 1) % n_mut]
                     child = morpho.graft(parents["solution"][i], donor, rng)
                 else:
                     child = morpho.mutate(parents["solution"][i], rng)
@@ -454,8 +527,9 @@ def run(
             t0 = time.time()
             added = 0
             tasks = make_batch()
-            results = ([_work(t) for t in tasks] if pool is None
-                       else pool.imap_unordered(_work, tasks))
+            results = list([_work(t) for t in tasks] if pool is None
+                           else pool.imap_unordered(_work, tasks))
+            tell_emitter(results)
             for genes, ctrl, fit, scores, evals, behaviour, parent in results:
                 archive.evals += evals
                 if evals == 0:      # unbuildable: it would only occupy a cell

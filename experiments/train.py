@@ -60,6 +60,9 @@ def main():
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
+    p.add_argument("--emitter", choices=evolve.EMITTERS, default="mutation",
+                   help="where new bodies come from: tree mutations and grafts "
+                        "(default), or half of them from a CMA-MAE emitter")
     p.add_argument("--task", choices=TASKS, default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -88,7 +91,7 @@ def main():
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
-                  parent_selection=a.parent_selection)
+                  parent_selection=a.parent_selection, emitter=a.emitter)
 
     if not a.preset:
         report(evolve.run(terrains=a.terrains, out_dir=a.out, resume=a.resume,

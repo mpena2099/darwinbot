@@ -84,9 +84,11 @@
   tuned nodes. It replaces the genome, so it needs a new `BODY_MODEL`.
 - **Controllers as evolved programs** (an idea only): genetic programming
   could invent the controller's rules, such as reflexes driven by servo load,
-  instead of tuning the fixed CPG. The program would also have to run on the
-  ESP32, as a tree in the control file read by the firmware, and keeping it in
-  step with the Python is harder.
+  instead of tuning the fixed CPG. Language is not the obstacle (the ESP32 runs
+  MicroPython, and a small expression tree is cheap at 50 Hz); the work is
+  making the firmware run any evolved program safely (bounded size and time,
+  no division by zero or runaway values) and testing parity with the Python
+  for arbitrary programs rather than one formula.
 - **Wider wheel sizes**: wheel radius is limited to 30 to 60 mm, a
   conservative choice rather than a physical limit. Opening it to about 25 to
   100 mm would leave only the real checks: the wheel fits the print bed, the

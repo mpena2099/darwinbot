@@ -51,6 +51,14 @@
   experiment: it supplies only part of the offspring, the usual mutation stays,
   and a run with it is compared with a run without it.
 
+- **Your own environments without code**, in three steps: (1) tune the
+  existing terrains from the command line (`--terrains
+  "rough:height=0.06,slope:degrees=12,slippery:friction=0.1"`); (2) draw the
+  ground as a greyscale PNG (`heightmap:yard.png:height=0.05`, a MuJoCo
+  height field like `rough`), stored inside the archive so `replay` and
+  `validate` still work on another machine; (3) a complete worked example in
+  the Environments page for people who write their own terrain function.
+
 ## Later
 
 - **Organic parts on export**, an optional step for whoever prints a robot:

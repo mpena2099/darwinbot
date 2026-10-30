@@ -45,12 +45,13 @@ body within `MAX_NODES`, `MAX_SERVOS = 16` and depth 5: blocks that are
 inactive, unreachable, clash on a slot or break a limit are dropped. A joint or
 link with no child ends in an implicit foot.
 
-Mutation works on the decoded tree: nudge a continuous measure (one step in five
+Mutation works on the decoded tree, one to three operators per child: nudge a continuous measure (one step in five
 is a large jump; this includes the torso contour, link profile and bend, and foot shape), stretch or shrink a whole limb, change a module type (including
 into a passive kind), add a module or small subtree, remove a subtree, duplicate
 a subtree mirrored on the opposite slot, or copy it to another free slot. One
 child in five is instead a graft: a whole limb of a second elite is attached to
 a free slot of the parent, mirrored when the opposite torso side is free, the
-crossover Sims (1994) used for his creatures. The initial population mixes
+crossover Sims (1994) used for his creatures. One body in ten in every batch
+is drawn from scratch rather than bred (`random_frac` in `evolve.run`). The initial population mixes
 small random trees with seeds that reproduce mirrored leg pairs, with and
 without wheels.

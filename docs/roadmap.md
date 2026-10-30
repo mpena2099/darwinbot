@@ -2,6 +2,40 @@
 
 ## Next
 
+- **Score the worse of the two turns**: the `steer` task averages the left and
+  right turns, so a robot that only turns one way, such as a one-servo wheel
+  dragging itself in circles, still earns half the turn credit. Counting the
+  worse turn instead rewards only robots that obey both commands. To be
+  measured with a short run against the current rule.
+- **Hold the heading when told to go straight**: the straight episode lasts
+  8 s, so a robot that slowly curves loses almost nothing; over 30 s some of
+  today's best rovers end up going sideways or back to the start. Subtract the
+  heading change in the straight episode, as the lateral drift already is, and
+  count only forward progress in a turn, so a curve driven in reverse earns
+  nothing. Both are about obeying the command; one short run measures them.
+- **Servo count back as an archive axis**: nothing in the score or the
+  archive favours a simpler body, and the best robots use 13 to 16 servos, the
+  most expensive to build. With the servo count as an axis next to the number
+  of legs, simple robots get cells of their own instead of competing with the
+  big ones; the score inside each cell stays the same. It changes the archive
+  cells, so it needs a new run.
+- **Torso tilt**: only a full fall costs score today, so a robot that runs
+  tilted, close to tipping over, loses nothing. A term for the torso's mean
+  tilt, or distance multiplied by a stability factor as in some quadruped
+  studies, would favour bodies that carry themselves upright.
+- **Feet that slip**: a foot sliding while it bears weight leans on the
+  simulator's friction model and tends to fail on a real floor. Legged robot
+  training commonly subtracts the horizontal speed of feet in contact.
+- **A minimum distance before a fall**: falling forward is a classic exploit
+  (Karl Sims' creatures learned to topple instead of walk). None of today's
+  top robots fall, but scoring zero for a fall before a minimum distance
+  closes the door cheaply.
+- **Servo bodies touching the ground**: some robots lean on a knee, the servo
+  housing, instead of the foot. That is not wrong in itself (gorillas walk on
+  their knuckles), so it should not be banned; but the housing was not made to
+  drag on the floor and its simulated friction is a guess. Give servo housings
+  a measured friction and a wear cost, or let the export add a printed cap
+  where a robot uses them, so the choice stays evolution's and stays honest.
 - **Adversarial terrains**: instead of drawing rough and rubble terrains at
   random, keep the terrains and physics variants where the current elites fail
   most and score everyone on them too, the way Hillis evolved hard test cases
@@ -16,6 +50,14 @@
   pulls against the idea of evolution finding bodies on its own, so this is an
   experiment: it supplies only part of the offspring, the usual mutation stays,
   and a run with it is compared with a run without it.
+
+- **Your own environments without code**, in three steps: (1) tune the
+  existing terrains from the command line (`--terrains
+  "rough:height=0.06,slope:degrees=12,slippery:friction=0.1"`); (2) draw the
+  ground as a greyscale PNG (`heightmap:yard.png:height=0.05`, a MuJoCo
+  height field like `rough`), stored inside the archive so `replay` and
+  `validate` still work on another machine; (3) a complete worked example in
+  the Environments page for people who write their own terrain function.
 
 ## Later
 
@@ -34,6 +76,19 @@
   limbs five modules deep, enough for a legless "lizard" with a waving tail but
   not for a snake. Lateral undulation also needs the direction-dependent
   friction above; sidewinding and concertina motion work without it.
+- **Growth rules for the body**: instead of describing a body part by part,
+  the genome would hold a rule that grows it ("a segment sprouts a leg on each
+  side and another segment, five times"), as L-systems and Karl Sims'
+  recursive graphs do and as genes do in animals. Symmetry and repetition come
+  for free, so a centipede or a snake is one short rule rather than twenty
+  tuned nodes. It replaces the genome, so it needs a new `BODY_MODEL`.
+- **Controllers as evolved programs** (an idea only): genetic programming
+  could invent the controller's rules, such as reflexes driven by servo load,
+  instead of tuning the fixed CPG. Language is not the obstacle (the ESP32 runs
+  MicroPython, and a small expression tree is cheap at 50 Hz); the work is
+  making the firmware run any evolved program safely (bounded size and time,
+  no division by zero or runaway values) and testing parity with the Python
+  for arbitrary programs rather than one formula.
 - **Wider wheel sizes**: wheel radius is limited to 30 to 60 mm, a
   conservative choice rather than a physical limit. Opening it to about 25 to
   100 mm would leave only the real checks: the wheel fits the print bed, the

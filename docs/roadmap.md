@@ -2,6 +2,22 @@
 
 ## Next
 
+- **A search that learns where to mutate** (CMA-ME / CMA-MAE): bodies come
+  from random mutations today. In these MAP-Elites variants a CMA-ES learns
+  which directions in the genome fill new cells or improve old ones; the body
+  genome is already a fixed-size continuous vector, the case they are made
+  for, and pyribs ships them. Measured against the current search with a short
+  run.
+- **Cheap evaluation first** (multi-fidelity): every child pays the full
+  evaluation (four terrains, three commands, two physics variants) even when
+  it is hopeless. A quick screen first, such as straight on flat ground with a
+  small CMA-ES budget, would drop the worst before the full test and could
+  make training several times cheaper.
+- **Protecting new bodies**: a new body nearly always loses to the old
+  elite of its cell because its controller is still poorly tuned, not because
+  the body is worse (Cheney et al., 2018). A grace period, or a larger budget
+  after a big body mutation, lets an innovation live long enough to show what
+  it can do.
 - **Score the worse of the two turns**: the `steer` task averages the left and
   right turns, so a robot that only turns one way, such as a one-servo wheel
   dragging itself in circles, still earns half the turn credit. Counting the
@@ -61,6 +77,13 @@
 
 ## Later
 
+- **A surrogate model**: a small model trained on the thousands of bodies the
+  archive has already scored would predict a new body's score before it is
+  simulated, so only promising ones are; it complements cheap evaluation
+  first.
+- **Learned archive axes** (AURORA): today's axes (contact time, height,
+  legs, cost of transport) are chosen by hand. Axes learned from recorded
+  behaviour could separate gait styles nobody listed. More experimental.
 - **Organic parts on export**, an optional step for whoever prints a robot:
   topology optimisation of every printed part after evolution, under the servo stall torque and the loads seen in
   simulation, removing material where nothing is carried. The parts come out

@@ -18,6 +18,23 @@
   to build. A small cost per servo, or the servo count back as an archive
   axis, would give simple robots room. It changes what the project rewards, so
   it waits for a decision.
+- **Torso tilt**: only a full fall costs score today, so a robot that runs
+  tilted, close to tipping over, loses nothing. A term for the torso's mean
+  tilt, or distance multiplied by a stability factor as in some quadruped
+  studies, would favour bodies that carry themselves upright.
+- **Feet that slip**: a foot sliding while it bears weight leans on the
+  simulator's friction model and tends to fail on a real floor. Legged robot
+  training commonly subtracts the horizontal speed of feet in contact.
+- **A minimum distance before a fall**: falling forward is a classic exploit
+  (Karl Sims' creatures learned to topple instead of walk). None of today's
+  top robots fall, but scoring zero for a fall before a minimum distance
+  closes the door cheaply.
+- **Servo bodies touching the ground**: some robots lean on a knee, the servo
+  housing, instead of the foot. That is not wrong in itself (gorillas walk on
+  their knuckles), so it should not be banned; but the housing was not made to
+  drag on the floor and its simulated friction is a guess. Give servo housings
+  a measured friction and a wear cost, or let the export add a printed cap
+  where a robot uses them, so the choice stays evolution's and stays honest.
 - **Adversarial terrains**: instead of drawing rough and rubble terrains at
   random, keep the terrains and physics variants where the current elites fail
   most and score everyone on them too, the way Hillis evolved hard test cases

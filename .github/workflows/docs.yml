@@ -1,12 +1,10 @@
-# Publishes the MkDocs site to GitHub Pages. This only works once the
-# repository is public (and Pages is set to "GitHub Actions" in the settings).
+# Publishes the MkDocs site to GitHub Pages (Pages set to "GitHub Actions" in
+# the repository settings).
 name: docs
 
 on:
-  # Manual only while the repository is private (GitHub Pages and Actions
-  # minutes need it public). When it goes public, restore:
-  #   push:
-  #     branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

@@ -21,6 +21,20 @@ PLA. The bill of materials counts everything from the tree.
 one image (`exports/<type>/parts.png`), with its bounding box in mm, to check
 the parts before slicing.
 
+## Hollowed parts (optional)
+
+`experiments/export.py --type <type> --organic` also writes `parts_organic/`:
+the links and elbow plates hollowed by 2D topology optimisation
+(`darwinbot/organic.py`), with the horn end clamped and the stall load at the
+far end. Evolution chose each part's size and interfaces; the optimisation only
+removes material from the middle, keeping a rim along every edge and a solid
+boss at both ends, so holes and outline are unchanged. Parts typically keep 50
+to 90% of their material, and each takes about 10 s.
+
+Two cautions: the load case is in-plane only (out-of-plane bending is carried by
+the rim, not optimised), and the hollowed robot is lighter than the one
+evolution scored. Nothing here has been printed yet.
+
 Servo dimensions in `darwinbot/parts.py` (horn and mounting holes, body size)
 are placeholders marked "measure a real STS3215 and update": check them
 against a real servo before printing.

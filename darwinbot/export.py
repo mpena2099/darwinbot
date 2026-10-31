@@ -362,6 +362,28 @@ def _write_assembly(morph, ctl, layout, out_dir):
         f.write("\n".join(lines))
 
 
+def _write_organic(morph, out_dir) -> dict:
+    """Hollowed links and elbow plates in parts_organic/ (organic.hollow);
+    returns {file name: volume ratio}."""
+    from darwinbot import organic, parts
+    d = os.path.join(out_dir, "parts_organic")
+    os.makedirs(d, exist_ok=True)
+    links, _, _, elbows = part_counts(morph)[:4]
+    ratios = {}
+    for length, width, thick, profile, bend in sorted(links):
+        name = f"{link_name(profile, bend, length, width, thick)}.stl"
+        tip = parts._link_path_mm(length, profile, bend)[-1]
+        part, ratios[name] = organic.hollow(parts.link(length, width, thick, profile, bend),
+                                            (0.0, 0.0), tip, parts._boss_d(width) / 2 + 1)
+        parts.export_stl(part, os.path.join(d, name))
+    for dist, angle, width, thick in sorted(elbows):
+        name = f"elbow_{dist}mm_{angle}deg_{width}x{thick}.stl"
+        part, ratios[name] = organic.hollow(parts.elbow_plate(dist, angle, width, thick),
+                                            (0.0, 0.0), (0.0, dist), parts._boss_d(width) / 2 + 1)
+        parts.export_stl(part, os.path.join(d, name))
+    return ratios
+
+
 def _write_stls(morph, out_dir):
     from darwinbot import parts
     d = os.path.join(out_dir, "parts")
@@ -407,7 +429,7 @@ def _write_stls(morph, out_dir):
         out("spike.stl", parts.spike())
 
 
-def export_robot(elite, out_dir, name, stl=True, payload=0.0) -> dict:
+def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False) -> dict:
     """Write the build folder for elite into out_dir; returns a small summary."""
     morph = morpho.decode(elite.morph)
     os.makedirs(out_dir, exist_ok=True)
@@ -426,4 +448,7 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0) -> dict:
     _write_assembly(morph, ctl, layout, out_dir)
     if stl:
         _write_stls(morph, out_dir)
-    return {"servos": morph.n_servos, "printed_parts": printed_parts(rows)}
+    info = {"servos": morph.n_servos, "printed_parts": printed_parts(rows)}
+    if stl and organic:
+        info["organic"] = _write_organic(morph, out_dir)
+    return info

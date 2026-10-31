@@ -2,6 +2,13 @@
 
 ## Next
 
+- **Assemble every export virtually, then build one**: no robot has been
+  assembled yet, even on screen. A script that places every exported part and
+  a servo model in the spawn pose would check that holes and screws line up,
+  that no two printed parts intersect, and that the printed parts match the
+  shapes the simulator used, and write the assembled robot as one 3D file to
+  inspect. In parallel, measure a real STS3215, correct `parts.py`, and print
+  one bracket, link and horn adapter to test the fit before a whole robot.
 - **A search that learns where to mutate** (CMA-ME / CMA-MAE): bodies come
   from random mutations today. In these MAP-Elites variants a CMA-ES learns
   which directions in the genome fill new cells or improve old ones; the body

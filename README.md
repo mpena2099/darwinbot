@@ -1,6 +1,6 @@
 # DarwinBot
 
-**Evolving robots you can actually build.**
+**Evolving robots designed to be built.**
 
 [![tests](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml/badge.svg)](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -17,14 +17,21 @@ behaviour and cost, while a central pattern generator with load feedback
 can be exported as printable parts, a bill of materials and a control file for an
 ESP32.
 
+> **Status:** the robots are evolved and validated in simulation only. No robot
+> has been printed or assembled yet, the parts have never been fitted together,
+> and the servo measures they are built around are placeholders until a real
+> STS3215 is measured. Treat an export as a design to check, not a kit known to
+> work. Building the first one is the next milestone
+> ([roadmap](https://mpena2099.github.io/darwinbot/roadmap/)).
+
 ## What evolution came up with
 
 | Body plans found in one run | Printable parts of the best robot |
 |---|---|
 | ![Evolved body plans](docs/img/robots.png) | ![Printable parts of the best robot](docs/img/parts.png) |
-| Wheels, legs and hybrids, each the best of its region of the map. | Every part fits a 220 mm print bed and survives the servo's stall torque. |
+| Wheels, legs and hybrids, each the best of its region of the map. | Every part fits a 220 mm print bed, and links pass a simple bending check at the servo's stall torque. |
 
-Trained on four environments: flat floor, bumps, stairs and rubble
+Trained on four environments: flat floor, bumps, low steps and rubble
 ([all environments](https://mpena2099.github.io/darwinbot/environments/)).
 
 [Full results →](https://mpena2099.github.io/darwinbot/results/) (numbers, the

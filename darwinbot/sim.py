@@ -124,12 +124,29 @@ def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
     return duty, height, share
 
 
+# A part sits a little inside the one it is mounted on (the servo in its
+# bracket): 17 to 26 mm across every archive so far. Deeper than this, the
+# part passes through its parent, as a wheel bolted to the torso edge did
+# (45 mm), which MuJoCo hides because it never collides a body with its parent.
+MOUNT_OVERLAP_MAX = 0.029    # m
+
+
 def is_buildable(model: mujoco.MjModel) -> bool:
-    """True when no two robot geoms touch at the spawn pose."""
+    """True when no two robot geoms touch at the spawn pose, and no part sinks
+    into the part it is mounted on deeper than MOUNT_OVERLAP_MAX."""
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     robot = model.geom_contype == 2
-    return not any(robot[c.geom1] and robot[c.geom2] for c in data.contact)
+    if any(robot[c.geom1] and robot[c.geom2] for c in data.contact):
+        return False
+    flags = model.opt.disableflags
+    model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    try:
+        mujoco.mj_forward(model, data)
+        return not any(robot[c.geom1] and robot[c.geom2] and c.dist < -MOUNT_OVERLAP_MAX
+                       for c in data.contact)
+    finally:
+        model.opt.disableflags = flags
 
 
 @njit(cache=True)

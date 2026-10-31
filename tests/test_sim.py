@@ -587,6 +587,15 @@ def test_spinning_on_the_spot_does_not_beat_walking():
     assert fitness.task_score(short, "steer") < fitness.task_score(far, "steer")
 
 
+def test_part_sunk_into_its_parent_is_not_buildable():
+    """A wheel bolted on the torso edge sat inside the torso: MuJoCo never
+    collides a body with its parent, so only the mount-depth check sees it."""
+    inside = mo.Morphology(0.36, 0.19, {0: mo.Node(0, "core"),
+                                        1: mo.Node(1, "wheel", 0, 1, wheel_rad=0.048)})
+    assert not Episode(inside, te.flat(), seconds=0.1).buildable
+    assert Episode(mo.template(2), te.flat(), seconds=0.1).buildable
+
+
 def test_steering_command_turns_a_robot_both_ways():
     """A wheeled body whose wheels answer the command turns each way."""
     morph = mo.template(2, wheels=True)

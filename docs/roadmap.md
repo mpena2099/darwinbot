@@ -2,6 +2,13 @@
 
 ## Next
 
+- **Assemble every export virtually, then build one**: no robot has been
+  assembled yet, even on screen. A script that places every exported part and
+  a servo model in the spawn pose would check that holes and screws line up,
+  that no two printed parts intersect, and that the printed parts match the
+  shapes the simulator used, and write the assembled robot as one 3D file to
+  inspect. In parallel, measure a real STS3215, correct `parts.py`, and print
+  one bracket, link and horn adapter to test the fit before a whole robot.
 - **A search that learns where to mutate** (CMA-ME / CMA-MAE): bodies come
   from random mutations today. In these MAP-Elites variants a CMA-ES learns
   which directions in the genome fill new cells or improve old ones; the body
@@ -93,10 +100,11 @@
 - **Learned archive axes** (AURORA): today's axes (contact time, height,
   legs, cost of transport) are chosen by hand. Axes learned from recorded
   behaviour could separate gait styles nobody listed. More experimental.
-- **Organic parts on export**, an optional step for whoever prints a robot:
-  topology optimisation of every printed part after evolution, under the servo stall torque and the loads seen in
-  simulation, removing material where nothing is carried. The parts come out
-  bone-like and lighter while the evolved body and its interfaces stay the same.
+- **Organic parts on export, beyond flat plates**: `export.py --organic`
+  hollows links and elbow plates with 2D topology optimisation. Still to do:
+  the torso tiles (many mounts, no single clamp), a 3D optimisation for
+  out-of-plane loads, and scoring the lighter robot in simulation before
+  trusting it.
 - **Elastic tendons across joints**: printed TPU tendons that span one or two
   joints and store energy, as a kangaroo bounces on its tendons and a
   hamstring moves hip and knee together (MuJoCo simulates tendons natively).

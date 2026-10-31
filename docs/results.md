@@ -1,56 +1,84 @@
 # Results
 
-The showcase run uses the default `steer` task on the default `terrain` set
-(flat, rough, steps and rubble), with two randomised physics variants per
-evaluation (`--preset steer --batches 30`). It ran on Kaggle CPU sessions
-(4 cores each), about 40 hours in four chained sessions, and made 124,874
-evaluations, each one three episodes (straight, left, right) on every terrain.
-It filled 79 of the ~500 cells, every one of them buildable:
+The showcase archive uses the default `steer` task on the default `terrain`
+set (flat, rough, steps and rubble), with two randomised physics variants per
+evaluation (`--preset steer --batches 30`). Two runs of 30 batches with
+different seeds trained side by side as islands on Kaggle and were merged
+(`experiments/merge_archives.py`), each cell keeping the better elite:
+
+| | CPU island | GPU island |
+|---|---|---|
+| Hardware | 4-core CPU sessions | one T4, MuJoCo Warp (`--device warp`, branch `warp`) |
+| Training time | 37.1 h, four chained sessions | 15.4 h |
+| Evaluations | 142,318 | 135,824 |
+| Evaluations per hour | 3,800 | 8,800 |
+| Cells | 83 | 76 |
+| Best fitness | 0.60 | 0.50 |
+| QD-score | 418 | 383 |
+
+The GPU trains 2.3 times faster for the same quality; the gap in best fitness
+is within what a different seed gives. Before the merge, ten elites (2 from the
+CPU island, 8 from the GPU one, among them its best at 0.58) were removed
+because a part sat deeper than 29 mm inside the part it is mounted on, such as
+a wheel bolted inside the torso edge. MuJoCo never collides a body with its
+parent, so the simulator let them through; `is_buildable` now checks it.
+
+The merged archive has 278,142 evaluations, each one three episodes (straight,
+left, right) on every terrain, and fills 107 of the ~500 cells:
 
 | Gait | Types | Best fitness |
 |------|-------|--------------|
-| `roll` | 26 | 0.43 |
-| `trot` | 28 | 0.29 |
-| `walk` | 12 | 0.17 |
-| `crawl` | 6 | 0.08 |
-| `belly` | 7 | 0.02 |
+| `roll` | 19 | 0.60 |
+| `trot` | 39 | 0.19 |
+| `walk` | 22 | 0.15 |
+| `belly` | 18 | 0.07 |
+| `crawl` | 9 | 0.07 |
 
-47 types score above 0.05, which means they move and also turn on command.
-Passive modules are common: 32 elites use a TPU spring, 13 a caster, 12 a
-tail, 3 a spike and 1 a skid, and 5 have a second torso segment. Link lengths
-span the whole 40 to 200 mm the genome allows.
+46 types score above 0.05, which means they move and also turn on command.
+Passive modules are common: 13 elites use a TPU spring, 8 a tail, 8 a spike, 5
+a skid and 1 a caster, and 9 have a second torso segment. Link lengths span the
+whole 40 to 200 mm the genome allows.
 
-The best roller (`16servos-low-roll-389`), the best trotter (`14servos-mid-trot`)
-and a five-servo trotter (`5servos-low-trot-364`) all pass `validate.py`, with
-mean losses of 0%, 6% and 13% under randomised physics (the limit is 30%).
-
-At batch 25 a robot that spun on the spot on one wheel scored 1.99, because
-the turn credit had no ceiling. The turn credit is now counted up to 90
-degrees (`TURN_CAP` in `fitness.py`), and `experiments/rescore_archive.py`
-rescored every elite under the new rule, keeping cells and lineage; the dotted
-line in the progress plot marks that point.
+The four robots below (the best roller `16servos-low-roll-389`, a two-wheeler
+`8servos-low-roll`, the taller wheel-and-leg `13servos-mid-roll` and the best
+legged robot `12servos-low-walk-344`) all pass `validate.py`, with mean losses
+of -1%, 4%, 0% and -4% under randomised physics (the limit is 30%). The
+progress plot follows the CPU island.
 
 ## Steering versus forward only
 
-Turning on command costs straight-line speed. A control run with the same
-terrains, variants and number of batches, trained on the `forward` task
-(`--preset forward`), was scored next to the showcase run under the forward
-rule:
+A control run with the same terrains and variants, 30 batches on the `forward`
+task (`--preset forward`, one CPU run), was compared with the showcase archive
+scored under the forward rule:
 
 | | `steer` (showcase) | `forward` (control) |
 |---|---|---|
-| Evaluations | 124,874 | 127,938 |
-| Cells | 79 | 84 |
-| Best roller | 0.64 | 0.81 |
-| Best trotter | 0.54 | 0.55 |
-| Best walker | 0.31 | 0.46 |
-| Best belly crawler | 0.06 | 0.26 |
+| Evaluations | 278,142 (two islands) | 127,938 |
+| Cells | 107 | 78 |
+| Best roller | 0.93 | 0.81 |
+| Best trotter | 0.31 | 0.53 |
+| Best walker | 0.26 | 0.34 |
+| Best belly crawler | 0.19 | 0.26 |
 
-Trotters barely pay for steering, while rollers, walkers and belly crawlers
-lose a fifth to three quarters of their forward speed. The control robots
-cannot turn, and a robot you build needs to. Use `--preset forward` when
-turning on command does not matter; it is also about three times cheaper per
-evaluation.
+The showcase had twice the evaluations, and its rollers still went further.
+Its legged robots did not: trotters and walkers trained to turn lose a quarter
+to two fifths of their forward speed. The control robots cannot turn, and a
+robot you build needs to. Use `--preset forward` when turning on command does
+not matter; it is also about three times cheaper per evaluation.
+
+## How the environment shapes the body
+
+Two short runs (9 batches, about 30,000 evaluations each, same rule and
+variants) differ only in their terrains: one trained on flat ground alone,
+the other on the four terrains. Mean `steer` score of each run's top 10:
+
+| Trained on | flat | rough | steps | rubble | Servos | Wheels |
+|---|---|---|---|---|---|---|
+| flat only | 0.50 | 0.26 | 0.02 | 0.31 | 10.3 | 2.9 |
+| four terrains | 0.57 | 0.48 | 0.25 | 0.46 | 13.8 | 3.1 |
+
+The terrain-trained robots are better even on flat ground. Robots that never
+saw the step stop at it; those trained on it carry more servos and climb it.
 
 ## Earlier forward-only runs
 
@@ -89,14 +117,15 @@ list, not in any single robot.
 
 ## Known limitations
 
-- Wheels still lead on speed: the best roller scores about 1.5 times the best
+- Wheels still lead on speed: the best roller scores about 3 times the best
   trotter, and the top of the archive is mostly `roll`.
 - The firmware is half done: `firmware/core/` runs the controller math in portable C++ and a test proves it matches the Python controller tick by tick (`tests/test_firmware_parity.py`). The ESP32 layer (servo bus, load reading, calibration) waits for real hardware.
 - Randomised training (`--variants`) is CPU only.
 - The only feedback is the servo load. The controller turns when commanded but
   never sees the world, so tasks that need reacting (finding a doorway,
   avoiding a wall) are out of scope.
-- A body whose parts overlap at spawn, whose parts exceed the 220 mm print bed
+- A body whose parts overlap at spawn or sink more than 29 mm into the part
+  they are mounted on, whose parts exceed the 220 mm print bed
   or whose links bend beyond 25 MPa under the servo stall torque is not
   buildable and scores `UNSTABLE_SCORE` without being simulated (common among
   random trees).

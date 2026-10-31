@@ -11,9 +11,10 @@ same for every task, and so are the behaviour descriptors.
   with one gait and one side stronger. Every evaluation runs three episodes,
   straight, left and right: `score = 0.5 * straight + 0.25 * (left + right)`,
   where `straight` is the forward score and a turn scores `0.2 * yaw` towards the
-  side asked for (`yaw` in radians, counted up to 90 degrees, so spinning on the
-  spot for several turns earns no more than obeying the command) minus the same
-  energy and fall terms. Three
+  side asked for (`yaw` in radians, counted up to 90 degrees), never more than
+  the distance the torso travelled in that episode, minus the same energy and
+  fall terms. The robot has to walk a curve: spinning on the spot earns
+  nothing. Three
   episodes make an evaluation three times as slow. On the robot the command can
   come from a remote control, and later from sensors.
 - `forward`: walk straight only, the score above.

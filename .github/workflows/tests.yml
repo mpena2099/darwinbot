@@ -1,13 +1,11 @@
 name: tests
 
 on:
-  # Manual only while the repository is private (Actions minutes are limited
-  # there). When it goes public, restore the push and pull_request triggers:
-  #   push:
-  #     branches: [main]
-  #     paths-ignore: ["**.md", "docs/**", "LICENSE", "CITATION.cff"]
-  #   pull_request:
-  #     paths-ignore: ["**.md", "docs/**", "LICENSE", "CITATION.cff"]
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE", "CITATION.cff"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE", "CITATION.cff"]
   workflow_dispatch:
 
 # a newer push to the same branch cancels the run still in progress

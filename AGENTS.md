@@ -22,9 +22,10 @@ python experiments/train.py --parent-selection uniform   # default: novelty
 python experiments/replay.py --list           # robot types in the archive, with duty, height, servos and cost of transport (cot)
 python experiments/replay.py --type 12servos-high-trot --speed 0.5
 python experiments/validate.py --type <type>  # PASS if it loses < 30% under varied physics
-python experiments/export.py --type <type>    # exports/<type>/
+python experiments/export.py --type <type>    # exports/<type>/; --organic adds hollowed links and elbows
 python experiments/plot_archive.py
 python tools/terrain_sheet.py --archive <archive.pkl>    # docs/img/terrains.png
+python tools/make_readme_figures.py --archive <archive.pkl> --types a,b,c,d   # README figures; --types pins the robots shown
 python tools/parts_sheet.py exports/<type>    # every printed part on one image
 python experiments/merge_archives.py a.pkl b.pkl --out merged.pkl   # islands: best elite per cell
 python tools/kaggle/islands.py --user <you> --code-dataset <you>/darwinbot-code   # islands on Kaggle

@@ -86,21 +86,32 @@ SHOWCASE = (
 )
 MIN_SHOWCASE_SERVOS = 3      # a one-servo brick is a valid elite but a dull picture
 SHOWCASE_NEAR_BEST = 0.9     # within this share of a slot's best, show the simplest body
+SHOWCASE_MIN_SHARE = 0.35    # a slot whose best is under this share of the top robot stays empty
 
 
-def pick_distinct(items, n=6):
+def pick_distinct(items, n=6, types=None):
     """
+    With `types` (type names, as `replay.py --list` prints them), exactly those
+    robots, in that order. Otherwise:
     One robot per SHOWCASE slot (each robot used once, bodies with fewer than
     MIN_SHOWCASE_SERVOS skipped): among the robots of a slot that reach
     SHOWCASE_NEAR_BEST of its best fitness, the one with the fewest parts, so a
     tidy body is shown instead of a sprawling one that is barely faster. Empty
     slots are filled with the next best robots.
     """
+    if types:
+        by_name = dict(items)
+        missing = [t for t in types if t not in by_name]
+        if missing:
+            raise SystemExit(f"not in the archive: {missing}")
+        return [(t, by_name[t]) for t in types[:n]]
     decoded = [(cell, e, morpho.decode(e.morph)) for cell, e in items]
+    floor = SHOWCASE_MIN_SHARE * items[0][1].fitness
     pool = [d for d in decoded if d[2].n_servos >= MIN_SHOWCASE_SERVOS] or decoded
     chosen = []
     for _, wanted in SHOWCASE:
-        fits = [d for d in pool if d not in chosen and wanted(d[2], d[0])]
+        fits = [d for d in pool if d not in chosen and wanted(d[2], d[0])
+                and d[1].fitness >= floor]
         if fits:                               # items are sorted: first = best
             near = [d for d in fits if d[1].fitness >= SHOWCASE_NEAR_BEST * fits[0][1].fitness]
             chosen.append(min(near, key=lambda d: len(d[2].nodes)))
@@ -143,8 +154,8 @@ def fmt_size(path):
     return f"{os.path.getsize(path) / 1024:.0f} KB"
 
 
-def make_robots(items, out, seed):
-    chosen = pick_distinct(items)
+def make_robots(items, out, seed, types=None):
+    chosen = pick_distinct(items, types=types)
     flat = get_terrains("flat")[0]
     w, h = 400, 300
     tiles = []
@@ -196,12 +207,12 @@ def _record(cell, elite, seconds, fps, size):
     return frames
 
 
-def make_gait(items, out, seed, seconds=4.0, fps=15, size=(360, 240)):
+def make_gait(items, out, seed, types=None, seconds=4.0, fps=15, size=(360, 240)):
     """2 x 2 grid of four different robots moving at the same time: the
     first SHOWCASE picks (best roller, then the best legged gaits)."""
     from PIL import Image
 
-    chosen = pick_distinct(items, n=4)
+    chosen = pick_distinct(items, n=4, types=types)
     clips = [_record(c, e, seconds, fps, size) for c, e in chosen]
     cols = 2
     rows = -(-len(clips) // cols)
@@ -364,7 +375,10 @@ def main():
     p.add_argument("--only", default=None,
                    help=f"comma list of figures to make: {', '.join(FIGURES)}")
     p.add_argument("--seed", type=int, default=0, help="tie-break among equal fitness")
+    p.add_argument("--types", default=None,
+                   help="comma list of robot types to show, in order, instead of the automatic pick")
     a = p.parse_args()
+    types = [t.strip() for t in a.types.split(",") if t.strip()] if a.types else None
 
     which = list(FIGURES) if a.only is None else [s.strip() for s in a.only.split(",") if s.strip()]
     unknown = [s for s in which if s not in FIGURES]
@@ -378,8 +392,8 @@ def main():
     items = ranked(archive, a.seed)
 
     written, t0 = [], time.time()
-    steps = {"robots": lambda: make_robots(items, a.out, a.seed),
-             "gait": lambda: make_gait(items, a.out, a.seed),
+    steps = {"robots": lambda: make_robots(items, a.out, a.seed, types),
+             "gait": lambda: make_gait(items, a.out, a.seed, types),
              "parts": lambda: make_parts(items, a.out, a.seed)}
     for name in which:
         if name in steps:

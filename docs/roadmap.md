@@ -8,6 +8,10 @@
   genome is already a fixed-size continuous vector, the case they are made
   for, and pyribs ships them. Measured against the current search with a short
   run.
+  A first try perturbed all 300 genes at once and most emitted bodies came out
+  unbuildable, wasting much of each batch; the emitter has to move only the
+  genes of modules that exist, with smaller steps, or repair bodies before
+  they are scored.
 - **Cheap evaluation first** (multi-fidelity): every child pays the full
   evaluation (four terrains, three commands, two physics variants) even when
   it is hopeless. A quick screen first, such as straight on flat ground with a
@@ -23,12 +27,17 @@
   dragging itself in circles, still earns half the turn credit. Counting the
   worse turn instead rewards only robots that obey both commands. To be
   measured with a short run against the current rule.
+  A first single-seed short run was mixed: straighter robots and more legged
+  gaits, but the top ten turned both ways less well than under the current
+  rule. Needs three seeds before a decision.
 - **Hold the heading when told to go straight**: the straight episode lasts
   8 s, so a robot that slowly curves loses almost nothing; over 30 s some of
   today's best rovers end up going sideways or back to the start. Subtract the
   heading change in the straight episode, as the lateral drift already is, and
   count only forward progress in a turn, so a curve driven in reverse earns
   nothing. Both are about obeying the command; one short run measures them.
+  A first single-seed short run went further in 30 s and filled more cells,
+  but kept far fewer robots that move. Needs three seeds before a decision.
 - **Servo count back as an archive axis**: nothing in the score or the
   archive favours a simpler body, and the best robots use 13 to 16 servos, the
   most expensive to build. With the servo count as an axis next to the number

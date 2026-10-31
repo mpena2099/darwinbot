@@ -3,7 +3,7 @@
 ![Every environment, with the same robot at the spawn for scale; the default training set is highlighted](img/terrains.png)
 
 Unless a run says otherwise, the robots shown in this documentation were
-trained on the default set: flat floor, bumps, stairs and rubble (`terrain`).
+trained on the default set: flat floor, bumps, low steps and rubble (`terrain`).
 
 Every robot is scored on each environment of the run, and its fitness mixes the
 average with the worst one (`0.7 * mean + 0.3 * min`), so the search favours
@@ -24,7 +24,7 @@ staircase); more make a generalist. The choice is saved in the archive, so
 | `flat` | flat floor |
 | `rough` | smoothed random bumps up to 4 cm, flat near the spawn |
 | `rubble` | 40 scattered rocks 3 to 7 cm high, taller than many wheels can climb |
-| `steps` | staircase of six 3 cm steps from x = 0.6 m |
+| `steps` | six low steps, 3 cm high and 50 cm deep, the first at x = 0.6 m (see below) |
 | `ledges` | staircase of four 6 cm steps, too tall to roll up |
 | `step` | one 3 cm step, 0.50 m ahead of the spawn, 1 m deep |
 | `slope` | 8 degree ramp up from x = 0.5 m |
@@ -32,6 +32,15 @@ staircase); more make a generalist. The choice is saved in the archive, so
 | `downhill` | spawn on a plateau, then a 10 degree slope down to the floor |
 | `slippery` | floor with friction 0.2, like ice |
 | `soft` | yielding floor like sand: feet sink 1 to 2 cm and wheels feel rolling drag |
+
+**How hard `steps` is.** It is not a house staircase: each step is 3 cm high
+(a house step is 17 to 18 cm, taller than most of these robots) and 50 cm deep.
+In an 8 s episode a good robot covers 1.5 to 2.3 m, so it meets the first two to
+four steps, at x = 0.6, 1.1, 1.6 and 2.1 m. A wheel climbs an edge up to about
+its own radius, and wheels here are 30 to 60 mm, so a low robot on wheels rolls
+up a 3 cm step; a low body without wheels can push its torso over the edge like
+a sled. Robots trained only on flat ground still mostly stall there. `ledges`
+doubles the height to 6 cm, too tall to roll up.
 
 Ready sets:
 

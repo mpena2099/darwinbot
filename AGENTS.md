@@ -61,6 +61,7 @@ The plan is in `docs/roadmap.md` (Next, Later, and the ROS 2 extension). Notes f
 
 ## Conventions and pitfalls
 
+- The score and the terrains say what a robot must achieve, never how it should look or move: no rewards for symmetry or for familiar shapes. Fix a score rule that can be cheated so it measures its intent; fix the simulator when it allows what the real world does not. Accept a scoring change only after a short run against the current rule shows it does not shrink the archive's variety (cells, body types). Before changing a rule or an archive axis, check whether an earlier decision relied on it.
 - An incompatible change to the genome or the physics: bump `BODY_MODEL` in `evolve.py`; old archives are then refused with a clear message.
 - Hardware values come from `docs/hardware-dados.md`. The servo measures in `parts.py` are provisional ("measure a real STS3215 and update") until someone measures a real servo.
 - `.scratch/` is a scratch area outside git; `checkpoints/`, `exports/` and `*.mp4` stay out too.

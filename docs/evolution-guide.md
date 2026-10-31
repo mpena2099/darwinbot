@@ -67,7 +67,8 @@ impossible "monsters".
 ## 3. Mutation
 
 Variation comes from **mutation**: take a robot that works and change it a
-little. DarwinBot uses seven operators, drawn with different weights:
+little. DarwinBot uses seven operators, drawn with different weights. Each child gets
+one to three of them in a row:
 
 | Operator | What it does | Chance |
 |---|---|---|
@@ -91,6 +92,11 @@ breaks both, so DarwinBot uses a gentler form, the **graft**: a whole limb of
 another robot on the map is attached to a free slot of the parent, sometimes
 mirrored on the other side. One child in five is born this way. Karl Sims used
 the same idea for his creatures in 1994.
+
+Besides the children, one body in ten in every batch is **drawn from
+scratch**, with no parent. It brings variety from outside, like a migrant
+reaching an isolated population: now and then a new body finds a way to move
+that no family on the map had.
 
 ## 4. The score (fitness)
 

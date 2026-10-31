@@ -66,7 +66,8 @@ pequeno, mas é o que permite à mutação mexer à vontade sem gerar
 ## 3. Mutação
 
 A variação vem da **mutação**: pegar um robô que funciona e mudar um pouco.
-O DarwinBot usa sete operadores, sorteados com pesos diferentes:
+O DarwinBot usa sete operadores, sorteados com pesos diferentes. Cada filho
+recebe de uma a três operações seguidas:
 
 | Operador | O que faz | Chance |
 |---|---|---|
@@ -90,6 +91,11 @@ os dois, então o DarwinBot usa uma forma mais suave, o **enxerto**: um membro
 inteiro de outro robô do mapa é encaixado numa vaga livre do pai, às vezes
 espelhado do outro lado. Um em cada cinco filhos nasce assim. Karl Sims usou a
 mesma ideia nas criaturas dele, em 1994.
+
+Além dos filhos, um em cada dez corpos de cada lote é **sorteado do zero**, sem
+pai. É a forma de trazer variedade de fora, como um migrante que chega numa
+população isolada: às vezes um corpo novo acha um jeito de andar que nenhuma
+família do mapa tinha.
 
 ## 4. A nota (fitness)
 

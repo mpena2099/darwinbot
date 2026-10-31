@@ -188,6 +188,8 @@ def test_run_logs_novelty_and_uniform_selection(tmp_path):
                          variants=0, out_dir=str(tmp_path),
                          parent_selection="uniform")
     assert all("novelty" in h for h in archive.history)
+    # every batch records the code that ran it
+    assert all(h["code"] == evolve.code_version() != "" for h in archive.history)
 
 
 def test_grid_archive_from_before_cvt_is_rejected():

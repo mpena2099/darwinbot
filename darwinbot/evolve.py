@@ -372,7 +372,25 @@ GRAFT_P = 0.2           # share of children made by grafting a limb of a second 
 MAE_SHARE = 0.5         # emitter="cma-mae": share of each batch from the CMA-MAE emitter
 MAE_LEARNING_RATE = 0.01   # how fast the soft archive's thresholds follow the elites
 MAE_THRESHOLD_MIN = -1.0   # starting threshold of every cell; unbuildable bodies stay below
-MAE_SIGMA0 = 0.1        # genes are in [0, 1]
+MAE_SIGMA0 = 0.05       # genes are in [0, 1]
+# Genes the emitter may move in a module the body already has: its measures.
+# Structure (which blocks exist, parent, slot, type) and the categorical genes
+# (axis, flip, profile) stay those of the nearest elite, so an emitted body is
+# that elite with retuned sizes and angles rather than a random tree.
+MAE_FREE_GENES = (morpho.ROT, morpho.LENGTH, morpho.WHEEL, morpho.WIDTH,
+                  morpho.THICK, morpho.OFFSET, morpho.ANGLE, morpho.BEND)
+
+
+def _free_mask(genes: np.ndarray) -> np.ndarray:
+    """Genes of `genes` the CMA-MAE emitter may change (see MAE_FREE_GENES);
+    on the core, every gene but ACTIVE (body size and the contour factors)."""
+    mask = np.zeros((morpho.MAX_NODES, morpho.BLOCK_GENES), dtype=bool)
+    mask[0, :] = True
+    mask[0, morpho.ACTIVE] = False
+    for i in morpho.decode(genes).nodes:
+        if i != 0:
+            mask[i, list(MAE_FREE_GENES)] = True
+    return mask.reshape(-1)
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
 
@@ -450,7 +468,7 @@ def run(
     def new_seed():
         return int(rng.integers(0, 2**31 - 1))
 
-    mae = {"archive": None, "emitter": None, "asked": {}}
+    mae = {"archive": None, "emitter": None, "asked": {}, "unbuildable": None}
 
     def emitted(n: int) -> list:
         """n bodies from the CMA-MAE emitter, each with the controller of the
@@ -470,15 +488,18 @@ def run(
                 soft, x0=x0, sigma0=MAE_SIGMA0, ranker="imp", es="sep_cma_es",
                 batch_size=n, seed=new_seed())
         # No bounds for the ES: many genes sit at 0 or 1, and resampling until
-        # all 300 fall inside [0, 1] would almost never end. Clip instead; the
-        # emitter is told the clipped bodies, which are the ones evaluated.
-        bodies = np.clip(mae["emitter"].ask(), 0.0, 1.0)
-        cells = archive.cells.values()
+        # all 300 fall inside [0, 1] would almost never end. Clip instead.
+        asked = np.clip(mae["emitter"].ask(), 0.0, 1.0)
+        cells = list(archive.cells.values())
         genomes = np.array([e.morph for e in cells])
-        ctrls = [e for e in cells]
         tasks = []
-        for body in bodies:
-            near = ctrls[int(np.argmin(((genomes - body) ** 2).sum(axis=1)))]
+        for x in asked:
+            near = cells[int(np.argmin(((genomes - x) ** 2).sum(axis=1)))]
+            # Moving all 300 genes made most bodies unbuildable: keep the
+            # nearest elite's structure and take only the measures from x.
+            body = np.array(near.morph, dtype=float)
+            free = _free_mask(body)
+            body[free] = x[free]
             mae["asked"][body.tobytes()] = None
             tasks.append((body, near.ctrl, terrains, budget_child, 0.12, new_seed(),
                           archive.seconds, device, popsize, archive.variants,
@@ -501,6 +522,7 @@ def run(
         meas = np.array([mae["asked"][k][1] for k in order])
         info = mae["archive"].add(solution=sol, objective=obj, measures=meas)
         mae["emitter"].tell(sol, obj, meas, info)
+        mae["unbuildable"] = int((obj == UNSTABLE_SCORE).sum())
         mae["asked"] = {}
 
     def make_batch() -> list:
@@ -568,6 +590,8 @@ def run(
                 continue
             s = archive.stats()
             s.update(added=added, seconds=round(time.time() - t0, 1), code=code)
+            if mae["unbuildable"] is not None:      # emitted bodies that could not be built
+                s["emitted_unbuildable"] = mae["unbuildable"]
             archive.history.append(s)
             print(f"batch {s['batch']:3d}  cells {s['cells']:3d}  +{added:2d}  "
                   f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "

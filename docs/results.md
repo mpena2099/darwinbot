@@ -2,48 +2,56 @@
 
 The showcase archive uses the default `steer` task on the default `terrain`
 set (flat, rough, steps and rubble), with two randomised physics variants per
-evaluation (`--preset steer --batches 30`). Two runs of 30 batches with
-different seeds trained side by side as islands on Kaggle and were merged
+evaluation (`--preset steer --batches 30`). Three runs of 30 batches with
+different seeds trained as islands on Kaggle and were merged
 (`experiments/merge_archives.py`), each cell keeping the better elite:
 
-| | CPU island | GPU island |
-|---|---|---|
-| Hardware | 4-core CPU sessions | one T4, MuJoCo Warp (`--device warp`, branch `warp`) |
-| Training time | 37.1 h, four chained sessions | 15.4 h |
-| Evaluations | 142,318 | 135,824 |
-| Evaluations per hour | 3,800 | 8,800 |
-| Cells | 83 | 76 |
-| Best fitness | 0.60 | 0.50 |
-| QD-score | 418 | 383 |
+| | CPU island 1 | CPU island 2 | GPU island |
+|---|---|---|---|
+| Hardware | 4-core CPU sessions | 4-core CPU sessions | one T4, MuJoCo Warp (`--device warp`, branch `warp`) |
+| Training time | about 40 h | 37.1 h | 15.4 h |
+| Evaluations | 124,874 | 142,318 | 135,824 |
+| Cells | 73 | 83 | 76 |
+| Best fitness | 0.41 | 0.60 | 0.50 |
+| QD-score | 368 | 418 | 383 |
 
-The GPU trains 2.3 times faster for the same quality; the gap in best fitness
-is within what a different seed gives. Before the merge, ten elites (2 from the
-CPU island, 8 from the GPU one, among them its best at 0.58) were removed
-because a part sat deeper than 29 mm inside the part it is mounted on, such as
-a wheel bolted inside the torso edge. MuJoCo never collides a body with its
-parent, so the simulator let them through; `is_buildable` now checks it.
+The first island trained before the turn credit was capped by the distance
+travelled and was rescored under the current rule
+(`experiments/rescore_archive.py`). The GPU trains 2.3 times faster than the
+second CPU island for the same quality; the gaps in best fitness are within
+what a different seed gives, and each island leads somewhere: the second CPU
+island has the best roller, the first the best trotter and walker.
 
-The merged archive has 278,142 evaluations, each one three episodes (straight,
-left, right) on every terrain, and fills 107 of the ~500 cells:
+Before the merge, 16 elites (6, 2 and 8) were removed because a part sat
+deeper than 29 mm inside the part it is mounted on, such as a wheel bolted
+inside the torso edge. MuJoCo never collides a body with its parent, so the
+simulator let them through; `is_buildable` now checks it.
+
+The merged archive has 403,016 evaluations, each one three episodes (straight,
+left, right) on every terrain, and fills 116 of the ~500 cells:
 
 | Gait | Types | Best fitness |
 |------|-------|--------------|
-| `roll` | 19 | 0.60 |
-| `trot` | 39 | 0.19 |
-| `walk` | 22 | 0.15 |
-| `belly` | 18 | 0.07 |
-| `crawl` | 9 | 0.07 |
+| `roll` | 31 | 0.60 |
+| `trot` | 35 | 0.29 |
+| `walk` | 23 | 0.17 |
+| `belly` | 17 | 0.07 |
+| `crawl` | 10 | 0.07 |
 
-46 types score above 0.05, which means they move and also turn on command.
-Passive modules are common: 13 elites use a TPU spring, 8 a tail, 8 a spike, 5
-a skid and 1 a caster, and 9 have a second torso segment. Link lengths span the
-whole 40 to 200 mm the genome allows.
+57 types score above 0.05, which means they move and also turn on command.
+Passive modules are common: 23 elites use a TPU spring, 12 a tail, 7 a
+caster, 6 a skid and 6 a spike, and 9 have a second torso segment. Link
+lengths span the whole 40 to 200 mm the genome allows.
 
 The four robots below (the best roller `16servos-low-roll-389`, a two-wheeler
-`8servos-low-roll`, the taller wheel-and-leg `13servos-mid-roll` and the best
-legged robot `12servos-low-walk-344`) all pass `validate.py`, with mean losses
-of -1%, 4%, 0% and -4% under randomised physics (the limit is 30%). The
-progress plot follows the CPU island.
+`8servos-low-roll`, the best trotter `14servos-mid-trot` and the best walker
+`12servos-low-walk-344`) all pass `validate.py`, with mean losses of -1%, 4%,
+6% and 3% under randomised physics (the limit is 30%). The progress plot
+follows the second CPU island.
+
+Longer training would not change much: in that island the best roller went
+from 0.55 at batch 3 to 0.60 at batch 30, and the best walker has stayed at
+0.15 since batch 15.
 
 ## Steering versus forward only
 
@@ -53,16 +61,16 @@ scored under the forward rule:
 
 | | `steer` (showcase) | `forward` (control) |
 |---|---|---|
-| Evaluations | 278,142 (two islands) | 127,938 |
-| Cells | 107 | 78 |
+| Evaluations | 403,016 (three islands) | 127,938 |
+| Cells | 116 | 78 |
 | Best roller | 0.93 | 0.81 |
-| Best trotter | 0.31 | 0.53 |
-| Best walker | 0.26 | 0.34 |
+| Best trotter | 0.54 | 0.53 |
+| Best walker | 0.31 | 0.34 |
 | Best belly crawler | 0.19 | 0.26 |
 
-The showcase had twice the evaluations, and its rollers still went further.
-Its legged robots did not: trotters and walkers trained to turn lose a quarter
-to two fifths of their forward speed. The control robots cannot turn, and a
+The showcase had three times the evaluations. Its rollers went further, its
+trotters matched the control and its walkers came close, while also turning
+on command. The control robots cannot turn, and a
 robot you build needs to. Use `--preset forward` when turning on command does
 not matter; it is also about three times cheaper per evaluation.
 

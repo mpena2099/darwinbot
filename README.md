@@ -8,7 +8,7 @@
 Quality-diversity evolution of robot bodies and locomotion controllers, built
 from real parts so the result can be printed and assembled.
 
-![Four evolved robots moving: two rollers, a robot on wheels and legs, and a walker](docs/img/gait.gif)
+![Four evolved robots moving: two rollers, a trotter and a walker](docs/img/gait.gif)
 
 Every robot is a tree of real modules (Karl Sims and Revolve2 style) driven by
 Feetech STS3215 servos. Bodies are evolved with a MAP-Elites archive laid out by

@@ -5,7 +5,7 @@
 Quality-diversity evolution of robot bodies and locomotion controllers, built
 from real parts so the result can be printed and assembled.
 
-![Four evolved robots moving: a roller and three legged gaits](img/gait.gif)
+![Four evolved robots moving: two rollers, a robot on wheels and legs, and a walker](img/gait.gif)
 
 Every robot is a tree of real modules (Karl Sims and Revolve2 style): a core
 (a torso plate with a free contour, ESP32, LiPo) with servo joints, spine

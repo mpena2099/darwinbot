@@ -54,9 +54,10 @@ on Kaggle's free sessions instead:
   with 256, 18 to 20 times with 1024 and 22 to 27 times with 4096, for
   quadruped, hexapod and wheeled bodies on flat ground and on rubble, wheels on
   rocks included. A new body costs under 3 s; the first one compiles for about
-  a minute. Training does not use it yet: the CPG has to run on the GPU too, and
-  the GPU computes in float32, so a GPU-trained robot is still validated on the
-  CPU.
+  a minute. Training with it (`--device warp`) lives on the `warp` branch: it
+  trained half of the showcase archive 2.3 times faster than the CPU island
+  (see Results). The GPU computes in float32, so a GPU-trained robot is still
+  validated on the CPU.
 
 Upload a notebook with *Create > New Notebook > File > Import Notebook*. While
 the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.

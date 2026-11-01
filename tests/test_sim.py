@@ -650,3 +650,20 @@ def test_legs_on_the_bottom_face_build_and_simulate():
     assert episode.buildable
     metrics = episode.run(_ctrl(morph, amp=0.3))
     assert np.isfinite([metrics.dx, metrics.dy, metrics.energy]).all()
+
+
+def test_tilt_scales_progress_but_not_losses():
+    from darwinbot import fitness
+    level = fitness.score(_metrics(dx=1.0))
+    leaning = fitness.score(_metrics(dx=1.0, upright=0.7))
+    assert abs(leaning - 0.7 * level) < 1e-9
+    assert fitness.score(_metrics(dx=-0.5, upright=0.7)) == fitness.score(_metrics(dx=-0.5))
+
+
+def test_episode_reports_upright_near_one_at_rest():
+    from darwinbot import morphology as mo, terrain as te
+    from darwinbot.sim import Episode
+    from darwinbot.controller import CTRL_LENGTH
+    ep = Episode(mo.template(2), te.get_terrains("flat")[0], seconds=0.5)
+    m = ep.run(np.zeros(CTRL_LENGTH))
+    assert 0.9 < m.upright <= 1.0

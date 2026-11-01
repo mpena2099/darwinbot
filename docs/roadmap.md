@@ -102,6 +102,12 @@
 
 ## Later
 
+- **Servo count as an archive axis**: a 6-servo body and a 16-servo one that
+  move alike share a cell today, and the one with more motors usually wins it;
+  the ten best robots average 13.8 servos. With the servo count as an axis,
+  simple and cheap bodies would keep their own cells next to the complex
+  ones. The cells change, so earlier archives no longer fit and training
+  starts over.
 - **A surrogate model**: a small model trained on the thousands of bodies the
   archive has already scored would predict a new body's score before it is
   simulated, so only promising ones are; it complements cheap evaluation

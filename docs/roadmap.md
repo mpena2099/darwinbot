@@ -2,6 +2,15 @@
 
 ## Next
 
+- **Polish the controllers after training**: a controller search ten times
+  longer (3600 evaluations from the elite's own controller) raised the same
+  bodies by 45 to 75% (walker 0.17 to 0.30, trotter 0.29 to 0.43, roller 0.60
+  to 0.86), so elites enter the archive far from what their body allows.
+  Spending that search inside training does not pay: with a quarter of the
+  children keeping their parent's body and searching three times longer, two
+  short runs filled 37 and 42 cells against 44 and 51, for similar best scores.
+  The search belongs after training, on the robots picked for the showcase.
+
 - **Assemble every export virtually, then build one**: no robot has been
   assembled yet, even on screen. A script that places every exported part and
   a servo model in the spawn pose would check that holes and screws line up,

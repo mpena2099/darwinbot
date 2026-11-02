@@ -3,7 +3,7 @@ fitness.py
 ----------
 Episode metrics -> scalar score, and the multi-terrain aggregate.
 
-score = up(dx) - LATERAL_W * |dy| - ENERGY_W * energy / (m g) - FALL_PENALTY * fell
+score = up(dx) - LATERAL_W * |dy| - HEADING_W * |yaw| - ENERGY_W * energy / (m g) - FALL_PENALTY * fell
 
 up(v) is the progress v times the mean cosine of the torso tilt over the
 episode when v is positive: a robot that leans 45 degrees keeps 71% of its
@@ -13,6 +13,11 @@ anything, so a body running close to tipping over lost nothing.
 energy / (m g) is in metres: the height the robot could have lifted itself
 with the same work. Dividing by weight keeps heavy and light bodies on the
 same footing, so the term behaves like a cost of transport.
+
+|yaw| is the heading change over the episode in radians. Drifting sideways
+alone missed a slow curve, which barely shows in a 5 s episode but takes the
+robot off its line on a longer walk. HEADING_W charges the same metres per
+radian that a turning episode earns (TURN_SCALE).
 
 For the "turn" task the goal is rotation in place instead of distance:
 
@@ -53,6 +58,7 @@ TURN_DRIFT_W = 0.5
 TASKS        = ("forward", "turn", "steer")
 COMMANDS     = {"steer": (0.0, -1.0, 1.0)}   # other tasks: one straight episode
 TURN_SCALE   = 0.2     # m per radian of heading turned the way asked
+HEADING_W    = TURN_SCALE   # m per radian of heading lost on a straight walk
 TURN_CAP     = math.pi / 2   # rad: no credit for turning more than 90 degrees
 UNSTABLE_SCORE = -5.0
 G = 9.81
@@ -72,7 +78,7 @@ def score(m: Metrics, task: str = "forward") -> float:
     if task == "turn":
         s = up(abs(m.yaw), m) - TURN_DRIFT_W * math.hypot(m.dx, m.dy) - cost
     else:
-        s = up(m.dx, m) - LATERAL_W * abs(m.dy) - cost
+        s = up(m.dx, m) - LATERAL_W * abs(m.dy) - HEADING_W * abs(m.yaw) - cost
     if m.fell:
         s -= FALL_PENALTY
     return float(s)

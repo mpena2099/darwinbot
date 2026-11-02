@@ -442,8 +442,11 @@ def test_turn_score_rewards_rotation_and_penalises_displacement():
     assert fitness.score(_metrics(unstable=True, yaw=2.0), "turn") == fitness.UNSTABLE_SCORE
 
 
-def test_forward_score_ignores_yaw_and_unknown_task_fails():
-    assert fitness.score(_metrics(dx=1.0, yaw=3.0)) == fitness.score(_metrics(dx=1.0))
+def test_forward_score_charges_heading_either_way_and_unknown_task_fails():
+    straight = fitness.score(_metrics(dx=1.0))
+    for yaw in (0.5, -0.5):
+        assert fitness.score(_metrics(dx=1.0, yaw=yaw)) == pytest.approx(
+            straight - fitness.HEADING_W * 0.5)
     with pytest.raises(ValueError):
         fitness.score(_metrics(), "fly")
 

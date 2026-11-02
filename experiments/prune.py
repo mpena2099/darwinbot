@@ -20,9 +20,11 @@ from multiprocessing import Pool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from darwinbot import morphology as morpho   # noqa: E402
+import numpy as np   # noqa: E402
+from darwinbot import morphology as morpho, randomize   # noqa: E402
 from darwinbot.evolve import Archive, Elite, scaled_budget   # noqa: E402
-from darwinbot.inner import optimise_controller   # noqa: E402
+from darwinbot.inner import evaluate, optimise_controller   # noqa: E402
+from darwinbot.sim import Episode   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
 
 
@@ -31,10 +33,23 @@ def _leaves(m):
     return [i for i in m.nodes if i != 0 and i not in parents]
 
 
+def _score(m, ctrl, a, seed):
+    """Score on the same terrains and physics variants every trial uses."""
+    episodes = [Episode(m, t, a.seconds, a.payload) for t in get_terrains(a.terrains, seed=seed)]
+    if not episodes[0].buildable:
+        return None
+    rng = np.random.default_rng(seed)
+    var_sets = ([[randomize.perturb(ep.model, rng) for _ in range(a.variants)]
+                 for ep in episodes] if a.variants > 0 else None)
+    return evaluate(episodes, ctrl, var_sets, a.task)[0]
+
+
 def prune_elite(job):
     name, elite, a, budget, tol, seed = job
     m = morpho.decode(elite.morph)
-    ctrl, fit, scores, beh = elite.ctrl, elite.fitness, elite.scores, elite.behaviour
+    ctrl, scores, beh = elite.ctrl, elite.scores, elite.behaviour
+    fit = _score(m, ctrl, a, seed)       # the uncut body, judged like the cuts
+    start = fit
     floor = fit - tol * abs(fit)
     cut = []
     while True:
@@ -43,6 +58,9 @@ def prune_elite(job):
             trial = copy.deepcopy(m)
             del trial.nodes[leaf]
             if trial.n_servos == 0:
+                continue
+            quick = _score(trial, ctrl, a, seed)    # inherited controller first
+            if quick is None or quick < floor - 0.1 * abs(floor):
                 continue
             r = optimise_controller(trial, get_terrains(a.terrains, seed=seed), x0=ctrl,
                                     budget=scaled_budget(budget, trial), sigma0=0.12,
@@ -57,7 +75,7 @@ def prune_elite(job):
         ctrl, scores, beh = r.ctrl, r.scores, r.behaviour
         fit = r.fitness
         floor = max(floor, fit - tol * abs(fit))
-    print(f"{name}: cut {len(cut)} parts {cut}, score {elite.fitness:.3f} -> {fit:.3f}",
+    print(f"{name}: cut {len(cut)} parts {cut}, score {start:.3f} -> {fit:.3f}",
           flush=True)
     return Elite(morpho.encode(m), ctrl, fit, scores, elite.born, beh)
 
@@ -82,8 +100,9 @@ def main():
         elites = pool.map(prune_elite, jobs)
     out = Archive(terrains=a.terrains, seconds=a.seconds, variants=a.variants,
                   task=a.task, payload=a.payload)
-    for e in elites:
-        out.insert(e)
+    for t, e in zip(args.types.split(","), elites):
+        if not out.insert(e):
+            print(f"warning: {t} landed in a cell already taken by a better pruned robot")
     with open(args.out, "wb") as f:
         pickle.dump(out, f)
     print(f"saved {len(out.cells)} robots to {args.out}; names: {sorted(out.names().values())}")

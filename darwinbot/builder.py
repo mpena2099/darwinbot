@@ -51,7 +51,11 @@ ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
 JOINT_RANGE = {"yaw": 0.9, "pitch": 1.3, "roll": 0.9}   # +/- rad
-JOINT_DAMPING  = 0.56
+# Back-EMF as viscous damping: torque falls linearly from SERVO_TORQUE at rest
+# to zero at SERVO_SPEED, the datasheet no-load speed. With 0.56 the servo
+# topped out at 2.3 rad/s, under half the real one, and any stride faster than
+# that turned into saturated torque reversals.
+JOINT_DAMPING  = SERVO_TORQUE / SERVO_SPEED
 JOINT_FRICTION = 0.068
 JOINT_ARMATURE = 0.027
 JOINT_KP       = 13.37

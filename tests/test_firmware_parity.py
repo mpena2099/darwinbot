@@ -140,7 +140,7 @@ def test_parity_open_loop_when_sigma_is_zero(tmp_path):
 
 def test_parity_with_speed_clip_active(tmp_path):
     rng, ctrl = _genes(5)
-    ctrl[0] = 1.0                        # 3 Hz
+    ctrl[0] = 1.0                        # 1.5 Hz
     for slot in (1, 2, 3):
         b = co.node_base(slot)
         ctrl[b + co.AMP1] = 1.0

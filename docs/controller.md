@@ -8,7 +8,7 @@ Length: `CTRL_LENGTH = 1 + MAX_NODES * 6 = 121`, indexed by the same node slot i
 
 | Index | Gene | Range | Meaning |
 |-------|------|-------|---------|
-| 0 | `frequency` | 0.5 - 3.0 Hz | global natural frequency, `omega = 2*pi*frequency` |
+| 0 | `frequency` | 0.3 - 1.5 Hz | global natural frequency, `omega = 2*pi*frequency` |
 
 Per node slot `s`, with base `b = 1 + 6 * s`:
 

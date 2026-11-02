@@ -20,7 +20,7 @@ aberta) não é mais lido nem gerado.
   "control_hz": 50,
   "ramp_time": 0.5,
   "load_full_scale": 0.7,
-  "frequency": 2.62,
+  "frequency": 1.31,
   "servos": [
     {"id": 1, "name": "s8_pitch", "mode": "position",
      "amp1": 0.11, "phase1": 2.38, "offset": -0.33,

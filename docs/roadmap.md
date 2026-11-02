@@ -11,6 +11,13 @@
   short runs filled 37 and 42 cells against 44 and 51, for similar best scores.
   The search belongs after training, on the robots picked for the showcase.
 
+- **Walking or rolling as the ground asks** (a wheel-stall reflex): today a
+  robot with legs ending in wheels has one rhythm, legs and wheels together.
+  A new gene per joint would let the wheels' load drive the legs' amplitude:
+  free wheels keep the legs still and the robot rolls; a wheel stalled against
+  an obstacle makes the legs start stepping, as a Tachikoma does. A local
+  reflex, not a decision, and the STS3215 reports load in wheel mode too.
+  Changes the controller, the firmware and the control file: new `BODY_MODEL`.
 - **Assemble every export virtually, then build one**: no robot has been
   assembled yet, even on screen. A script that places every exported part and
   a servo model in the spawn pose would check that holes and screws line up,
@@ -175,13 +182,6 @@
   rule; on the bench, fit the real servo's friction from measurements. An
   analysis tool for the Results page and the simulator, not a source of
   robots.
-- **Walking or rolling as the ground asks** (a wheel-stall reflex): today a
-  robot with legs ending in wheels has one rhythm, legs and wheels together.
-  A new gene per joint would let the wheels' load drive the legs' amplitude:
-  free wheels keep the legs still and the robot rolls; a wheel stalled against
-  an obstacle makes the legs start stepping, as a Tachikoma does. A local
-  reflex, not a decision, and the STS3215 reports load in wheel mode too.
-  Changes the controller, the firmware and the control file: new `BODY_MODEL`.
 - **A walk or roll command**: a second command next to steering, with two genes
   per joint, trained by testing each robot in both modes (walking on steps,
   rolling on flat ground). Predictable, and fits the ROS 2 extension, which

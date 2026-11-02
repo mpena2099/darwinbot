@@ -61,7 +61,7 @@ JOINT_ARMATURE = 0.027
 JOINT_KP       = 13.37
 SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
 WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
-WHEEL_DAMPING  = 0.05         # wheel spins freely, unlike a position servo
+WHEEL_DAMPING  = JOINT_DAMPING  # same motor: torque falls to zero at the no-load speed
 CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
 ROBOT_GEOM = f'contype="2" conaffinity="3" friction="{ROBOT_FRICTION}"'

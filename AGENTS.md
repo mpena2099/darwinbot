@@ -27,6 +27,7 @@ python experiments/plot_archive.py
 python tools/terrain_sheet.py --archive <archive.pkl>    # docs/img/terrains.png
 python tools/make_readme_figures.py --archive <archive.pkl> --types a,b,c,d   # README figures; --types pins the robots shown
 python tools/parts_sheet.py exports/<type>    # every printed part on one image
+python experiments/prune.py --archive <archive.pkl> --types a,b --out pruned.pkl   # cut parts the robot does not need
 python experiments/merge_archives.py a.pkl b.pkl --out merged.pkl   # islands: best elite per cell
 python tools/kaggle/islands.py --user <you> --code-dataset <you>/darwinbot-code   # islands on Kaggle
 ```

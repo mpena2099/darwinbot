@@ -43,7 +43,9 @@ from numba import njit
 
 from darwinbot.morphology import MAX_NODES, ActuatorLayout, Morphology
 
-FREQ_RANGE   = (0.5, 3.0)     # Hz
+FREQ_RANGE   = (0.3, 1.5)     # Hz; the second harmonic doubles it. Robots and animals
+                              # of this size step 1 to 2 times a second; at 3 Hz the
+                              # gaits were a shiver of short, fast steps
 AMP_RANGE    = (0.0, 0.8)     # rad, each harmonic
 OFFSET_RANGE = (-0.6, 0.6)    # rad
 SERVO_SPEED  = 5.45           # rad/s, STS3215 no-load speed at 7.4 V

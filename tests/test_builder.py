@@ -13,3 +13,10 @@ def test_hard_plastic_slides_and_tpu_grips():
     assert plastic.any()
     assert np.allclose(m.geom_friction[plastic, 0], builder.PLASTIC_FACTOR)
     assert (m.geom_friction[robot & (m.geom_priority == 0), 0] == 1.0).all()
+
+
+def test_servo_reaches_datasheet_speed():
+    from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
+    from darwinbot.builder import JOINT_DAMPING, JOINT_FRICTION
+    top = (SERVO_TORQUE - JOINT_FRICTION) / JOINT_DAMPING
+    assert 0.9 * SERVO_SPEED < top <= SERVO_SPEED

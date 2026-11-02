@@ -64,7 +64,7 @@ class BatchEpisode:
         yaw0 = jnp.arctan2(self.d0.xmat[torso, 1, 0], self.d0.xmat[torso, 0, 0])
 
         def body(carry, k):
-            d, theta, held, dx, dy, energy, duration, done, unstable, touch, zsum, ticks, yaw, prev = carry
+            d, theta, held, dx, dy, energy, duration, done, unstable, touch, zsum, upsum, ticks, yaw, prev = carry
             t = d.time
             ramp = jnp.minimum(1.0, t / RAMP_TIME)
             new = ramp * (offset + amp1 * jnp.sin(theta + phase1)
@@ -89,20 +89,21 @@ class BatchEpisode:
             sample = ((k + 1) % self.hold == 0) & ~(done | ended)
             touch = touch + sample * self._touching(d)
             zsum = zsum + sample * d.xpos[torso, 2]
+            upsum = upsum + sample * d.xmat[torso, 2, 2]
             ticks = ticks + sample
             return (d, theta, held, dx, dy, energy, duration, done | ended, unstable,
-                    touch, zsum, ticks, yaw, now), None
+                    touch, zsum, upsum, ticks, yaw, now), None
 
         carry = (self.d0, jnp.zeros_like(amp1), jnp.zeros_like(amp1), 0.0, 0.0, 0.0, 0.0,
-                 False, False, jnp.zeros(len(self.tgeoms)), 0.0, 0, 0.0, yaw0)
-        (d, _, _, dx, dy, energy, duration, done, unstable, touch, zsum, ticks,
-         yaw, _), _ = (
+                 False, False, jnp.zeros(len(self.tgeoms)), 0.0, 0.0, 0, 0.0, yaw0)
+        (d, _, _, dx, dy, energy, duration, done, unstable, touch, zsum, upsum,
+         ticks, yaw, _), _ = (
             jax.lax.scan(body, carry, jnp.arange(self.n_steps)))
         # Same convention as Episode: a blow up reports no displacement.
         keep = jnp.where(unstable, 0.0, 1.0)
         # As in Episode, a blow up is reported as unstable, not as a fall.
         return (dx * keep, dy * keep, energy, done & ~unstable, unstable, duration,
-                touch, zsum, ticks, yaw * keep)
+                touch, zsum, upsum, ticks, yaw * keep)
 
     def _touching(self, d):
         """Per terminal point: any active contact with a non-robot geom."""
@@ -130,7 +131,7 @@ class BatchEpisode:
             *(stack(n) for n in ("amp1", "phase1", "offset", "amp2", "phase2",
                                  "sigma")),
         )
-        dx, dy, energy, fell, unstable, duration, touch, zsum, ticks, yaw = (
+        dx, dy, energy, fell, unstable, duration, touch, zsum, upsum, ticks, yaw = (
             np.asarray(v) for v in out)
         beh = [behaviour(touch[i], self.twheel, float(zsum[i]), int(ticks[i]), self.reach)
                for i in range(n)]
@@ -139,6 +140,7 @@ class BatchEpisode:
                     fell=bool(fell[i]), unstable=bool(unstable[i]),
                     duration=float(duration[i]), mass=self.mass,
                     duty=beh[i][0], height=beh[i][1], wheel_share=beh[i][2],
-                    yaw=float(yaw[i]))
+                    yaw=float(yaw[i]),
+                    upright=float(upsum[i] / ticks[i]) if ticks[i] else 1.0)
             for i in range(n)
         ]

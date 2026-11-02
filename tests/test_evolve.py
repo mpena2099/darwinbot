@@ -188,6 +188,8 @@ def test_run_logs_novelty_and_uniform_selection(tmp_path):
                          variants=0, out_dir=str(tmp_path),
                          parent_selection="uniform")
     assert all("novelty" in h for h in archive.history)
+    # every batch records the code that ran it
+    assert all(h["code"] == evolve.code_version() != "" for h in archive.history)
 
 
 def test_grid_archive_from_before_cvt_is_rejected():
@@ -414,3 +416,18 @@ def test_merged_islands_resume(tmp_path):
     again = evolve.run(n_batches=1, batch_size=2, budget_child=4, workers=1,
                        out_dir=str(tmp_path / "next"), resume=str(path))
     assert again.batch == merged.batch + 1
+
+
+def test_rescore_keeps_cells_and_lineage(tmp_path):
+    import sys
+    sys.path.insert(0, "experiments")
+    from rescore_archive import rescore
+    archive = evolve.run(n_init=2, n_batches=1, batch_size=2, budget_init=6,
+                         budget_child=4, workers=1, out_dir=str(tmp_path),
+                         episode_seconds=1.0, variants=0)
+    out = rescore(archive, workers=1)
+    assert set(out.cells) == set(archive.cells)
+    assert out.lineage == archive.lineage and out.batch == archive.batch
+    assert out.history[-1]["rescored"] and len(out.history) == len(archive.history) + 1
+    for c, e in out.cells.items():
+        assert np.allclose(e.ctrl, archive.cells[c].ctrl)

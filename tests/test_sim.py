@@ -559,7 +559,7 @@ def test_skid_and_spike_friction_follows_the_terrain(terrain, ground):
 
 def test_steer_score_rewards_turning_the_way_asked():
     straight = _metrics(dx=1.0)
-    left, right = _metrics(yaw=2.0), _metrics(yaw=-2.0)       # yaw > 0 is a left turn
+    left, right = _metrics(dx=0.5, yaw=2.0), _metrics(dx=0.5, yaw=-2.0)   # yaw > 0 is a left turn
     both = fitness.task_score([straight, left, right], "steer")
     wrong = fitness.task_score([straight, right, left], "steer")
     only_straight = fitness.task_score([straight, straight, straight], "steer")
@@ -568,6 +568,32 @@ def test_steer_score_rewards_turning_the_way_asked():
     assert fitness.commands("steer") == (0.0, -1.0, 1.0)
     assert fitness.task_score([straight, _metrics(unstable=True), right],
                               "steer") == fitness.UNSTABLE_SCORE
+
+
+def test_spinning_on_the_spot_does_not_beat_walking():
+    """Turn credit stops at TURN_CAP and at the distance travelled: a body
+    that spins five times each way but never walks scores no more than one
+    that stands still, and below one that walks and turns a little."""
+    spinner = [_metrics(), _metrics(yaw=30.0), _metrics(yaw=-30.0)]
+    walker = [_metrics(dx=1.0), _metrics(dx=0.5, yaw=0.5), _metrics(dx=0.5, yaw=-0.5)]
+    assert fitness.task_score(walker, "steer") > fitness.task_score(spinner, "steer")
+    capped = [_metrics(), _metrics(yaw=fitness.TURN_CAP), _metrics(yaw=-fitness.TURN_CAP)]
+    assert fitness.task_score(spinner, "steer") == fitness.task_score(capped, "steer")
+    still = [_metrics(), _metrics(), _metrics()]
+    assert fitness.task_score(spinner, "steer") == fitness.task_score(still, "steer")
+    # A short curve earns only as much turn credit as the distance it covered.
+    short = [_metrics(), _metrics(dx=0.05, yaw=1.0), _metrics(dx=0.05, yaw=-1.0)]
+    far = [_metrics(), _metrics(dx=0.5, yaw=1.0), _metrics(dx=0.5, yaw=-1.0)]
+    assert fitness.task_score(short, "steer") < fitness.task_score(far, "steer")
+
+
+def test_part_sunk_into_its_parent_is_not_buildable():
+    """A wheel bolted on the torso edge sat inside the torso: MuJoCo never
+    collides a body with its parent, so only the mount-depth check sees it."""
+    inside = mo.Morphology(0.36, 0.19, {0: mo.Node(0, "core"),
+                                        1: mo.Node(1, "wheel", 0, 1, wheel_rad=0.048)})
+    assert not Episode(inside, te.flat(), seconds=0.1).buildable
+    assert Episode(mo.template(2), te.flat(), seconds=0.1).buildable
 
 
 def test_steering_command_turns_a_robot_both_ways():
@@ -624,3 +650,20 @@ def test_legs_on_the_bottom_face_build_and_simulate():
     assert episode.buildable
     metrics = episode.run(_ctrl(morph, amp=0.3))
     assert np.isfinite([metrics.dx, metrics.dy, metrics.energy]).all()
+
+
+def test_tilt_scales_progress_but_not_losses():
+    from darwinbot import fitness
+    level = fitness.score(_metrics(dx=1.0))
+    leaning = fitness.score(_metrics(dx=1.0, upright=0.7))
+    assert abs(leaning - 0.7 * level) < 1e-9
+    assert fitness.score(_metrics(dx=-0.5, upright=0.7)) == fitness.score(_metrics(dx=-0.5))
+
+
+def test_episode_reports_upright_near_one_at_rest():
+    from darwinbot import morphology as mo, terrain as te
+    from darwinbot.sim import Episode
+    from darwinbot.controller import CTRL_LENGTH
+    ep = Episode(mo.template(2), te.get_terrains("flat")[0], seconds=0.5)
+    m = ep.run(np.zeros(CTRL_LENGTH))
+    assert 0.9 < m.upright <= 1.0

@@ -1,5 +1,25 @@
 # About
 
+## The principle: say what, never how
+
+Evolution needs someone to say what success is; in nature the environment does.
+Here the score and the terrains say what a robot must achieve (walk straight,
+turn when told, cross steps and rubble, waste little energy) and never how it
+should look or move. There is no reward for symmetry, for legs used the way an
+animal uses them, or for any shape a person would expect; when a score rule
+lets a robot cheat (spinning on the spot to "obey" a turn), the rule is fixed
+so it measures what it always meant, and when the simulator allows something
+the real world does not (a slipping foot, a servo housing dragged on the floor),
+the fix makes the physics honest instead of forbidding the behaviour. Changes
+to the search itself (more archive axes, a smarter emitter) give evolution
+more room, not a direction. A scoring change is accepted only if a short run
+shows it does not shrink the variety of the archive.
+
+The robots in the README and the Results page are chosen by hand to show the
+range of what evolved, so they are the tidier ones; the [gallery](gallery.md)
+shows every robot in the archive, odd ones included.
+
+
 ## Project structure
 
 ```

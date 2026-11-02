@@ -328,6 +328,30 @@ def merge(archives: List[Archive]) -> Archive:
     return out
 
 
+def code_version() -> str:
+    """Commit of the code running this, for the archive history: `git archive`
+    writes it into darwinbot/COMMIT (export-subst in .gitattributes), so a copy
+    without .git (a Kaggle dataset) still knows it; in a checkout git answers,
+    with "-dirty" when files differ from the commit; "unknown" otherwise."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(here, "COMMIT")) as f:
+            text = f.read().strip()
+        if text and not text.startswith("$Format"):
+            return text
+    except OSError:
+        pass
+    try:
+        import subprocess
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=here, text=True,
+                              capture_output=True, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                               cwd=here, text=True, capture_output=True).stdout.strip()
+        return head + ("-dirty" if dirty else "")
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
 def _ignore_sigint():
     """Pool workers leave Ctrl+C to the main process, which stops them."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -466,6 +490,8 @@ def run(
     else:
         pool = multiprocessing.Pool(workers, _ignore_sigint)
     path = os.path.join(out_dir, "archive.pkl")
+    code = code_version()
+    print(f"[darwinbot] code {code}")
     saved = None                                  # batch count in the file on disk
     try:
         left, seeding_tries = n_batches, 0
@@ -493,7 +519,7 @@ def run(
                       flush=True)
                 continue
             s = archive.stats()
-            s.update(added=added, seconds=round(time.time() - t0, 1))
+            s.update(added=added, seconds=round(time.time() - t0, 1), code=code)
             archive.history.append(s)
             print(f"batch {s['batch']:3d}  cells {s['cells']:3d}  +{added:2d}  "
                   f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "

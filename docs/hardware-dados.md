@@ -43,8 +43,51 @@ tabela.
 - Driver ESP-IDF: componente [ftservo](https://components.espressif.com/components/dong-12345/ftservo).
 - micro-ROS: ESP32-S3 testado com ESP-IDF 5.2 a 6.0
   ([micro_ros_espidf_component](https://components.espressif.com/components/micro-ros/micro_ros_espidf_component)).
-- Circuito half-duplex para ESP32-S3 genérico: sem esquema documentado
-  encontrado. Pendente.
+- Circuito half-duplex para ESP32-S3 genérico: ver a seção abaixo.
+
+### Circuito half-duplex
+
+A UART do ESP32 tem um fio para enviar (TX) e outro para receber (RX); o
+barramento dos servos tem um só. Opções:
+
+| Opção | Como é | Prós | Contras |
+|---|---|---|---|
+| A. Buffer de três estados com pino de direção | Um 74LVC1G125 ou 74HC126 liga o TX ao barramento só enquanto o ESP32 transmite; um pino do ESP32 controla a direção | Circuito clássico dos servos Dynamixel, confiável a 1 Mbps | Errar o momento de soltar o barramento corrompe a resposta |
+| B. A mesma, com a direção automática | O modo `UART_MODE_RS485_HALF_DUPLEX` do ESP-IDF controla o pino de direção pelo hardware | Tira o risco de tempo da opção A | Ainda precisa do chip |
+| C. Resistor ou diodo, sem chip | TX ligado ao fio por ~1 kΩ ou diodo, RX direto no fio | Quase de graça | Frágil a 1 Mbps; depende do cabo e do número de servos |
+| D. Placa pronta | Waveshare Servo Driver with ESP32 | Funciona de cara | ESP32 comum, não o S3 |
+
+Recomendada: B. Falta verificar o nível de tensão do sinal do STS3215 (3,3 V ou
+5 V); se for 5 V, usar o 74HCT126, que converte o nível. Cada servo precisa de
+um ID próprio antes de ir para o barramento (todos saem de fábrica com o mesmo).
+
+### Por que servos de barramento, e não PWM
+
+Servos de hobby comuns (SG90, MG996R) recebem um fio de PWM cada um, em geral
+de uma placa como a PCA9685, e não devolvem nada. O controlador precisa da
+carga de cada servo a cada ciclo (o retorno de carga da CPG), e só um servo de
+barramento como o STS3215 a informa. O ESP32 fala direto com os servos: todos
+ligados em série num único fio de dados, cada um com seu ID, sem placa de
+controle no meio.
+
+### Tempo do barramento (estimativa, não medida)
+
+A 1 Mbps cada byte leva cerca de 10 µs. Por ciclo de controle (20 ms a 50 Hz):
+
+| Parte | Uma linha, 16 servos | Duas linhas, 8 + 8 |
+|---|---|---|
+| Enviar os alvos num comando só (`SYNC WRITE`) | ~1,2 ms | ~0,6 ms em cada, ao mesmo tempo |
+| Ler posição e carga, servo por servo | ~4 a 8 ms | ~2 a 4 ms |
+| Total | ~5 a 9 ms | ~3 a 5 ms |
+
+A 50 Hz uma linha deve bastar. O ESP32-S3 tem 3 UARTs, então duas linhas são
+possíveis, ao custo de um segundo circuito half-duplex; valem a pena para
+controle a 100 Hz, para ler mais dados por servo ou se a resposta do servo for
+mais lenta que o previsto. Medir primeiro com uma linha.
+
+Falta verificar: o tempo de espera antes da resposta (*return delay*) do
+STS3215 e se o firmware do servo aceita `SYNC READ` (ler vários servos num
+comando), que encurtaria a leitura.
 
 ## Outras massas
 

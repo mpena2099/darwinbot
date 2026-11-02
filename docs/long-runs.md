@@ -57,9 +57,9 @@ on Kaggle's free sessions instead:
   a minute. With the CPG on the GPU too (`darwinbot/sim_warp.py`,
   `bench_warp.py --cpg`, whole 5 s training episodes), the T4 ran 6 to 7 times
   the 4 CPU cores with 64 controllers at once, 18 to 21 times with 256 and 39 to
-  49 times with 1024, on flat ground and rubble, for legs and wheels. Training
-  does not use it yet; the GPU computes in float32, so the plan is to keep
-  scoring archive entries on the CPU.
+  49 times with 1024. Training with it (`--device warp`) trained one of the
+  showcase islands 2.3 times faster than a CPU island (see Results). The GPU
+  computes in float32, so a GPU-trained robot is still validated on the CPU.
 
 Upload a notebook with *Create > New Notebook > File > Import Notebook*. While
 the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.

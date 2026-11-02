@@ -50,6 +50,7 @@ class Metrics:
     height:   float = 0.0   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
     yaw:      float = 0.0   # net change of the torso heading (rad, unwrapped)
+    upright:  float = 1.0   # mean cosine of the torso tilt over the control ticks
 
 
 def cost_of_transport(m: "Metrics", task: str = "forward") -> float:
@@ -124,12 +125,29 @@ def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
     return duty, height, share
 
 
+# A part sits a little inside the one it is mounted on (the servo in its
+# bracket): 17 to 26 mm across every archive so far. Deeper than this, the
+# part passes through its parent, as a wheel bolted to the torso edge did
+# (45 mm), which MuJoCo hides because it never collides a body with its parent.
+MOUNT_OVERLAP_MAX = 0.029    # m
+
+
 def is_buildable(model: mujoco.MjModel) -> bool:
-    """True when no two robot geoms touch at the spawn pose."""
+    """True when no two robot geoms touch at the spawn pose, and no part sinks
+    into the part it is mounted on deeper than MOUNT_OVERLAP_MAX."""
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     robot = model.geom_contype == 2
-    return not any(robot[c.geom1] and robot[c.geom2] for c in data.contact)
+    if any(robot[c.geom1] and robot[c.geom2] for c in data.contact):
+        return False
+    flags = model.opt.disableflags
+    model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    try:
+        mujoco.mj_forward(model, data)
+        return not any(robot[c.geom1] and robot[c.geom2] and c.dist < -MOUNT_OVERLAP_MAX
+                       for c in data.contact)
+    finally:
+        model.opt.disableflags = flags
 
 
 @njit(cache=True)
@@ -234,7 +252,7 @@ class Episode:
         fell = unstable = False
         t_prev = 0.0
         touch = np.zeros(len(self._tgeoms))
-        zsum, ticks = 0.0, 0
+        zsum, upsum, ticks = 0.0, 0.0, 0
 
         for n in range(1, self.n_steps + 1):
             if self._k % hold == 0:
@@ -262,6 +280,7 @@ class Episode:
             if n % hold == 0:          # behaviour sampled once per control tick
                 touch += self._touching()
                 zsum += float(xpos[2])
+                upsum += float(xmat[8])
                 ticks += 1
 
         x, y = d.xpos[self.torso][:2]
@@ -273,4 +292,5 @@ class Episode:
             duration=float(d.time), mass=self.mass,
             duty=duty, height=height, wheel_share=share,
             yaw=yaw if not unstable else 0.0,
+            upright=upsum / ticks if ticks else 1.0,
         )

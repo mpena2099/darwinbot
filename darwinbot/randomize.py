@@ -24,10 +24,11 @@ class Ranges:
     stiffness:  tuple = (0.85, 1.15)  # scale on position-servo gain kp
     joint_loss: tuple = (0.7, 1.5)    # scale on joint friction loss (gear play)
     latency:    tuple = (0, 2)        # whole control periods of command delay
+    damping:    tuple = (0.8, 1.2)    # scale on servo damping (motor back-EMF)
 
 
 DEFAULT = Ranges()
-NOMINAL = Ranges((1, 1), (1, 1), (1, 1), (1, 1), (1, 1), (0, 0))
+NOMINAL = Ranges((1, 1), (1, 1), (1, 1), (1, 1), (1, 1), (0, 0), (1, 1))
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,9 @@ def perturb(model: mujoco.MjModel, rng: np.random.Generator,
     m.actuator_biasprm[is_pos, 1] *= kp_scale[is_pos]
 
     m.dof_frictionloss[:] *= rng.uniform(*r.joint_loss, size=m.nv)
+
+    dofs = m.jnt_dofadr[m.actuator_trnid[:, 0]]       # one driven joint per actuator
+    m.dof_damping[dofs] *= rng.uniform(*r.damping, size=m.nu)
 
     latency = int(rng.integers(r.latency[0], r.latency[1] + 1))
     return Variant(m, latency)

@@ -51,13 +51,17 @@ ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
 JOINT_RANGE = {"yaw": 0.9, "pitch": 1.3, "roll": 0.9}   # +/- rad
-JOINT_DAMPING  = 0.56
+# Back-EMF as viscous damping: torque falls linearly from SERVO_TORQUE at rest
+# to zero at SERVO_SPEED, the datasheet no-load speed. With 0.56 the servo
+# topped out at 2.3 rad/s, under half the real one, and any stride faster than
+# that turned into saturated torque reversals.
+JOINT_DAMPING  = SERVO_TORQUE / SERVO_SPEED
 JOINT_FRICTION = 0.068
 JOINT_ARMATURE = 0.027
 JOINT_KP       = 13.37
 SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
 WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
-WHEEL_DAMPING  = 0.05         # wheel spins freely, unlike a position servo
+WHEEL_DAMPING  = JOINT_DAMPING  # same motor: torque falls to zero at the no-load speed
 CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
 ROBOT_GEOM = f'contype="2" conaffinity="3" friction="{ROBOT_FRICTION}"'

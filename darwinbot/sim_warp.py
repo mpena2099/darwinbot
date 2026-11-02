@@ -35,7 +35,7 @@ PAD = 32            # batch sizes round up to this, so few graphs are captured p
 RUNAWAY_VEL = 1e3   # same threshold as sim._bad_state
 VARIANT_FIELDS = ("geom_friction", "body_mass", "body_inertia",
                   "actuator_forcerange", "actuator_gainprm", "actuator_biasprm",
-                  "dof_frictionloss")   # exactly what randomize.perturb changes
+                  "dof_frictionloss", "dof_damping")   # exactly what randomize.perturb changes
 
 
 @wp.kernel

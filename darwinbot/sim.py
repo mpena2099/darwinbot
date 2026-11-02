@@ -50,6 +50,7 @@ class Metrics:
     height:   float = 0.0   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
     yaw:      float = 0.0   # net change of the torso heading (rad, unwrapped)
+    upright:  float = 1.0   # mean cosine of the torso tilt over the control ticks
 
 
 def cost_of_transport(m: "Metrics", task: str = "forward") -> float:
@@ -251,7 +252,7 @@ class Episode:
         fell = unstable = False
         t_prev = 0.0
         touch = np.zeros(len(self._tgeoms))
-        zsum, ticks = 0.0, 0
+        zsum, upsum, ticks = 0.0, 0.0, 0
 
         for n in range(1, self.n_steps + 1):
             if self._k % hold == 0:
@@ -279,6 +280,7 @@ class Episode:
             if n % hold == 0:          # behaviour sampled once per control tick
                 touch += self._touching()
                 zsum += float(xpos[2])
+                upsum += float(xmat[8])
                 ticks += 1
 
         x, y = d.xpos[self.torso][:2]
@@ -290,4 +292,5 @@ class Episode:
             duration=float(d.time), mass=self.mass,
             duty=duty, height=height, wheel_share=share,
             yaw=yaw if not unstable else 0.0,
+            upright=upsum / ticks if ticks else 1.0,
         )

@@ -160,16 +160,19 @@ def _book_keep(
 @wp.kernel
 def _sample(
     xpos: wp.array2d(dtype=wp.vec3),
+    xmat: wp.array2d(dtype=wp.mat33),
     torso: int,
     done: wp.array(dtype=int),
     zsum: wp.array(dtype=float),
+    upsum: wp.array(dtype=float),
     ticks: wp.array(dtype=int),
 ):
-    """Torso height of one behaviour tick."""
+    """Torso height and uprightness of one behaviour tick."""
     w = wp.tid()
     if done[w] != 0:
         return
     zsum[w] = zsum[w] + xpos[w, torso][2]
+    upsum[w] = upsum[w] + xmat[w, torso][2, 2]
     ticks[w] = ticks[w] + 1
 
 
@@ -284,7 +287,7 @@ class WarpBatchEpisode:
              "omega": zeros(n), "x0": zeros(n), "y0": zeros(n),
              "prev": zeros(n), "dx": zeros(n), "dy": zeros(n),
              "energy": zeros(n), "duration": zeros(n), "yaw": zeros(n),
-             "zsum": zeros(n), "ticks": zeros(n, wp.int32),
+             "zsum": zeros(n), "upsum": zeros(n), "ticks": zeros(n, wp.int32),
              "done": zeros(n, wp.int32), "fell": zeros(n, wp.int32),
              "unstable": zeros(n, wp.int32), "touch": zeros((n, self.n_tips)), "hit": zeros((n, self.n_tips)),
              "theta": zeros((n, nu)), "target": zeros((n, nu)),
@@ -331,7 +334,8 @@ class WarpBatchEpisode:
         if not sample:
             return
         wp.launch(_sample, dim=d.nworld, device=dev, inputs=[
-            d.xpos, self.torso, b["done"]], outputs=[b["zsum"], b["ticks"]])
+            d.xpos, d.xmat, self.torso, b["done"]],
+            outputs=[b["zsum"], b["upsum"], b["ticks"]])
         wp.launch(_contacts, dim=d.contact.geom.shape[0], device=dev,
                   inputs=[d.nacon, d.contact.worldid, d.contact.geom,
                           self.robot, self.tip_of], outputs=[b["hit"]])
@@ -416,7 +420,7 @@ class WarpBatchEpisode:
     def _metrics(self, b: dict, n: int) -> List[Metrics]:
         """Copies back and builds Metrics as sim.Episode.run does."""
         out = {k: b[k].numpy() for k in ("dx", "dy", "energy", "duration", "yaw",
-                                         "fell", "unstable", "zsum", "ticks",
+                                         "fell", "unstable", "zsum", "upsum", "ticks",
                                          "touch")}
         out["touch"] = out["touch"].astype(float)
         # A world that ran out of contact or constraint room was simulated wrong.
@@ -434,5 +438,7 @@ class WarpBatchEpisode:
                 energy=float(out["energy"][i]), fell=bool(out["fell"][i]),
                 unstable=unstable, duration=float(out["duration"][i]),
                 mass=self.mass, duty=duty, height=height, wheel_share=share,
-                yaw=float(out["yaw"][i]) * keep))
+                yaw=float(out["yaw"][i]) * keep,
+                upright=(float(out["upsum"][i]) / int(out["ticks"][i])
+                         if out["ticks"][i] else 1.0)))
         return res

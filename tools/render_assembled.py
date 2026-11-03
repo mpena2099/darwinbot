@@ -28,13 +28,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "experiments"))
 from assembly import placements                             # noqa: E402
 from replay import load                                     # noqa: E402
 
-from darwinbot import builder, parts, morphology as mo   # noqa: E402
+from darwinbot import builder, export, parts, morphology as mo   # noqa: E402
 from darwinbot.sim import Episode                          # noqa: E402
 from darwinbot.terrain import get_terrains                 # noqa: E402
 
 COLOUR = {"pla": "0.93 0.55 0.15 1",     # orange PLA, stands out from the floor
           "spring": builder.SPRING_RGBA,
           "tpu": "0.12 0.12 0.12 1"}
+FOOT = "0.10 0.75 0.85 1"     # foot modules in cyan, apart from the black TPU end caps
 SERVO = "0.10 0.10 0.10 1"
 BOARD = "0.10 0.45 0.20 1"
 BATTERY = "0.20 0.25 0.60 1"
@@ -88,7 +89,7 @@ def assembled_xml(morph, folder) -> str:
     torso = bodies["torso"]
     for g in list(torso.findall("geom")):
         _hide(g)
-    floor_z = -parts.MOUNT_DROP / 1000.0       # top of the plate
+    floor_z = -export.plate_drop(morph) / 1000.0       # top of the plate
     ex, ey = mo.ELECTRONICS_BOX
     torso.append(ET.Element("geom", type="box", pos=f"0 0 {floor_z + 0.004:.4f}",
                             size=f"{0.029:.4f} {0.0115:.4f} 0.004", rgba=BOARD,
@@ -123,7 +124,9 @@ def assembled_xml(morph, folder) -> str:
 
     for p in placements(morph):
         m = meshes.get(p.name, p.make)
-        bodies[p.body].append(_mesh_geom(m, np.array(p.pos) / 1000, p.rot, COLOUR[p.kind]))
+        foot = p.owner >= 0 and morph.nodes[p.owner].kind == "foot"
+        bodies[p.body].append(_mesh_geom(m, np.array(p.pos) / 1000, p.rot,
+                                         FOOT if foot else COLOUR[p.kind]))
     for i, node in morph.nodes.items():         # wheel tyre, around the plate
         if node.kind == "wheel":
             bodies[f"w{i}"].append(ET.Element(

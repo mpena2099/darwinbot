@@ -14,7 +14,8 @@ Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 
 import math
 
-from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Locations,
+from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Location,
+                       Locations, gp_Trsf,
                        Part, Polygon, Pos, Rot, Sphere, SlotOverall, extrude,
                        export_stl as _export_stl)
 
@@ -225,7 +226,7 @@ def _cradle_shell(axis: str, mount: bool, side: int = 1,
         zt = cz - hz - CRADLE_T
         wb = MOUNT_SIDE + M3 + 3.0
         foot = _boxc(-BACK_FOOT_X - wb / 2, -BACK_FOOT_X + wb / 2,
-                     -(hy + CRADLE_T), hy + CRADLE_T, -MOUNT_DROP, zt + 0.5)
+                     -(hy + CRADLE_T), hy + CRADLE_T, -(MOUNT_DROP if drop is None else drop), zt + 0.5)
         part += foot
         part -= Pos(-BACK_FOOT_X, 0, 0) * _mount_holes(4 * MOUNT_DROP)
     elif mount:
@@ -264,6 +265,12 @@ def cradle(axis: str = "pitch", mount: bool = True, side: int = 1,
     piece with a link tip, or at the end of an elbow plate."""
     shell, bore = _cradle_shell(axis, mount, side, drop, shift, back)
     return shell - bore
+
+
+def _axis_roll(spec):
+    """(axis, roll in degrees) of a cradle given as an axis name or as the
+    pair (axis, roll about the module X)."""
+    return (spec, 0.0) if isinstance(spec, str) else (spec[0], float(spec[1]))
 
 
 def _u_root(axis: str, width_mm: float, thick_mm: float):
@@ -322,9 +329,13 @@ def link(length_mm: float, width_mm: float = LINK_W,
     this link's root); otherwise it is a bolted plate end. `foot_r` frees the
     tip for a TPU foot: the plate ends in a spigot inside the foot socket.
     `tip_axis` prints the cradle of a child servo at the tip, as one piece.
-    `elbow` is the trim distance on each side of the tip (right, left) when a
-    side servo hangs there: the tip narrows to a fin that sits between the two
-    servo bodies, drilled for the M3 bolts of the elbow tongues.
+    `elbow` is (right, left, bars, rigid): the fin edge on each side of the tip (or
+    None) where the tongue of a side servo's elbow plate is bolted, the tip
+    narrowing to a fin drilled for the M3 bolts; and the passive side modules
+    printed as one piece with the link, each (signed distance, angle, foot
+    radius, foot shape): a bar from the tip to the module, ending in a spigot
+    for a foot; and the plain links hung on this one, each (position mm,
+    rotation as nine numbers, link arguments), printed as one piece with it.
     An L link is two equal bars and an arc three, turned about Z so the whole
     path keeps its length."""
     if length_mm < width_mm:
@@ -340,16 +351,19 @@ def link(length_mm: float, width_mm: float = LINK_W,
     part -= Pos(0, 0, -thick_mm / 2) * _horn_holes(thick_mm)
     tip = pts[-1]
     tip_deg = 0.0 if profile == "straight" else bend_deg
-    if elbow:
+    if elbow[:2] != () and any(e is not None for e in elbow[:2]):
         frame = Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg)
-        # as wide as the cradle, and past the tip boss so no sliver of it is left
-        hx = max(SERVO_W / 2 + SERVO_CLEARANCE + CRADLE_T, _boss_d(width_mm) / 2 + 1.0)
-        for at in elbow:
-            if at is None:
+        # the cut spans the child's cradle along the link, and at least the
+        # tip boss so no sliver of it is left
+        reach = _boss_d(width_mm) / 2 + 1.0
+        for spec in elbow[:2]:
+            if spec is None:
                 continue
-            part -= frame * (_boxc(-hx, hx, at, 400, -400, 400)
+            at, x0, x1 = spec
+            x0, x1 = min(x0, -reach), max(x1, reach)
+            part -= frame * (_boxc(x0, x1, at, 400, -400, 400)
                              if at > 0 else
-                             _boxc(-hx, hx, -400, at, -400, 400))
+                             _boxc(x0, x1, -400, at, -400, 400))
         for x in (-MOUNT_SIDE / 2, MOUNT_SIDE / 2):
             part -= frame * Pos(x, 0, 0) * Rot(X=90) \
                 * Cylinder(M3 / 2, 80)
@@ -360,23 +374,79 @@ def link(length_mm: float, width_mm: float = LINK_W,
         root, front = _u_root(axis, width_mm, thick_mm)
         part -= _boxc(-400, front, -400, 400, -400, 400)
         part += root
+    frame = Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg)
+    bars = _side_bars(frame, width_mm, thick_mm, elbow[2]) if len(elbow) > 2 else None
     if tip_axis:
+        tip_axis, roll = _axis_roll(tip_axis)
         shell, bore = _cradle_shell(tip_axis, False)
-        frame = Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg)
+        shell, bore = Rot(X=roll) * shell, Rot(X=roll) * bore
         # the plate stops at the cradle's back wall, so the child servo body
         # never shares space with it
         part -= frame * _boxc(-CRADLE_BACK, 400, -400, 400, -400, 400)
         part += frame * shell
+        if bars is not None:
+            part += bars
         part -= frame * bore
+    elif bars is not None:
+        part += bars
+    for pos, rot, args in (elbow[3] if len(elbow) > 3 else ()):
+        # a plain link hung on this one is rigid with it and overlaps its end:
+        # printed as one piece, placed where the module tree puts it
+        trsf = gp_Trsf()
+        trsf.SetValues(*rot[0:3], pos[0], *rot[3:6], pos[1], *rot[6:9], pos[2])
+        child = link(*args[:5], axis=args[5], foot_r=args[6], tip_axis=args[7],
+                     elbow=args[8])
+        part += child.moved(Location(trsf))
     if foot_r:
-        # the foot slides over a spigot; clear its socket wall out of the tip
-        part -= Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg) * Pos(-12.0, 0, 0) \
-            * Rot(Y=90) * Cylinder(foot_r + 2.0, 12.0,
-                                   align=(Align.CENTER, Align.CENTER, Align.MIN))
-        # the spigot stops at the foot socket floor, 3 mm inside the tip
-        part += Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg) * Pos(-SPIGOT_L / 2 - 3.0, 0, 0) \
-            * Rot(Y=90) * Cylinder(SPIGOT_R, SPIGOT_L)
+        # the foot slides over a spigot; clear its body out of the tip
+        r, shape = foot_r if isinstance(foot_r, tuple) else (foot_r, "sphere")
+        cut, spigot = _spigot_end(frame, r, shape)
+        part -= cut
+        part += spigot
     return part
+
+
+def _spigot_end(frame, foot_r: float, shape: str = "sphere"):
+    """(cutter, spigot) for a TPU foot at `frame`: the plate is cleared of the
+    foot's body (it reaches back along -X: stem and hub) and a spigot runs from
+    the plate into the socket, stopping 0.8 mm short of its floor, which
+    absorbs the half millimetre the whole-mm lengths can move it."""
+    r = max(foot_r, FOOT_MIN_R)
+    body = foot(foot_r, shape)
+    if shape == "sphere":
+        body = Rot(Y=-90) * body
+    box = body.bounding_box()
+    back = box.min.X
+    floor = {"sphere": -3.0, "blade": -r - 3.0, "pad": -r / 6 - 3.0,
+             "claw": -3.0}[shape]
+    cut = frame * body
+    end = floor - 0.8
+    top, bottom = end, back - 1.5          # spigot from `end` back into the plate
+    spigot = frame * Pos((top + bottom) / 2, 0, 0) * Rot(Y=90) \
+        * Cylinder(SPIGOT_R, top - bottom)
+    return cut, spigot
+
+
+def _side_bars(frame, width_mm: float, thick_mm: float, bars) -> Part:
+    """Bars from a link tip (`frame`) to its passive side modules, printed as
+    one piece with the link. Each bar is (signed distance, angle, foot radius,
+    foot shape); the module sits `distance` to the side, turned by the angle
+    (mirrored on the other side), and a foot gets a spigot."""
+    out = None
+    for dist, angle, foot_r, shape in bars:
+        s = 1.0 if dist > 0 else -1.0
+        bar = Pos(0, 0, -thick_mm / 2) * (Rot(Z=90.0 * s) * _bar(0.0, abs(dist), width_mm, thick_mm))
+        # the bar's start boss belongs to its own side of the tip: the other
+        # side may carry a fin and an elbow plate
+        bar -= _boxc(-400, 400, -400, 0, -400, 400) if s > 0 else \
+            _boxc(-400, 400, 0, 400, -400, 400)
+        cut = spigot = None
+        if foot_r:
+            cut, spigot = _spigot_end(Pos(0, dist, 0) * Rot(Z=s * angle), foot_r, shape)
+            bar -= cut
+            bar += spigot
+        out = frame * bar if out is None else out + frame * bar
+    return out
 
 
 def _link_path_mm(length_mm: float, profile: str, bend_deg: float):
@@ -408,7 +478,7 @@ def _link_end_holes(x: float, y: float, angle_deg: float = 0.0,
 
 def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
                 width_mm: float = LINK_W, thick_mm: float = LINK_T,
-                axis: str = None) -> Part:
+                axis: str = None, trim: float = None) -> Part:
     """Bar bolted on a link end (origin) that carries a side module
     `distance_mm` away along +Y. The near end is a thin tongue lapped on the
     link tip; the far end repeats the link end pattern, turned about Z by
@@ -416,24 +486,36 @@ def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
     printed as one piece, and the near end is a vertical tongue bolted to the
     side of the link tip fin (two M3 bolts along Y shared by the elbows on both
     sides): the child servo body sits in the link plane, so the elbow keeps no
-    material there and joins the cradle's back wall with a strut."""
+    material there and joins the cradle's back wall with a strut. `trim` is
+    where the link tip fin ends on this side (default: the cradle back wall
+    for a 90 degree angle)."""
     if distance_mm < width_mm:
         raise ValueError("elbow too short")
     if axis:
-        frame = Pos(0, distance_mm, 0) * Rot(Z=angle_deg)
-        at = distance_mm - CRADLE_BACK - CRADLE_GAP   # link tip fin edge
+        axis, roll = _axis_roll(axis)
+        frame = Pos(0, distance_mm, 0) * Rot(Z=angle_deg) * Rot(X=roll)
+        at = (distance_mm - CRADLE_BACK - CRADLE_GAP) if trim is None else trim
         hx = SERVO_W / 2 + SERVO_CLEARANCE + CRADLE_T
-        hz = SERVO_BODY_H / 2 + SERVO_CLEARANCE + CRADLE_T
-        tongue = _boxc(-hx, hx, at - TONGUE_T, at + 0.1, -TONGUE_Z, TONGUE_Z)
-        strut = _boxc(-STRUT_HW, STRUT_HW, at, SERVO_W / 2 + SERVO_CLEARANCE + CRADLE_T,
-                      -hz, hz)
-        part = tongue + strut
-        for x in (-MOUNT_SIDE / 2, MOUNT_SIDE / 2):
-            part -= Pos(x, 0, 0) * Rot(X=90) * Cylinder(M3 / 2, 4 * TONGUE_Z)
         shell, bore = _cradle_shell(axis, False)
-        part += frame * shell
+        box = (frame * shell).bounding_box()
+        hz = max(1.0, min(-box.min.Z, box.max.Z) - 0.5)
+        tongue = _boxc(-hx, hx, at - TONGUE_T, at + 0.1, -TONGUE_Z, TONGUE_Z)
+        for x in (-MOUNT_SIDE / 2, MOUNT_SIDE / 2):
+            tongue -= Pos(x, 0, 0) * Rot(X=90) * Cylinder(M3 / 2, 4 * TONGUE_Z)
+        # a strut from the tongue to the cradle, wherever its back wall is for
+        # this distance and angle; the servo bore and the horn space stay free
+        strut = _boxc(-STRUT_HW, STRUT_HW, at, distance_mm, -hz, hz)
+        strut -= frame * bore
+        strut -= frame * Cylinder(HORN_OPEN_R + 1.5, 4 * hz)
+        # the child's U link arms lie outside the caps, along its output axis
+        cap = SERVO_BODY_H / 2 + SERVO_CLEARANCE + CRADLE_T + ARM_GAP / 2
+        for sign in (-1, 1):
+            strut -= frame * _axis_rot(axis) * _boxc(
+                -400, 400, -400, 400, sign * cap, sign * 400)
+        part = tongue + strut + frame * shell
         part -= frame * bore
-        return part
+        solids = sorted(part.solids(), key=lambda s: -s.volume)
+        return part if len(solids) == 1 else solids[0]
     part = Rot(Z=90) * _bar(0.0, distance_mm, width_mm, thick_mm)
     part = Pos(0, 0, -thick_mm / 2) * part
     part -= Pos(0, 0, -thick_mm / 2) * _link_end_holes(0, 0, 0.0, thick_mm)
@@ -527,7 +609,7 @@ def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
     stem = Pos(0, 0, 0) * Cylinder(r, 10 * r / FOOT_R,
                                    align=(Align.CENTER, Align.CENTER, Align.MIN))
     part = dome + stem
-    part -= Pos(0, 0, 3) * Cylinder(FOOT_SOCKET_D / 2, 20,
+    part -= Pos(0, 0, 3) * Cylinder(FOOT_SOCKET_D / 2, max(20.0, 3 * r),
                                     align=(Align.CENTER, Align.CENTER, Align.MIN))
     return part
 

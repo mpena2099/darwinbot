@@ -32,14 +32,14 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from assembly import placements                             # noqa: E402
+from assembly import placements, printed_frames, printed_rest  # noqa: E402
 
 from build123d import Box, Location, Pos, gp_Trsf          # noqa: E402
 
 from darwinbot import builder, parts                       # noqa: E402
 from darwinbot import morphology as mo                     # noqa: E402
 
-MIN_OVERLAP = 1.0    # mm^3 shared by two solids before it counts as a clash
+MIN_OVERLAP = 12.0   # mm^3 shared by two solids before it counts as a clash (the whole-mm rounding of the printed measures leaves slivers below it)
 LAP = 0.5            # mm: thinnest direction of a screwed lap (tongue on plate)
 MAX_GAP = 0.3        # mm between a link hole centre and the nearest horn hole
 WALK_TIMES = (0.5, 1.5, 2.5, 3.5)   # s of the straight walk that is checked
@@ -131,6 +131,8 @@ def _shared(solid_a, solid_b, frame_a=None, frame_b=None, lap=True) -> float:
     given as `frame_a` and `frame_b`), so a pose that tilts the pair does not
     thicken a lap; the world frame is used when no frame is given."""
     common = solid_a & solid_b
+    if common is None:
+        return 0.0
     total = 0.0
     for piece in common.solids():
         if piece.volume <= MIN_OVERLAP:
@@ -151,9 +153,16 @@ def lap_pairs(morph, records) -> set:
     """Labels of the pairs that are screwed together, and so may overlap by up
     to LAP: a cradle with its servo, the torso plate and its wedge, a wedge
     with the cradle foot, the part that prints a cradle (link tip or elbow
-    plate) with the servo in it, and an elbow plate lapped on its link tip."""
+    plate) with the servo in it, an elbow plate lapped on its link tip, and a
+    foot with the spigot of the link that holds it. A plain link rigid with
+    another is printed in its owner, so its labels are the owner's."""
+    from darwinbot.export import print_owner
     out = set()
     label = {p.label for p in records}
+
+    def link(j):
+        return f"link{print_owner(morph, j)}"
+
     for i, node in morph.nodes.items():
         servo = f"servo{i}"
         for name in (f"cradle{i}", f"wedge{i}"):
@@ -161,13 +170,17 @@ def lap_pairs(morph, records) -> set:
                 out.add(frozenset((name, servo)))
                 out.add(frozenset((name, "torso_plate")))
         out.add(frozenset((f"cradle{i}", f"wedge{i}")))
-        if node.slot == 0 and node.parent:
-            out.add(frozenset((f"link{node.parent}", servo)))
-        if node.slot and node.parent and node.parent in morph.nodes \
+        if node.kind == "foot" and node.parent > 0:
+            out.add(frozenset((link(node.parent), f"foot{i}")))
+        if node.kind in ("joint", "link"):
+            out.add(frozenset((link(i), f"foot{i}")))
+        if node.slot == 0 and node.parent > 0:
+            out.add(frozenset((link(node.parent), servo)))
+        if node.slot and node.parent > 0 and node.parent in morph.nodes \
                 and morph.nodes[node.parent].kind in ("joint", "link", "spring"):
             elbow = f"elbow{node.parent}_{i}"
             out.add(frozenset((elbow, servo)))
-            out.add(frozenset((elbow, f"link{node.parent}")))
+            out.add(frozenset((elbow, link(node.parent))))
     return out
 
 
@@ -185,22 +198,24 @@ def _build(morph, records, step_path):
         if node.kind in ("joint", "wheel", "segment"):
             # the servo body is fixed to the parent's link, at the joint frame:
             # the child body turns about it, the servo does not
-            off, rot = morph.rel_frame(node)
+            off, rot = printed_rest(morph, node)
             parent = "torso" if node.parent == 0 else f"n{node.parent}"
             axis = "yaw" if node.kind == "wheel" else node.axis
             if axis not in bodies:
                 bodies[axis] = servo_body(step_path, axis)
-            servo.append((f"servo{i}", parent, tuple(off * 1000.0), rot,
+            servo.append((f"servo{i}", parent, tuple(off), rot,
                           bodies[axis]))
     return solids + servo
 
 
 def report(morph, records=None, servo_step=None, ctrl=None, walk=False,
-           payload: float = 0.0, frames=None):
+           payload: float = 0.0, frames=None, poses_out=None):
     """([clash], [horn gap]): (label, other, mm3) for the pairs that share more
     than MIN_OVERLAP outside a screwed lap, and (label, mm) for every link horn.
     A clean body gives one row per horn and no clash. With `walk` the poses of
-    a straight walk (`ctrl`, `payload`) are checked as well."""
+    a straight walk (`ctrl`, `payload`) are checked as well. A list given as
+    `poses_out` receives, for each clash, the index of the first pose it shows
+    in (0 is the spawn pose)."""
     records = placements(morph) if records is None else records
     posed = _build(morph, records, servo_step)
     laps = lap_pairs(morph, records)
@@ -209,7 +224,8 @@ def report(morph, records=None, servo_step=None, ctrl=None, walk=False,
         poses += walk_frames(morph, ctrl, payload)
     clashes = []
     seen = set()
-    for pose in poses:
+    for k, pose in enumerate(poses):
+        pose = printed_frames(morph, pose)
         frames = [(np.array(pose[body][0]) + pose[body][1] @ np.array(pos),
                    pose[body][1] @ rot) for _, body, pos, rot, _ in posed]
         items = [(label, _moved(*frame, solid))
@@ -224,6 +240,8 @@ def report(morph, records=None, servo_step=None, ctrl=None, walk=False,
                 if volume and (items[a][0], items[b][0]) not in seen:
                     seen.add((items[a][0], items[b][0]))
                     clashes.append((items[a][0], items[b][0], volume))
+                    if poses_out is not None:
+                        poses_out.append(k)
     return clashes, _horn_gaps(records)
 
 

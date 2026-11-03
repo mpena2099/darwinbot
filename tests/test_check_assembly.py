@@ -80,7 +80,7 @@ def test_every_pair_is_checked_including_parent_and_child():
     morph = mo.template(2)
     records = assembly.placements(morph)
     k = next(i for i, p in enumerate(records) if p.label == "link1")
-    records[k] = records[k]._replace(pos=(-10.0, 0.0, 0.0))
+    records[k] = records[k]._replace(pos=(-20.0, 0.0, 0.0))
     clashes, _ = ca.report(morph, records=records)
     assert any("link1" in (a, b) for a, b, _ in clashes)
 

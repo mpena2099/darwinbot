@@ -70,8 +70,11 @@ def test_bom_counts_from_tree():
                    if n.parent in (0,) and n.kind in ("joint", "wheel", "segment"))
     assert sum(q for k, q in rows.items() if k.startswith("cradle_")) == on_torso
     assert rows["M2 x 6 screw"] == 8 * morph.n_servos
+    # elbow plates carry the servos on the side of a link; passive side modules
+    # are printed with the link
     side = sum(1 for n in morph.nodes.values()
-               if n.parent > 0 and n.slot and morph.nodes[n.parent].kind in ("joint", "link"))
+               if n.parent > 0 and n.slot and n.kind in ("joint", "wheel", "segment")
+               and morph.nodes[n.parent].kind in ("joint", "link"))
     assert side > 0
     assert sum(q for k, q in rows.items() if k.startswith("elbow_")) == side
     # the explicit foot plus the free tip of every joint without a child
@@ -265,7 +268,10 @@ def test_bent_links_and_foot_shapes_export_non_empty_stls(tmp_path):
     out = tmp_path / "robot"
     export_robot(_elite(_profiled_tree()), out, "profiled")
     stls = set(os.listdir(out / "parts"))
-    assert {"link_80x20x6_L90.stl", "link_80x20x6_arc90.stl"} <= stls
+    # the plain link hung on each joint is printed as one piece with it, foot
+    # spigot included
+    merged = [n for n in stls if n.startswith("link_60x20x6_u") and "_k" in n]
+    assert len(merged) == 2 and not any(n.startswith("link_80x20x6") for n in stls)
     assert {"foot_18.stl", "foot_blade_18.stl", "foot_pad_18.stl",
             "foot_claw_18.stl"} <= stls
     for name in stls:
@@ -366,3 +372,39 @@ def test_rolled_mount_exports_a_wedge_and_a_shorter_cradle(tmp_path):
     assert any(s.startswith("wedge_") for s in stls)
     assert any(s.startswith("cradle_pitch_w") for s in stls)
     assert "wedge" in (out / "assembly.md").read_text()
+
+
+def _link_on_joint(roll=0.0):
+    """A hip joint with a plain link on its tip and a foot on that."""
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 3, 3 * np.pi / 2, "pitch", 0.09)
+    m.nodes[2] = mo.Node(2, "link", 1, 0, roll, length=0.08)
+    m.nodes[3] = mo.Node(3, "foot", 2, 0, 0.0, foot_rad=0.012)
+    return m
+
+
+@pytest.mark.parametrize("roll", [0.0, 1.0])
+def test_a_plain_link_on_a_joint_is_printed_with_it(roll, tmp_path):
+    from darwinbot.export import print_owner
+    m = _link_on_joint(roll)
+    assert print_owner(m, 2) == 1 and print_owner(m, 1) == 1
+    rows = {item: q for item, q, _ in bom_rows(m)}
+    links = [k for k in rows if k.startswith("link_")]
+    assert len(links) == 1 and "_k" in links[0]
+    pytest.importorskip("build123d")
+    export_robot(_elite(m), tmp_path / "r", "merged")
+    parts_ = os.listdir(tmp_path / "r" / "parts")
+    assert links[0] in parts_ and not any(p.startswith("link_80") for p in parts_)
+
+
+def test_elbow_trim_follows_distance_angle_and_roll():
+    from darwinbot.export import elbow_trim
+    at90, x0, x1 = elbow_trim(60, 90, "pitch")
+    assert (x0, x1) == (-17, 17) or (x0 <= -16 and x1 >= 16)
+    at40 = elbow_trim(40, 90, "pitch")[0]
+    assert at90 - at40 == 20
+    # a slanted child reaches back further and along the link
+    at30, y0, y1 = elbow_trim(60, 30, "pitch")
+    assert at30 != at90 and y1 - y0 > x1 - x0
+    # never under the thinnest fin, whatever the cradle does
+    assert elbow_trim(25, 30, "pitch")[0] == 1

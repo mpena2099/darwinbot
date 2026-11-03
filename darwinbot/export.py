@@ -15,6 +15,7 @@ Morphology.slot_frame, in mm.
 
 import csv
 import os
+import zlib
 from collections import Counter
 from typing import NamedTuple
 
@@ -39,61 +40,145 @@ def _mm(m):
 def link_name(profile, bend_deg, length, width, thick, axis=None, foot_r=None,
               tip_axis=None, elbow=()):
     """STL name of a link: profile and whole-degree bend when bent, then the
-    U link fork axis, the tip cradle axis, the foot socket radius and the side
-    elbow distances (0 when that side is plain)."""
+    U link fork axis, the tip cradle axis, the foot socket radius, the side fin
+    trims for the elbow plates bolted on (0 when that side is plain) and the
+    passive side modules printed with the link (distance, angle)."""
     name = f"link_{length}x{width}x{thick}"
     if profile != "straight":
         name += f"_{profile}{int(round(bend_deg))}"
     if axis:
         name += f"_u{axis[0]}"
     if tip_axis:
-        name += f"_c{tip_axis[0]}"
+        name += f"_c{tip_axis[0][0]}" + (f"r{tip_axis[1]}" if tip_axis[1] else "")
     if foot_r:
-        name += f"_foot{foot_r}"
-    if len(elbow) == 2 and any(e is not None for e in elbow):
-        name += "_e%dx%d" % (_elbow_dist(elbow[0]), _elbow_dist(elbow[1]))
+        name += (f"_foot{foot_r}" if isinstance(foot_r, int)
+                 else f"_foot{foot_r[1]}{foot_r[0]}")
+    if len(elbow) >= 2 and any(e is not None for e in elbow[:2]):
+        name += "_e" + "_".join("0" if e is None else "x".join(str(v) for v in e)
+                                for e in elbow[:2])
+    for d, a, r, shape in (elbow[2] if len(elbow) > 2 else ()):
+        name += f"_b{d}a{a}" + (f"{shape[0]}{r}" if r else "")
+    if len(elbow) > 3 and elbow[3]:
+        name += "_k%05d" % (zlib.crc32(repr(elbow[3]).encode()) % 100000)
     return name
 
 
-def _elbow_dist(at):
-    """Elbow distance (mm, 0 when plain) of a link tip fin edge `at`."""
-    return 0 if at is None else int(round(at + CRADLE_BACK + CRADLE_GAP))
+def has_elbows(elbow):
+    """True when a link's `elbow` field carries anything: a fin trim for a
+    bolted elbow plate or a side module printed with the link."""
+    return any(e is not None for e in elbow[:2]) or any(elbow[2:])
 
 
-def elbow_trim(dist):
-    """Where a link tip stops on one side: the back wall of the cradle at
-    `dist` from the child axis, less the clearance."""
-    return dist - CRADLE_BACK - CRADLE_GAP
+# Servo and cradle measures, equal to parts.SERVO_* and parts.CRADLE_T
+# (parts needs build123d, the bill of materials does not).
+SERVO_BODY = (45.4, 24.8, 30.7)       # length, width, body height
+SERVO_AXIS_X = 12.5
+CRADLE_SLACK = 0.4 + 2.5              # servo clearance plus cradle wall
+MIN_FIN = 1.0                         # thinnest link tip fin left under a tongue
+
+
+def print_owner(morph, i):
+    """Id of the node whose printed link also holds node i: a plain link
+    (kind `link`) hung on a joint or another link is rigid with it, overlaps its
+    end, and is printed as one piece with it."""
+    n = morph.nodes[i]
+    while n.kind == "link" and morph.nodes[n.parent].kind in ("joint", "link"):
+        i = n.parent
+        n = morph.nodes[i]
+    return i
+
+
+def servo_roll(morph, i, side=1):
+    """Whole degrees the module of servo i is rolled about its own X, as the
+    frame its cradle is drawn in: on the other side of a link (slot 2) the
+    elbow plate is printed turned over, so the roll gains half a turn."""
+    deg = int(round(np.degrees(morph.nodes[i].rot))) + (180 if side < 0 else 0)
+    return (deg + 180) % 360 - 180
+
+
+def elbow_trim(dist, angle, axis, roll=0):
+    """(at, x0, x1) of the link tip fin under the tongue of an elbow plate, whole
+    mm in the tip frame: the fin ends at `at` from the link axis, the nearest
+    point of the child's cradle for this distance and angle less the clearance
+    (never under MIN_FIN, which leaves the clash the check reports when the
+    cradle reaches back to the link), and the plate beside the fin is cut away
+    from x0 to x1, the span of that cradle along the link."""
+    L, W, H = SERVO_BODY
+    half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
+            "roll": (H / 2, W / 2, L / 2)}[axis]
+    centre = (0.0, 0.0, -SERVO_AXIS_X) if axis == "roll" else (-SERVO_AXIS_X, 0.0, 0.0)
+    r, a = np.radians(roll), np.radians(angle)
+    rx = np.array([[1, 0, 0], [0, np.cos(r), -np.sin(r)], [0, np.sin(r), np.cos(r)]])
+    rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
+    pts = np.array([[centre[0] + sx * (half[0] + CRADLE_SLACK),
+                     centre[1] + sy * (half[1] + CRADLE_SLACK),
+                     centre[2] + sz * (half[2] + CRADLE_SLACK)]
+                    for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+    world = pts @ (rz @ rx).T
+    ys = dist + world[:, 1]
+    xs = world[:, 0]
+    at = max(int(np.floor(min(ys) - CRADLE_GAP)), int(MIN_FIN))
+    return at, int(np.floor(min(xs) - 1.0)), int(np.ceil(max(xs) + 1.0))
 
 
 def elbow_name(dist, angle, width, thick, axis=None):
     """STL name of an elbow plate, with the axis of the cradle at its far end."""
     name = f"elbow_{dist}mm_{angle}deg_{width}x{thick}"
-    return name + (f"_c{axis[0]}" if axis else "")
+    if axis:
+        name += f"_c{axis[0][0]}" + (f"r{axis[1]}" if axis[1] else "")
+    return name
 
 
 def link_args(morph, i):
     """(length, width, thick, profile, bend, axis, foot_r, tip_axis, elbow) of
-    the printed plate of node i, in whole millimetres and whole degrees;
-    `elbow` is the (right, left) fin edge when a side servo hangs on the tip."""
+    the printed plate of node i, in whole millimetres and whole degrees.
+    `elbow` is (right fin edge, left fin edge, side modules): a fin edge where
+    an elbow plate of a side servo is bolted on the tip, and the passive side
+    modules (distance, angle, foot radius, foot shape) that are printed as one
+    piece with the link, a foot spigot at the end of each."""
     node = morph.nodes[i]
     cm = morph.child_map()
     free = i not in cm and node.kind != "spring"
-    tip = None
+    tip = tip_foot = None
     trims = {1: None, -1: None}
+    bars, rigid = [], []
     for slot, c in sorted(cm.get(i, {}).items()):
+        child = morph.nodes[c]
+        if child.kind == "link" and node.kind in ("joint", "link"):
+            off, rot = morph.rel_frame(child)
+            rigid.append((tuple(round(float(v) * 1000, 1) for v in off),
+                          tuple(round(float(v), 4) for v in rot.reshape(9)),
+                          link_args(morph, c)))
+            continue
         if not slot:
             tip = servo_axis(morph, c)
-        elif servo_axis(morph, c):
-            side = 1 if slot == 1 else -1
-            trims[side] = side * elbow_trim(_mm(morpho.elbow_distance(
-                morph.nodes[c])))
+            tip = (tip, servo_roll(morph, c)) if tip else None
+            if child.kind == "foot":
+                tip_foot = _mm(child.foot_rad)
+                if child.foot_shape != "sphere":
+                    tip_foot = (tip_foot, child.foot_shape)
+            continue
+        side = 1 if slot == 1 else -1
+        dist = _mm(morpho.elbow_distance(child))
+        angle = int(round(np.degrees(morpho.elbow_angle(child))))
+        axis = servo_axis(morph, c)
+        if axis:
+            at, x0, x1 = elbow_trim(dist, angle, axis,
+                                    servo_roll(morph, c, side))
+            trims[side] = (side * at, x0, x1)
+        elif child.kind == "spring":
+            continue         # a flexure has its own plate; the TPU part is not drawn
+        elif child.kind == "foot":
+            bars.append((side * dist, angle, _mm(child.foot_rad),
+                         child.foot_shape))
+        else:
+            bars.append((side * dist, angle, 0, ""))
     return (_mm(node.length), _mm(node.width),
             _mm(morpho.plate_thick(node)), node.profile,
             int(round(np.degrees(node.bend))) if node.profile != "straight" else 0,
             node.axis if node.kind == "joint" else None,
-            _mm(morpho.section_radius(node)) if free else None, tip,
-            (trims[1], trims[-1]))
+            _mm(morpho.section_radius(node)) if free else tip_foot, tip,
+            (trims[1], trims[-1], tuple(bars), tuple(rigid)))
 
 
 def elbow_args(morph, parent, child):
@@ -103,7 +188,10 @@ def elbow_args(morph, parent, child):
     c = morph.nodes[child]
     return (_mm(morpho.elbow_distance(c)),
             int(round(np.degrees(morpho.elbow_angle(c)))),
-            _mm(p.width), _mm(morpho.plate_thick(p)), servo_axis(morph, child))
+            _mm(p.width), _mm(morpho.plate_thick(p)),
+            (servo_axis(morph, child),
+             servo_roll(morph, child, 1 if c.slot == 1 else -1))
+            if servo_axis(morph, child) else None)
 
 
 def servo_axis(morph, i):
@@ -160,12 +248,38 @@ def wedge_name(angle):
     return f"wedge_{int(round(angle))}"
 
 
+def plate_drop(morph):
+    """How far below the joint plane the top of the torso plate is, in mm, for
+    this robot: MOUNT_DROP, or lower when a servo on a torso edge hangs below
+    that (a roll joint stands 35 mm of body below its axis) so no cradle or
+    servo reaches into the plate. Face mounts sit above or below the torso and
+    are not counted."""
+    L, W, H = SERVO_BODY
+    need = 0.0
+    for i, n in morph.nodes.items():
+        axis = servo_axis(morph, i) if i else None
+        if not axis or not torso_mounted(morph, i) or (
+                n.parent == 0 and n.slot in morpho.FACE_SLOTS):
+            continue
+        off, rot = morph.rel_frame(n)
+        half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
+                "roll": (H / 2, W / 2, L / 2)}[axis]
+        centre = np.array((0.0, 0.0, -SERVO_AXIS_X) if axis == "roll"
+                          else (-SERVO_AXIS_X, 0.0, 0.0))
+        corners = np.array([centre + np.array((sx, sy, sz)) * (
+            np.array(half) + CRADLE_SLACK)
+            for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+        low = float(off[2] * 1000.0 + (corners @ rot.T)[:, 2].min())
+        need = max(need, -low)
+    return max(MOUNT_DROP, float(np.ceil(need + 0.5)))
+
+
 class Mount(NamedTuple):
     """How the cradle of a servo on the torso bolts down."""
     kind:  str       # "side", "back" or "free"
     side:  int       # +1, or -1 when the cradle is turned over its length
     angle: float     # degrees of roll a wedge takes up; the sign follows `shift`
-    drop:  float     # mm from the output axis to the foot face (0: full drop)
+    drop:  float     # mm from the output axis to the foot face
     shift: float     # mm the foot slides along the output axis (0: centred)
 
 
@@ -191,19 +305,20 @@ def torso_mount(morph, i):
     frame = morph.rel_frame(n)[1] @ CRADLE_FRAME[axis]
     flip = np.diag([1.0, -1.0, -1.0])
     z = frame @ np.array([0.0, 0.0, 1.0])
+    full = plate_drop(morph)
     if abs(z[2]) > 1.0 - 1e-6:           # output axis vertical: foot behind
-        return Mount("back", 1 if z[2] > 0 else -1, 0.0, 0.0, 0.0)
+        return Mount("back", 1 if z[2] > 0 else -1, 0.0, full, 0.0)
     side = max((1, -1), key=lambda s: -(frame @ np.array([0.0, -s, 0.0]))[2])
     placed = frame if side > 0 else frame @ flip
     u = placed @ np.array([0.0, -1.0, 0.0])
     tilt = float(np.degrees(np.arccos(np.clip(-u[2], -1.0, 1.0))))
     if tilt < 0.5:
-        return Mount("side", side, 0.0, 0.0, 0.0)
+        return Mount("side", side, 0.0, full, 0.0)
     if tilt > MAX_WEDGE_TILT or axis == "roll":
         return FREE
     a = np.radians(tilt)
     # the pattern centre hangs plumb under the axis, drop / cos(tilt) below it
-    drop = max((MOUNT_DROP - WEDGE_T - 0.5 * WEDGE_W * np.tan(a)) * np.cos(a),
+    drop = max((full - WEDGE_T - 0.5 * WEDGE_W * np.tan(a)) * np.cos(a),
                MOUNT_MIN_DROP)
     h = np.array([u[0], u[1], 0.0]) / np.hypot(u[0], u[1])
     slide = float((placed @ np.array([0.0, 0.0, 1.0])) @ h)     # +-cos(tilt)
@@ -306,11 +421,12 @@ def part_counts(morph):
     skids = spikes = 0
     for i, n in morph.nodes.items():
         if n.kind in ("joint", "link", "spring"):
-            links[link_args(morph, i)] += 1
+            if print_owner(morph, i) == i:
+                links[link_args(morph, i)] += 1
             if n.kind == "spring":
                 springs[(_mm(n.width), _mm(n.thick))] += 1
             for slot, child in sorted(cm.get(i, {}).items()):
-                if slot:
+                if slot and servo_axis(morph, child):
                     elbows[elbow_args(morph, i, child)] += 1
             if i not in cm:
                 feet[("sphere", _mm(morpho.section_radius(n)))] += 1
@@ -580,7 +696,7 @@ def _write_organic(morph, out_dir) -> dict:
     ratios = {}
     for (length, width, thick, profile, bend, axis, foot, tip,
          elbow), q in sorted(links.items(), key=lambda kv: str(kv[0])):
-        if axis or foot or tip or any(e is not None for e in elbow):
+        if axis or foot or tip or has_elbows(elbow):
             continue
         name = f"{link_name(profile, bend, length, width, thick)}.stl"
         tip_pt = parts._link_path_mm(length, profile, bend)[-1]
@@ -632,13 +748,14 @@ def _write_stls(morph, out_dir):
     for axis, angle, kind in sorted(cradles):
         m = seats[(axis, angle, kind)]
         out(f"{cradle_name(axis, angle, kind)}.stl",
-            parts.cradle(axis, kind != "free", 1, m.drop or None, m.shift,
+            parts.cradle(axis, kind != "free", 1, m.drop, m.shift,
                          back=kind == "back"))
     for angle in sorted(wedges):
         out(f"{wedge_name(angle)}.stl", parts.wedge(angle))
     for dist, angle, width, thick, axis in sorted(elbows, key=str):
         out(f"{elbow_name(dist, angle, width, thick, axis)}.stl",
-            parts.elbow_plate(dist, angle, width, thick, axis=axis))
+            parts.elbow_plate(dist, angle, width, thick, axis=axis,
+                              trim=elbow_trim(dist, angle, *axis)[0]))
     for shape, radius in sorted(feet):
         out(f"{foot_name(shape, radius)}.stl", parts.foot(radius, shape))
     for r in sorted(wheels):

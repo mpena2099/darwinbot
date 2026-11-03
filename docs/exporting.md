@@ -38,6 +38,17 @@ mount, a roll joint whose body would stand through the plate, or a roll steeper
 than 25 degrees gets a cradle without a foot (`_free`) that you have to hold with
 a bracket of your own.
 
+Parts that are rigid with a link and overlap it are printed as one piece with it:
+a plain link hung on a joint or on another link (`_k{n}` in the name), the bar to
+a passive module on the side of a link (`_b{distance}a{angle}`, ending in a spigot
+for a foot), and the cradle of the servo at the tip. The side servos hang on
+elbow plates bolted to a fin the link tip narrows to; the fin and the cut beside
+it follow the cradle's distance, angle and roll (`_e{at}x{x0}x{x1}`). The torso
+plate sits `plate_drop` mm below the joint plane, 22 or more when a servo on an
+edge hangs lower. Everything is drawn in whole millimetres and degrees, so a part
+can sit half a millimetre from the simulation's frame; the check places the
+modules where the printed parts put them.
+
 `python tools/check_assembly.py --archive a.pkl --type <type>` builds every part at
 its simulation frame and reports each pair of printed parts and servo bodies that
 overlap, at the spawn pose and at four poses of a straight walk (0.5, 1.5, 2.5 and

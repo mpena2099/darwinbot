@@ -211,6 +211,14 @@
   like the touch receptors of a sole. Today the robot feels the ground only
   through each servo's load, an indirect and noisy signal; the load feedback
   could use real contact instead. Cheap and light, one wire per foot.
+- **A mini robot on hobby micro servos** (an idea, a separate line): an
+  MG90S costs about a tenth of an STS3215 and weighs 13 g, but gives about
+  0.2 N*m (15 times less), takes one PWM wire per servo (16 need a PCA9685
+  board), and reports neither its position nor its load, so the load feedback
+  of today's controller (Tegotae) would go or need extra sensors. Bodies,
+  printed parts and the servo model in the simulation would all shrink and
+  change, with a training of its own; robots evolved for the STS3215 would not
+  carry over. A cheap way to build a first robot.
 - **Servos of different sizes**: Feetech makes smaller servos on the same bus
   (the STS3032, lighter and weaker). Evolution would choose, joint by joint,
   between a strong heavy servo and a weak light one, like the large hip muscles

@@ -29,6 +29,7 @@ python tools/make_readme_figures.py --archive <archive.pkl> --types a,b,c,d   # 
 python tools/parts_sheet.py exports/<type>    # every printed part on one image
 python tools/render_assembled.py --archive <archive.pkl> --type <type>   # the robot built from its printed parts, standing and walking
 python experiments/prune.py --archive <archive.pkl> --types a,b --out pruned.pkl   # cut parts the robot does not need
+python experiments/polish.py --archive <archive.pkl> --types a,b --out polished.pkl   # longer controller search for chosen robots
 python experiments/merge_archives.py a.pkl b.pkl --out merged.pkl   # islands: best elite per cell
 python tools/kaggle/islands.py --user <you> --code-dataset <you>/darwinbot-code   # islands on Kaggle
 ```

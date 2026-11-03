@@ -9,7 +9,9 @@
   Spending that search inside training does not pay: with a quarter of the
   children keeping their parent's body and searching three times longer, two
   short runs filled 37 and 42 cells against 44 and 51, for similar best scores.
-  The search belongs after training, on the robots picked for the showcase.
+  The search belongs after training, on the robots picked for the showcase;
+  `experiments/polish.py` runs that pass from each chosen elite's own
+  controller and writes the polished robots to a new archive.
 
 - **Assemble every export virtually, then build one**: no robot has been
   assembled yet, even on screen. A script that places every exported part and

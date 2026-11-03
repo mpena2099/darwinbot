@@ -38,6 +38,8 @@ def _hole_is_free(part, x, y, z, r=1.4, axis="Z"):
     pin = Cylinder(r, 100)
     if axis == "X":
         pin = Rot(Y=90) * pin
+    elif axis == "Y":
+        pin = Rot(X=90) * pin
     return _cut(part, Pos(x, y, z) * pin) < 1e-6
 
 
@@ -49,22 +51,99 @@ def _mount_points(x0=0.0, y0=0.0, yaw=0.0):
             for sx in (-h, h) for sy in (-h, h)]
 
 
-def test_servo_bracket():
-    p = parts.servo_bracket()
+def test_cradle_wraps_the_servo_and_bolts_down():
+    p = parts.cradle("pitch")
     _ok(p)
-    for x, y in _mount_points():
-        assert _hole_is_free(p, x, y, 1.0)
+    # the foot carries the common M3 pattern, level with the torso plate
+    yf = -parts.MOUNT_DROP + parts.MOUNT_FOOT_T / 2
+    for x, z in _mount_points():
+        pin = Pos(x, yf, z) * Rot(X=90) * Cylinder(1.4, parts.MOUNT_FOOT_T)
+        assert _cut(p, pin) < 1e-6
+        solid = Pos(x + 3.0, yf, z) * Rot(X=90) * Cylinder(1.0, parts.MOUNT_FOOT_T)
+        assert _cut(p, solid) > 0
     # the origin is the output axis: the body centre sits SERVO_AXIS_X behind
     c = -parts.SERVO_AXIS_X
-    # four M2 holes up into the body's tapped holes (bottom face pattern)
-    for x in (5.0, -19.5):
-        for y in (-10.2, 10.2):
-            assert _hole_is_free(p, c + x, y, 1.0, r=1.0)
-    # no ears: the floor is solid where the old ear screws went
-    for x in (-20.0, 20.0):
-        assert not _hole_is_free(p, c + x, 0.0, 1.0)
+    hz = parts.SERVO_BODY_H / 2 + parts.SERVO_CLEARANCE + parts.CRADLE_T / 2
+    # four M2 holes through each horn face cap, into the body's tapped holes
+    for z in (-hz, hz):
+        for x in parts.SERVO_TAP_X:
+            for y in (-parts.SERVO_TAP_Y, parts.SERVO_TAP_Y):
+                assert _hole_is_free(p, c + x, y, z, r=1.0)
+    # the horn comes through the cap opening, the body fits the bore
+    assert _hole_is_free(p, 0, 0, hz, r=parts.HORN_OPEN_R - 0.2)
+    servo = Pos(c, 0, 0) * Box(parts.SERVO_L, parts.SERVO_W, parts.SERVO_BODY_H)
+    assert _cut(p, servo) < 1e-6
+    # the walls hold the body to within the slack on both sides
+    gap = Pos(c, 0, 0) * Box(parts.SERVO_L + 2 * parts.SERVO_CLEARANCE + 0.1,
+                             parts.SERVO_W + 2 * parts.SERVO_CLEARANCE + 0.1,
+                             parts.SERVO_BODY_H + 2 * parts.SERVO_CLEARANCE + 0.1)
+    assert _cut(p, gap) > 0
     bb = p.bounding_box()
-    assert abs((bb.min.X + bb.max.X) / 2 - c) < 0.01
+    assert bb.min.Y < -parts.MOUNT_DROP + 1e-6          # the foot reaches the plate
+
+
+@pytest.mark.parametrize("axis", ["pitch", "yaw", "roll"])
+def test_cradle_keeps_the_servo_out_for_every_axis(axis):
+    import numpy as np
+    from darwinbot import morphology as mo
+    p = parts.cradle(axis)
+    _ok(p)
+    half, centre = mo.servo_box(axis)
+    tight = Pos(*(centre * 1000)) * Box(*(np.array(half) * 2000 - 0.1))
+    assert _cut(p, tight) < 1e-6
+    # a free cradle has no foot
+    free = parts.cradle(axis, mount=False)
+    assert free.volume < p.volume
+
+
+def test_u_link_clasps_both_horns():
+    p = parts.link(80, 20, 6, axis="pitch")
+    _ok(p)
+    d = parts.SERVO_BODY_H / 2 + parts.HORN_T + parts.ARM_GAP
+    # one arm on each horn face, with the horn hole pattern
+    for s in (-1, 1):
+        z = s * (d + parts.ARM_T / 2)
+        assert _cut(p, Pos(0, 0, z) * Box(30, 26, parts.ARM_T - 0.2)) > 0
+        for x, y in parts.horn_hole_centres():
+            assert _hole_is_free(p, x, y, z, r=1.0)
+    # the servo body sits between the arms without touching either
+    body = Pos(-parts.SERVO_AXIS_X, 0, 0) * Box(
+        parts.SERVO_L, parts.SERVO_W, parts.SERVO_BODY_H)
+    assert _cut(p, body) < 1e-6
+    # the arms join the plate beyond the servo front
+    plate = Pos(60, 0, 0) * Box(20, 16, 5)
+    assert _cut(p, plate) > 0
+
+
+@pytest.mark.parametrize("axis", ["yaw", "roll"])
+def test_u_link_other_axes_are_valid_and_clear_of_the_servo(axis):
+    from darwinbot import morphology as mo
+    p = parts.link(80, 20, 6, axis=axis)
+    _ok(p)
+    half, centre = mo.servo_box(axis)
+    body = Pos(*(centre * 1000)) * Box(*(half * 2000))
+    assert _cut(p, body) < 1e-6
+
+
+def test_link_tip_can_print_the_next_cradle():
+    p = parts.link(80, 20, 6, tip_axis="pitch")
+    _ok(p)
+    assert len(p.solids()) == 1
+    tip = Pos(80, 0, 0) * Pos(-parts.SERVO_AXIS_X, 0, 0) * Box(
+        parts.SERVO_L, parts.SERVO_W, parts.SERVO_BODY_H)
+    assert _cut(p, tip) < 1e-6
+
+
+def test_wedge_takes_up_the_roll():
+    for a in (20.0, -20.0):
+        p = parts.wedge(a)
+        _ok(p)
+        for x, y in _mount_points():
+            assert _hole_is_free(p, x, y, 5.0)
+    bb = parts.wedge(30.0).bounding_box()
+    assert bb.size.Z > parts.WEDGE_T + 5
+    with pytest.raises(ValueError):
+        parts.wedge(85.0)
 
 
 def test_servo_axis_offset_matches_the_simulation():
@@ -150,7 +229,8 @@ def test_elbow_plate_follows_distance(distance, angle, width, thick):
     _ok(p)
     bb = p.bounding_box()
     d = max(width, parts.END_BOSS_D)
-    assert bb.size.Y == pytest.approx(distance + d, abs=0.2)
+    # the near end is a thin tongue lapped on the link tip: half a boss
+    assert bb.size.Y == pytest.approx(distance + d / 2, abs=0.2)
     assert bb.size.X == pytest.approx(d, abs=0.2)
     assert bb.size.Z == pytest.approx(thick, abs=0.1)
     # the mounting pattern at both ends, the far one turned by angle - 90

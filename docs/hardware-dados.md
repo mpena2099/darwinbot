@@ -113,10 +113,16 @@ comando), que encurtaria a leitura.
 
 | Peça | Massa |
 |---|---|
-| Suporte impresso do servo (PLA) | ~15 g (11,8 cm³ maciço), somado aos 60 g do servo na simulação |
+| Berço impresso do servo (PLA) | ~23 g (18,3 cm³ maciço, com o pé que parafusa na placa do tronco), somado aos 60 g do servo na simulação; a ponta do link e o fim do cotovelo trazem o berço do servo seguinte |
 | Placa ESP32-S3 | ~20 g (não verificado) |
 | LiPo 2S 1000 a 1500 mAh | pendente |
 | Regulador step-down | pendente |
+
+## Berço, link em U e cunha
+
+O servo fica num berço impresso que pertence à peça-mãe: uma luva em volta do corpo (folga de 0,4 mm por lado) com uma tampa em cada face dos horns, onde os quatro parafusos M2 entram nos furos roscados do servo. Na placa do tronco o berço tem um pé com o padrão M3 comum; na ponta de um link ele sai numa peça só com o link, e a placa de cotovelo termina no berço do módulo filho. O link do próprio servo começa num garfo em U que abraça os dois horns (um braço do garfo em cada face, com o padrão de furos do horn) e só vira placa depois de passar o berço, para girar toda a faixa da junta.
+
+Quando o slot do tronco tem rolagem que não é múltiplo de 90 graus (até 25), o pé fica inclinado e uma cunha impressa (`wedge_{graus}`) entre a aba e o pé compensa. Encaixe em face do tronco e placa de coluna nunca levam cunha. Eixo de saída na vertical parafusa por trás do servo (`_back`); encaixe em face, junta de rolagem com o corpo atravessando a placa e rolagem acima de 25 graus saem sem pé (`_free`).
 
 ## Mola de TPU
 

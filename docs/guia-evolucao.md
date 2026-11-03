@@ -103,10 +103,10 @@ Seleção precisa de um critério. A nota de um robô, depois de alguns segundos
 de simulação, é:
 
 ```
-nota = avanço - 0,5 × desvio lateral - 0,05 × energia gasta - 0,5 × (caiu?)
+nota = avanço - 0,5 × desvio lateral - 0,2 × mudança de rumo - 0,05 × energia gasta - 0,5 × (caiu?)
 ```
 
-Andar para a frente conta pontos; andar torto, gastar energia demais e cair
+Andar para a frente conta pontos; andar torto, fazer curva sem que peçam, gastar energia demais e cair
 tiram pontos. Com vários terrenos, a nota final mistura a média com o pior
 terreno, para premiar robôs robustos.
 

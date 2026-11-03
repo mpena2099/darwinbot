@@ -46,14 +46,10 @@
   A first single-seed short run was mixed: straighter robots and more legged
   gaits, but the top ten turned both ways less well than under the current
   rule. Needs three seeds before a decision.
-- **Hold the heading when told to go straight**: the straight episode lasts
-  8 s, so a robot that slowly curves loses almost nothing; over 30 s some of
-  today's best rovers end up going sideways or back to the start. Subtract the
-  heading change in the straight episode, as the lateral drift already is, and
-  count only forward progress in a turn, so a curve driven in reverse earns
-  nothing. Both are about obeying the command; one short run measures them.
-  A first single-seed short run went further in 30 s and filled more cells,
-  but kept far fewer robots that move. Needs three seeds before a decision.
+- **Turn forwards, not backwards**: a turn earns its heading change up to the
+  distance the torso travelled, in any direction, so a curve driven in reverse
+  still scores. Counting only forward progress in a turn makes the robot obey
+  the command; one short run against the current rule measures it.
 - **Servo count back as an archive axis**: nothing in the score or the
   archive favours a simpler body, and the best robots use 13 to 16 servos, the
   most expensive to build. With the servo count as an axis next to the number

@@ -44,6 +44,55 @@ def test_clean_body_passes(tmp_path, capsys):
     assert name in out
 
 
+def _two_children_on_one_link():
+    """The template with a second side module on the first thigh: slots 1 and 2
+    of one link both carry a servo."""
+    morph = mo.template(2)
+    i = max(morph.nodes) + 1
+    morph.nodes[i] = mo.Node(i, "joint", 1, 2, 0, axis="pitch", length=0.10)
+    return morph
+
+
+@pytest.mark.parametrize("make", [lambda: mo.template(2),
+                                  _two_children_on_one_link,
+                                  lambda: mo.template(2, yaw=True),
+                                  lambda: mo.template(2, wheels=True)])
+def test_clean_templates_clear_at_spawn_and_while_walking(make):
+    morph = make()
+    ctrl = np.random.default_rng(0).uniform(0, 1, co.CTRL_LENGTH)
+    frames = [ca.spawn_frames(morph)] + ca.walk_frames(morph, ctrl)
+    assert len(frames) == 1 + len(ca.WALK_TIMES)
+    for pose in frames:
+        clashes, _ = ca.report(morph, frames=pose)
+        assert clashes == []
+
+
+def test_a_walk_report_covers_the_whole_walk():
+    morph = mo.template(2)
+    ctrl = np.random.default_rng(0).uniform(0, 1, co.CTRL_LENGTH)
+    clashes, horns = ca.report(morph, ctrl=ctrl, walk=True)
+    assert clashes == []
+    assert len(horns) == morph.n_servos
+
+
+def test_every_pair_is_checked_including_parent_and_child():
+    # a link pushed into the servo it turns about is a clash, not a joint
+    morph = mo.template(2)
+    records = assembly.placements(morph)
+    k = next(i for i, p in enumerate(records) if p.label == "link1")
+    records[k] = records[k]._replace(pos=(-10.0, 0.0, 0.0))
+    clashes, _ = ca.report(morph, records=records)
+    assert any("link1" in (a, b) for a, b, _ in clashes)
+
+
+def test_a_lap_is_allowed_only_between_screwed_parts():
+    morph = mo.template(2)
+    pairs = ca.lap_pairs(morph, assembly.placements(morph))
+    assert frozenset(("cradle1", "servo1")) in pairs
+    assert frozenset(("link1", "servo1")) not in pairs
+    assert frozenset(("link1", "link2")) not in pairs
+
+
 def test_horn_patterns_line_up_on_a_clean_body():
     morph = mo.template(2)
     clashes, horns = ca.report(morph)

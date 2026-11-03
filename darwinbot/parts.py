@@ -1,13 +1,14 @@
 """
 parts.py
 --------
-Parametric printable parts (build123d) for the real DarwinBot: servo bracket,
-link, elbow plate, TPU foot, wheel and torso plate (the extruded contour
-polygon, one mount per used core slot). All dimensions in mm.
+Parametric printable parts (build123d) for the real DarwinBot: servo cradle,
+link with its U fork, elbow plate, wedge, TPU foot, wheel and torso plate (the
+extruded contour polygon, one mount per used core slot). All dimensions in mm.
 
 Conventions: a link lies along +X with the horn axis at the origin and the
 next servo axis at x = length_mm, or at the end of its L/arc path; servo and
-wheel axes point along Z. Feet come in the FOOT_SHAPES of morphology.py.
+wheel axes point along Z. A cradle belongs to the parent of its servo and a U
+link to the child, as in the simulation. Feet come in the FOOT_SHAPES of morphology.py.
 Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 """
 
@@ -70,6 +71,35 @@ TAIL_T = 6.0            # tail bar thickness
 SKID_L, SKID_W, SKID_T = 60.0, 30.0, 6.0   # low-friction pad
 SPIKE_L, SPIKE_R = 30.0, 5.0               # TPU tip, tapered to SPIKE_TIP_R
 SPIKE_TIP_R = 1.5
+# --- cradle and U link (see docs/exporting.md) ------------------------------
+HORN_T = 3.0            # horn thickness, from the simulation's visual dress
+CRADLE_GAP = 0.2        # mm of air between a printed part and the servo body
+CRADLE_T = 2.5          # cradle wall and cap thickness
+HORN_OPEN_R = 8.5       # horn opening in a cradle cap
+ARM_W = 13.4            # half width of a U link arm, across the link plane
+ARM_T = 3.0             # U link arm thickness, on each horn face
+ARM_GAP = 0.2           # air between a cradle cap and a U link arm
+SLEEVE_R = 19.2         # the cradle sleeve and caps are trimmed to this radius about
+                        # the output axis in front of it: the servo corner is at 16.1
+                        # and the sleeve keeps its 2.5 mm wall there
+FOOT_SWEEP_R = 23.6     # the cradle foot keeps inside this radius, in front of the axis
+BRIDGE_X = 24.0         # where the U link crosses the servo front, along the link: it
+                        # clears the foot, so the link turns the whole joint range
+BRIDGE_T = 3.0          # U link bridge thickness along the link
+MOUNT_DROP = 22.0       # joint axis to the torso plate face: clears a U link arm (21.55)
+MOUNT_FOOT_T = 3.0      # cradle foot thickness
+WEDGE_T = 2.0           # thinnest edge of a rolled-mount wedge
+BACK_FOOT_X = 31.0      # a cradle whose output axis stands vertical bolts down behind
+                        # the servo: its M3 pattern is this far behind the axis, out of
+                        # the circle the U link arms turn in
+# how far a cradle reaches back from the child servo axis: its back wall is
+# where a link plate or an elbow deck stops
+CRADLE_BACK = SERVO_AXIS_X + SERVO_L / 2 + SERVO_CLEARANCE + CRADLE_T
+TONGUE_T = 0.45         # elbow tongue lapped on the link tip (<= 0.5 mm)
+TONGUE_Z = 4.5          # tongue half height, clear of the link tip holes
+STRUT_HW = 4.0          # elbow strut half width along the link
+SPIGOT_R = 5.5          # link tip spigot inside a TPU foot socket
+SPIGOT_L = 14.0
 
 
 def horn_hole_centres() -> list:
@@ -121,40 +151,182 @@ def _bar(x0: float, x1: float, width_mm: float, thick_mm: float) -> Part:
     return bar
 
 
-def servo_bracket() -> Part:
-    """Open-top box holding one servo body: the floor takes four M2 screws
-    into the body's tapped holes, the side walls two M3 cross screws, and the
-    M3 mounting pattern at the origin bolts the bracket to a torso tab or to a
-    link end. The origin is the output axis, as a module frame in the
-    simulation, so the box sits SERVO_AXIS_X behind it along -X."""
-    iw, il = SERVO_W + 2 * SERVO_CLEARANCE, SERVO_L + 2 * SERVO_CLEARANCE
-    ow, ol = iw + 2 * WALL, il + 2 * WALL
-    h = SERVO_H * 0.6 + WALL            # holds the lower 60% of the body
-    c = -SERVO_AXIS_X                   # body centre: the origin is the output axis
-    box = Pos(c, 0, 0) * Box(ol, ow, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    pocket = Pos(c, 0, WALL) * Box(il, iw, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    part = box - pocket
-    # mounting pattern through the floor, under the output axis
-    part -= _mount_holes(WALL)
-    # M2 screws from under the floor into the body's tapped holes
-    for sx in SERVO_TAP_X:
-        for sy in (-SERVO_TAP_Y, SERVO_TAP_Y):
-            part -= Pos(c + sx, sy, 0) * Cylinder(SERVO_M2 / 2, WALL * 3)
-    # two M3 holes through each side wall for cross screws
-    for sx in (-il / 4, il / 4):
-        part -= Pos(c + sx, 0, h / 2 + WALL) * Rot(X=90) * Cylinder(M3 / 2, ow * 2)
-    return part
+def servo_body(axis: str = "pitch"):
+    """(centre, half extents) of the printed servo body in the module frame,
+    for a joint turning about `axis` (the simulation's morphology.servo_box
+    with the printed body height)."""
+    c = (-SERVO_AXIS_X, 0.0, 0.0)
+    hb = SERVO_BODY_H / 2
+    if axis == "pitch":
+        return c, (SERVO_L / 2, SERVO_W / 2, hb)
+    if axis == "yaw":
+        return c, (SERVO_L / 2, hb, SERVO_W / 2)
+    return (0.0, 0.0, -SERVO_AXIS_X), (hb, SERVO_W / 2, SERVO_L / 2)
+
+
+def _axis_rot(axis: str):
+    """Rotation from the canonical frame (output axis along +Z, body centre at
+    -SERVO_AXIS_X along X) to the module frame of a joint about `axis`."""
+    if axis == "pitch":
+        return Rot(Z=0)
+    if axis == "yaw":
+        return Rot(X=-90)
+    return Rot(X=180) * Rot(Y=90)
+
+
+def _boxc(x0, x1, y0, y1, z0, z1) -> Part:
+    """Box between two opposite corners, along the axes."""
+    return Pos((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2) * Box(
+        abs(x1 - x0), abs(y1 - y0), abs(z1 - z0))
+
+
+def _outside_circle(radius: float) -> Part:
+    """Cutter in the cradle frame: everything beyond `radius` of the output axis
+    (the canonical Z axis) from just behind the axis forwards, where the link
+    that turns about the servo sweeps."""
+    return _boxc(-3.0, 300.0, -300.0, 300.0, -300.0, 300.0) \
+        - Cylinder(radius, 600.0)
+
+
+def _cradle_shell(axis: str, mount: bool, side: int = 1,
+                  drop: float = None, shift: float = 0.0, back: bool = False):
+    """Cradle around a servo in the module frame, before its bore is cut:
+    (solid, bore). The sleeve walls wrap the four faces across the output axis
+    and leave both horn faces open; a cap on each horn face carries the M2
+    screws into the body's tapped holes. With `mount`, a foot on the module
+    `side` * Y reaches the torso plate level with the M3 mounting pattern on
+    the output axis. The body box and the caps do not change with `side`, so
+    the two are the same part turned about the module X axis."""
+    cx, cy, cz = -SERVO_AXIS_X, 0.0, 0.0          # canonical: output axis on Z
+    hx, hy, hz = SERVO_L / 2, SERVO_W / 2, SERVO_BODY_H / 2
+    hx, hy, hz = hx + SERVO_CLEARANCE, hy + SERVO_CLEARANCE, hz + SERVO_CLEARANCE
+    part = _boxc(cx - hx - CRADLE_T, cx + hx + CRADLE_T,
+                 cy - hy - CRADLE_T, cy + hy + CRADLE_T,
+                 cz - hz - CRADLE_T, cz + hz + CRADLE_T)
+    bore = _boxc(cx - hx, cx + hx, cy - hy, cy + hy,
+                 cz - 4 * hz, cz + 4 * hz)
+    part -= bore
+    for s in (-1, 1):
+        z = cz + s * (hz + CRADLE_T / 2)
+        cap = _boxc(cx - hx - CRADLE_T, cx + hx + CRADLE_T,
+                    cy - hy - CRADLE_T, cy + hy + CRADLE_T,
+                    z - CRADLE_T / 2, z + CRADLE_T / 2)
+        cap -= Pos(cx, cy, z) * Cylinder(HORN_OPEN_R, 4 * CRADLE_T)
+        for tx in SERVO_TAP_X:
+            for ty in (-SERVO_TAP_Y, SERVO_TAP_Y):
+                cap -= Pos(cx + tx, ty, z) * Cylinder(SERVO_M2 / 2, 4 * CRADLE_T)
+        part += cap
+    # in front of the axis a link plate and its U fork turn about it: keep the
+    # sleeve inside the circle they clear
+    part -= _outside_circle(SLEEVE_R)
+    if mount and back:
+        # foot under the lower cap, behind the servo, with the M3 pattern
+        # BACK_FOOT_X behind the output axis
+        zt = cz - hz - CRADLE_T
+        wb = MOUNT_SIDE + M3 + 3.0
+        foot = _boxc(-BACK_FOOT_X - wb / 2, -BACK_FOOT_X + wb / 2,
+                     -(hy + CRADLE_T), hy + CRADLE_T, -MOUNT_DROP, zt + 0.5)
+        part += foot
+        part -= Pos(-BACK_FOOT_X, 0, 0) * _mount_holes(4 * MOUNT_DROP)
+    elif mount:
+        # foot under the module side * Y, plate face `drop` from the output axis
+        y0 = cy - hy - CRADLE_T
+        y1 = -(MOUNT_DROP if drop is None else drop)
+        wf, wd = MOUNT_SIDE + 2 * WALL + 12.0, MOUNT_SIDE + M3 + 3.0
+        # `shift` slides the foot along the output axis, so the M3 pattern of a
+        # tilted foot hangs plumb under the axis, over the wedge; the foot stays
+        # inside the caps, clear of the U link arms
+        foot = _boxc(-wf / 2, wf / 2, y1, y1 + MOUNT_FOOT_T,
+                     shift - wd / 2, shift + wd / 2)
+        post = _boxc(-wf / 2, wf / 2, y0, y1 + MOUNT_FOOT_T,
+                     min(shift, 0.0) - wd / 2, max(shift, 0.0) + wd / 2)
+        holes = Pos(0, y1 + MOUNT_FOOT_T / 2, shift) * Rot(X=90) * \
+            _mount_holes(MOUNT_FOOT_T)
+        if side < 0:
+            foot, post, holes = (Rot(X=180) * foot, Rot(X=180) * post,
+                                 Rot(X=180) * holes)
+        keep = (post + foot) - _outside_circle(FOOT_SWEEP_R)
+        part += keep
+        part -= holes
+    return _axis_rot(axis) * part, _axis_rot(axis) * bore
+
+
+def cradle(axis: str = "pitch", mount: bool = True, side: int = 1,
+           drop: float = None, shift: float = 0.0, back: bool = False) -> Part:
+    """Printed cradle holding one STS3215, in the module frame of a joint about
+    `axis`: a sleeve around the body with a cap on each horn face, the four M2
+    holes into the tapped face, and (with `mount`) a foot on the module
+    `side` * Y down to the torso plate with the common M3 pattern on the
+    output axis, its face `drop` mm from the axis (default: MOUNT_DROP, the
+    torso plate level; shorter leaves room for a wedge on a rolled mount, and
+    `shift` slides the foot along the output axis to keep its pattern plumb). It
+    belongs to the parent of the servo: bolted to a torso tab, printed as one
+    piece with a link tip, or at the end of an elbow plate."""
+    shell, bore = _cradle_shell(axis, mount, side, drop, shift, back)
+    return shell - bore
+
+
+def _u_root(axis: str, width_mm: float, thick_mm: float):
+    """U link fork that clasps both horns of the servo at the link root, plus
+    the bridge into the link plate. Returns (solid, x of the plate start).
+    The arms lie on the two horn faces, outside the cradle caps, and carry the
+    horn hole pattern on the output axis."""
+    d = SERVO_BODY_H / 2 + HORN_T + ARM_GAP
+    hw = max(ARM_W, width_mm / 2 + 1.0)
+    front = BRIDGE_X + BRIDGE_T
+    part = None
+
+    def add(b):
+        nonlocal part
+        part = b if part is None else part + b
+
+    def horn(s):
+        hole = _horn_holes(ARM_T)
+        if axis == "pitch":
+            return Pos(0, 0, s * (d + ARM_T / 2)) * hole
+        if axis == "yaw":
+            return Pos(0, s * (d + ARM_T / 2), 0) * hole
+        return Pos(s * (d + ARM_T / 2), 0, 0) * Rot(Y=90) * hole
+
+    if axis == "pitch":
+        for s in (-1, 1):
+            add(_boxc(-hw, front, -hw, hw, s * d, s * (d + ARM_T)))
+            part -= horn(s)
+        add(_boxc(BRIDGE_X, front, -thick_mm / 2, thick_mm / 2,
+                  -(d + ARM_T), d + ARM_T))
+    elif axis == "yaw":
+        for s in (-1, 1):
+            add(_boxc(-hw, front, s * d, s * (d + ARM_T), -hw, hw))
+            part -= horn(s)
+        add(_boxc(BRIDGE_X, front, -(d + ARM_T), d + ARM_T,
+                  -thick_mm / 2, thick_mm / 2))
+    else:
+        # about X: the arms sit fore and aft of the servo, joined by a strap
+        # over its far end at the radius the plate clears (BRIDGE_X); the plate
+        # runs on from the fore arm, along the output axis
+        z = BRIDGE_X
+        for s in (-1, 1):
+            add(_boxc(s * d, s * (d + ARM_T), -hw, hw, -hw, z + ARM_T))
+            part -= horn(s)
+        add(_boxc(-(d + ARM_T), d + ARM_T, -hw, hw, z, z + ARM_T))
+        front = d + ARM_T / 2
+    return part, front
 
 
 def link(length_mm: float, width_mm: float = LINK_W,
          thick_mm: float = LINK_T, profile: str = "straight",
-         bend_deg: float = 0.0) -> Part:
-    """Plate between two servo axes (horn at x=0, next bracket at the tip).
-    Both ends carry a round boss of END_BOSS_D (or the width, if wider), so the
-    horn holes and the M3 mounting pattern stay inside the material for any
-    width. An L link is two equal
-    bars and an arc three, turned about Z so the whole path keeps its length;
-    each piece is a straight bar and the pieces are unioned."""
+         bend_deg: float = 0.0, axis: str = None, foot_r: float = None,
+         tip_axis: str = None, elbow: tuple = ()) -> Part:
+    """Plate between two servo axes (horn at x=0, next servo at the tip).
+    With `axis` the root is a U link that clasps both servo horns (a joint at
+    this link's root); otherwise it is a bolted plate end. `foot_r` frees the
+    tip for a TPU foot: the plate ends in a spigot inside the foot socket.
+    `tip_axis` prints the cradle of a child servo at the tip, as one piece.
+    `elbow` is the trim distance on each side of the tip (right, left) when a
+    side servo hangs there: the tip narrows to a fin that sits between the two
+    servo bodies, drilled for the M3 bolts of the elbow tongues.
+    An L link is two equal bars and an arc three, turned about Z so the whole
+    path keeps its length."""
     if length_mm < width_mm:
         raise ValueError("link too short")
     pts = _link_path_mm(length_mm, profile, bend_deg)
@@ -164,11 +336,46 @@ def link(length_mm: float, width_mm: float = LINK_W,
         seg = math.hypot(b[0] - a[0], b[1] - a[1])
         bar = Pos(a[0], a[1], 0) * Rot(Z=yaw) * _bar(0.0, seg, width_mm, thick_mm)
         part = bar if part is None else part + bar
-    part -= _horn_holes(thick_mm)
-    # bracket end at the tip, turned by the total bend
+    part = Pos(0, 0, -thick_mm / 2) * part            # plate centred on z = 0
+    part -= Pos(0, 0, -thick_mm / 2) * _horn_holes(thick_mm)
     tip = pts[-1]
-    part -= Pos(tip[0], tip[1], 0) * Rot(Z=0.0 if profile == "straight" else bend_deg) \
-        * _link_end_pattern(thick_mm)
+    tip_deg = 0.0 if profile == "straight" else bend_deg
+    if elbow:
+        frame = Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg)
+        # as wide as the cradle, and past the tip boss so no sliver of it is left
+        hx = max(SERVO_W / 2 + SERVO_CLEARANCE + CRADLE_T, _boss_d(width_mm) / 2 + 1.0)
+        for at in elbow:
+            if at is None:
+                continue
+            part -= frame * (_boxc(-hx, hx, at, 400, -400, 400)
+                             if at > 0 else
+                             _boxc(-hx, hx, -400, at, -400, 400))
+        for x in (-MOUNT_SIDE / 2, MOUNT_SIDE / 2):
+            part -= frame * Pos(x, 0, 0) * Rot(X=90) \
+                * Cylinder(M3 / 2, 80)
+    else:
+        part -= Pos(tip[0], tip[1], -thick_mm / 2) * Rot(Z=tip_deg) \
+            * _link_end_pattern(thick_mm)
+    if axis:
+        root, front = _u_root(axis, width_mm, thick_mm)
+        part -= _boxc(-400, front, -400, 400, -400, 400)
+        part += root
+    if tip_axis:
+        shell, bore = _cradle_shell(tip_axis, False)
+        frame = Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg)
+        # the plate stops at the cradle's back wall, so the child servo body
+        # never shares space with it
+        part -= frame * _boxc(-CRADLE_BACK, 400, -400, 400, -400, 400)
+        part += frame * shell
+        part -= frame * bore
+    if foot_r:
+        # the foot slides over a spigot; clear its socket wall out of the tip
+        part -= Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg) * Pos(-12.0, 0, 0) \
+            * Rot(Y=90) * Cylinder(foot_r + 2.0, 12.0,
+                                   align=(Align.CENTER, Align.CENTER, Align.MIN))
+        # the spigot stops at the foot socket floor, 3 mm inside the tip
+        part += Pos(tip[0], tip[1], 0) * Rot(Z=tip_deg) * Pos(-SPIGOT_L / 2 - 3.0, 0, 0) \
+            * Rot(Y=90) * Cylinder(SPIGOT_R, SPIGOT_L)
     return part
 
 
@@ -200,16 +407,60 @@ def _link_end_holes(x: float, y: float, angle_deg: float = 0.0,
 
 
 def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
-                width_mm: float = LINK_W, thick_mm: float = LINK_T) -> Part:
+                width_mm: float = LINK_W, thick_mm: float = LINK_T,
+                axis: str = None) -> Part:
     """Bar bolted on a link end (origin) that carries a side module
-    `distance_mm` away along +Y; the far end repeats the link end pattern,
-    turned about Z by angle_deg - 90."""
+    `distance_mm` away along +Y. The near end is a thin tongue lapped on the
+    link tip; the far end repeats the link end pattern, turned about Z by
+    angle_deg - 90. With `axis` the far end is the cradle of the child servo,
+    printed as one piece, and the near end is a vertical tongue bolted to the
+    side of the link tip fin (two M3 bolts along Y shared by the elbows on both
+    sides): the child servo body sits in the link plane, so the elbow keeps no
+    material there and joins the cradle's back wall with a strut."""
     if distance_mm < width_mm:
         raise ValueError("elbow too short")
+    if axis:
+        frame = Pos(0, distance_mm, 0) * Rot(Z=angle_deg)
+        at = distance_mm - CRADLE_BACK - CRADLE_GAP   # link tip fin edge
+        hx = SERVO_W / 2 + SERVO_CLEARANCE + CRADLE_T
+        hz = SERVO_BODY_H / 2 + SERVO_CLEARANCE + CRADLE_T
+        tongue = _boxc(-hx, hx, at - TONGUE_T, at + 0.1, -TONGUE_Z, TONGUE_Z)
+        strut = _boxc(-STRUT_HW, STRUT_HW, at, SERVO_W / 2 + SERVO_CLEARANCE + CRADLE_T,
+                      -hz, hz)
+        part = tongue + strut
+        for x in (-MOUNT_SIDE / 2, MOUNT_SIDE / 2):
+            part -= Pos(x, 0, 0) * Rot(X=90) * Cylinder(M3 / 2, 4 * TONGUE_Z)
+        shell, bore = _cradle_shell(axis, False)
+        part += frame * shell
+        part -= frame * bore
+        return part
     part = Rot(Z=90) * _bar(0.0, distance_mm, width_mm, thick_mm)
-    part -= _link_end_holes(0, 0, 0.0, thick_mm)
-    part -= _link_end_holes(0, distance_mm, angle_deg - 90.0, thick_mm)
+    part = Pos(0, 0, -thick_mm / 2) * part
+    part -= Pos(0, 0, -thick_mm / 2) * _link_end_holes(0, 0, 0.0, thick_mm)
+    # only the upper half of the link tip, and a thin tongue up to the bar
+    part -= _boxc(-400, 400, -400, 0, -400, 400)
+    part -= _boxc(-400, 400, -400, MOUNT_SIDE, -400, thick_mm / 2 - TONGUE_T)
+    part -= Pos(0, distance_mm, -thick_mm / 2) \
+        * _link_end_holes(0, 0, angle_deg - 90.0, thick_mm)
     return part
+
+def wedge(angle_deg: float) -> Part:
+    """Printed wedge between a torso tab and a cradle foot, taking up a slot
+    roll that is not a multiple of 90 degrees: the common M3 mounting pattern
+    through both faces, the bottom flat on the tab and the top turned by
+    `angle_deg` about Y (the out-of-plane roll axis), WEDGE_T thick at its
+    thin edge."""
+    if abs(angle_deg) > 80.0:
+        raise ValueError("wedge angle must be within 80 degrees")
+    w = MOUNT_SIDE + 2 * WALL + 2.0
+    a = abs(math.tan(math.radians(angle_deg)))
+    top = WEDGE_T + a * w
+    part = _boxc(-w / 2, w / 2, -w / 2, w / 2, 0, top)
+    # the top face passes through (-w/2, WEDGE_T) and rises with x
+    part -= Pos(-w / 2, 0, WEDGE_T) * Rot(Y=-abs(angle_deg)) \
+        * Pos(0, 0, 2 * w) * Box(4 * w, 4 * w, 4 * w)
+    part -= _mount_holes(2 * top)
+    return Rot(Z=180) * part if angle_deg < 0 else part
 
 
 def spring(width_mm: float = LINK_W, blade_mm: float = 4.0) -> Part:
@@ -368,6 +619,12 @@ def _face(m) -> bool:
     return len(m) > 3 and bool(m[3])
 
 
+def _back(m) -> float:
+    """How far behind the slot position the mounting holes of a mount are: a
+    servo whose output axis stands vertical bolts down behind itself."""
+    return float(m[4]) if len(m) > 4 else 0.0
+
+
 def _footprint_centre(x: float, y: float, yaw_deg: float):
     """Centre of the bracket footprint of a mount at (x, y): the body sits
     SERVO_AXIS_X behind the output axis along the yawed -X."""
@@ -413,7 +670,10 @@ def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
             ol, ow, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
     for m in mounts:
         x, y, yaw = _mount(m, width_mm)
-        part -= Pos(x, y, 0) * _mount_holes(t, yaw)
+        b = _back(m)
+        a = math.radians(yaw)
+        part -= Pos(x - b * math.cos(a), y - b * math.sin(a), 0) \
+            * _mount_holes(t, yaw)
     if not electronics:
         return part
     # ESP32 board hole pattern, centred behind the origin.

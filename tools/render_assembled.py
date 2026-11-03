@@ -1,6 +1,6 @@
 """
 Render a robot from the archive built from its printed parts: the STLs that
-export.py writes (torso plate, links, elbow plates, servo brackets, feet,
+export.py writes (torso plate, links, elbow plates, cradles, feet,
 wheels) placed where the simulation puts the modules, with the servo bodies
 and the electronics as plain boxes. For judging how the real robot will look,
 not for physics.
@@ -38,7 +38,6 @@ COLOUR = {"pla": "0.93 0.55 0.15 1",     # orange PLA, stands out from the floor
 SERVO = "0.10 0.10 0.10 1"
 BOARD = "0.10 0.45 0.20 1"
 BATTERY = "0.20 0.25 0.60 1"
-WALL = 0.0025                    # bracket wall, as builder._servo_dress
 
 
 def _mat_quat(rot) -> str:
@@ -84,13 +83,12 @@ def assembled_xml(morph, folder) -> str:
     meshes = Meshes(folder)
     bodies = {b.get("name"): b for b in root.iter("body")}
     cm = morph.child_map()
-    sz = np.array(mo.SERVO_BOX)[2] / 2
 
-    # torso: hide the simulated prism, put the plate under the edge brackets
+    # torso: hide the simulated prism, put the plate under the edge cradles
     torso = bodies["torso"]
     for g in list(torso.findall("geom")):
         _hide(g)
-    floor_z = -sz - WALL                       # bracket floor = top of the plate
+    floor_z = -parts.MOUNT_DROP / 1000.0       # top of the plate
     ex, ey = mo.ELECTRONICS_BOX
     torso.append(ET.Element("geom", type="box", pos=f"0 0 {floor_z + 0.004:.4f}",
                             size=f"{0.029:.4f} {0.0115:.4f} 0.004", rgba=BOARD,
@@ -106,7 +104,7 @@ def assembled_xml(morph, folder) -> str:
             continue
         geoms = body.findall("geom")
         if node.kind in ("joint", "wheel", "segment"):
-            for g in geoms:              # servo body darker; bracket from the STL
+            for g in geoms:              # servo body darker; cradle from the STL
                 if g.get("rgba") == builder.BRACKET_RGBA:
                     _hide(g)
                 elif g.get("type") == "box" and g.get("mass") is not None:

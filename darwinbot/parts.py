@@ -125,22 +125,24 @@ def servo_bracket() -> Part:
     """Open-top box holding one servo body: the floor takes four M2 screws
     into the body's tapped holes, the side walls two M3 cross screws, and the
     M3 mounting pattern at the origin bolts the bracket to a torso tab or to a
-    link end."""
+    link end. The origin is the output axis, as a module frame in the
+    simulation, so the box sits SERVO_AXIS_X behind it along -X."""
     iw, il = SERVO_W + 2 * SERVO_CLEARANCE, SERVO_L + 2 * SERVO_CLEARANCE
     ow, ol = iw + 2 * WALL, il + 2 * WALL
     h = SERVO_H * 0.6 + WALL            # holds the lower 60% of the body
-    box = Box(ol, ow, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    pocket = Pos(0, 0, WALL) * Box(il, iw, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    c = -SERVO_AXIS_X                   # body centre: the origin is the output axis
+    box = Pos(c, 0, 0) * Box(ol, ow, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    pocket = Pos(c, 0, WALL) * Box(il, iw, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
     part = box - pocket
-    # mounting pattern through the floor, centred under the servo body
-    part -= Pos(0, 0, 0) * _mount_holes(WALL)
+    # mounting pattern through the floor, under the output axis
+    part -= _mount_holes(WALL)
     # M2 screws from under the floor into the body's tapped holes
     for sx in SERVO_TAP_X:
         for sy in (-SERVO_TAP_Y, SERVO_TAP_Y):
-            part -= Pos(sx, sy, 0) * Cylinder(SERVO_M2 / 2, WALL * 3)
+            part -= Pos(c + sx, sy, 0) * Cylinder(SERVO_M2 / 2, WALL * 3)
     # two M3 holes through each side wall for cross screws
     for sx in (-il / 4, il / 4):
-        part -= Pos(sx, 0, h / 2 + WALL) * Rot(X=90) * Cylinder(M3 / 2, ow * 2)
+        part -= Pos(c + sx, 0, h / 2 + WALL) * Rot(X=90) * Cylinder(M3 / 2, ow * 2)
     return part
 
 
@@ -349,18 +351,28 @@ def caster_fork() -> Part:
 
 def _mount(m, width_mm: float):
     """(x, y, yaw in degrees) of a torso mount. A mount given as (x, y) is
-    turned to face outward: 90 degrees on a side edge, otherwise 0. A fourth
+    turned to face outward: +-90 degrees on a side edge, 180 at the rear and
+    0 at the front. A fourth
     element True marks a face mount (see _face)."""
     if len(m) >= 3:
         return float(m[0]), float(m[1]), float(m[2])
     x, y = m
-    return float(x), float(y), 90.0 if abs(abs(y) - width_mm / 2) < 1e-3 else 0.0
+    if abs(abs(y) - width_mm / 2) < 1e-3:
+        return float(x), float(y), 90.0 if y > 0 else -90.0
+    return float(x), float(y), 0.0 if x >= 0 else 180.0
 
 
 def _face(m) -> bool:
     """True for a mount on the top or bottom face of the torso: drilled through
     the plate with the mounting pattern, no edge tab."""
     return len(m) > 3 and bool(m[3])
+
+
+def _footprint_centre(x: float, y: float, yaw_deg: float):
+    """Centre of the bracket footprint of a mount at (x, y): the body sits
+    SERVO_AXIS_X behind the output axis along the yawed -X."""
+    a = math.radians(yaw_deg)
+    return x - SERVO_AXIS_X * math.cos(a), y - SERVO_AXIS_X * math.sin(a)
 
 
 def _footprint(yaw_deg: float):
@@ -379,8 +391,8 @@ def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
     core (its attachment angle), which turns both the tab footprint and the
     pattern; a fourth element True (a face mount) drills the pattern only,
     with no tab. A plain (x, y) is turned 90 degrees on a side edge and 0
-    elsewhere. The bracket is centred on the slot as in the simulation, so part
-    of it overhangs the edge and the tab carries it. `electronics=False` skips
+    elsewhere. The output axis sits on the slot as in the simulation and the
+    bracket behind it, so part of it may overhang the edge and the tab carries it. `electronics=False` skips
     the board holes and battery strap, for a segment plate."""
     t = PLATE_T
     pts = [(float(x), float(y)) for x, y in polygon]
@@ -395,8 +407,9 @@ def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
             continue
         x, y, yaw = _mount(m, width_mm)
         fx, fy = _footprint(yaw)
-        feet.append((x, y, fx, fy))
-        part += Pos(x, y, 0) * Rot(Z=yaw) * Box(
+        cx, cy = _footprint_centre(x, y, yaw)
+        feet.append((cx, cy, fx, fy))
+        part += Pos(cx, cy, 0) * Rot(Z=yaw) * Box(
             ol, ow, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
     for m in mounts:
         x, y, yaw = _mount(m, width_mm)
@@ -434,6 +447,7 @@ def _plate_bounds(polygon, mounts):
             continue
         x, y, yaw = _mount(m, width_mm)
         fx, fy = _footprint(yaw)
+        x, y = _footprint_centre(x, y, yaw)
         x0, x1 = min(x0, x - fx / 2), max(x1, x + fx / 2)
         y0, y1 = min(y0, y - fy / 2), max(y1, y + fy / 2)
     return x0, x1, y0, y1

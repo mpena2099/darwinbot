@@ -110,6 +110,12 @@ TORSO_HEIGHT = 0.06                       # m
 CONTOUR_RANGE = (0.4, 1.4)                # contour factor of a torso vertex
 ELECTRONICS_BOX = (0.10, 0.06)            # m, ESP32 + LiPo footprint, centred
 SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
+# The STS3215 output axis sits 12.5 mm from the body centre, towards one end
+# (docs/hardware-dados.md): a module frame is the joint axis, so the servo
+# body sits behind it, along local -X, away from the link it drives.
+SERVO_AXIS_OFFSET = 0.0125          # m
+SERVO_CENTRE = np.array([-SERVO_AXIS_OFFSET, 0.0, 0.0])   # in the module frame
+ELBOW_BOSS_R = 0.0155               # m, round end of a printed elbow plate (parts.END_BOSS_D / 2)
 SEGMENT_LENGTH_RANGE = (0.08, 0.22)      # m, spine plate length
 SEGMENT_WIDTH_RANGE = (0.08, 0.22)       # m, spine plate width
 SEGMENT_HEIGHT = 0.03                    # m, spine plate thickness
@@ -592,7 +598,7 @@ class Morphology:
         """Lowest point of the body relative to the torso centre at rest."""
         low = -TORSO_HEIGHT / 2
         corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1)
-                            for sz in (-1, 1)]) * (np.array(SERVO_BOX) / 2)
+                            for sz in (-1, 1)]) * (np.array(SERVO_BOX) / 2) + SERVO_CENTRE
         for i, (pos, rot) in self.frames().items():
             n = self.nodes[i]
             if n.kind in ("joint", "wheel", "segment"):

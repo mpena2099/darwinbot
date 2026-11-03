@@ -34,7 +34,8 @@ import numpy as np
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
-                                  ELECTRONICS_BOX, SEGMENT_HEIGHT, SERVO_BOX,
+                                  ELECTRONICS_BOX, ELBOW_BOSS_R, SEGMENT_HEIGHT,
+                                  SERVO_BOX, SERVO_CENTRE,
                                   SKID_SIZE, SPIKE_LENGTH, SPIKE_RADIUS,
                                   SPRING_DAMPING, TAIL_BAR_SIZE, TAIL_TIP_RADIUS,
                                   TORSO_HEIGHT, Actuator, ActuatorLayout,
@@ -125,9 +126,9 @@ def _frame_attrs(morph: Morphology, node) -> str:
     return f'pos="{_f(*off)}" xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
 
 
-def _servo_box(friction: float = 1.0) -> str:
+def _servo_box(i: int, friction: float = 1.0) -> str:
     half = _f(*(np.array(SERVO_BOX) / 2))
-    return (f'<geom type="box" size="{half}" mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" '
+    return (f'<geom name="servo{i}" type="box" pos="{_f(*SERVO_CENTRE)}" size="{half}" mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" '
             f'{_special_geom(PLASTIC_FACTOR, friction)}/>')
 
 
@@ -146,10 +147,10 @@ def _servo_dress(axis_local) -> str:
     sx, sy, sz = np.array(SERVO_BOX) / 2
     wall = 0.0025
     h = 0.6 * sz
-    bracket = (f'<geom type="box" pos="{_f(0, 0, -sz + h - wall)}" '
+    bracket = (f'<geom type="box" pos="{_f(SERVO_CENTRE[0], 0, -sz + h - wall)}" '
                f'size="{_f(sx + wall, sy + wall, h)}" rgba="{BRACKET_RGBA}" {VISUAL_GEOM}/>')
     a = np.abs(np.asarray(axis_local, dtype=float))
-    face = float(a @ np.array([sx, sy, sz]))
+    face = float(a @ (np.array([sx, sy, sz]) + SERVO_CENTRE))
     start, end = a * face, a * (face + HORN_THICK)
     horn = (f'<geom type="cylinder" fromto="{_f(*start, *end)}" size="{HORN_RADIUS}" '
             f'rgba="{HORN_RGBA}" {VISUAL_GEOM}/>')
@@ -189,10 +190,12 @@ def _elbow_geom(parent, child, slot: int, friction: float = 1.0) -> str:
     side = 1.0 if slot == 1 else -1.0
     d = elbow_distance(child)
     tip, rot = link_tip(parent)
-    pos = tip + rot @ np.array([0.0, side * d / 2, 0.0])
+    # the printed plate starts with a round boss around the link tip
+    near, w = -ELBOW_BOSS_R, max(parent.width, 2 * ELBOW_BOSS_R)
+    pos = tip + rot @ np.array([0.0, side * (near + d) / 2, 0.0])
     return (f'<geom name="elbow{child.id}" type="box" '
             f'pos="{_f(*pos)}" {_xyaxes(rot)} '
-            f'size="{_f(parent.width / 2, d / 2, plate_thick(parent) / 2)}" '
+            f'size="{_f(w / 2, (d - near) / 2, plate_thick(parent) / 2)}" '
             f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {_special_geom(PLASTIC_FACTOR, friction)}/>')
 
 
@@ -236,7 +239,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_servo_box(friction)}\n{_servo_dress(AXIS_LOCAL[node.axis])}\n'
+                 f'range="{-rng} {rng}"/>\n{_servo_box(i, friction)}\n{_servo_dress(AXIS_LOCAL[node.axis])}\n'
                  f'{_link_geoms(node, contact=plastic)}')
     elif node.kind == "segment":
         name = f"j{i}"
@@ -248,7 +251,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_servo_box(friction)}\n'
+                 f'range="{-rng} {rng}"/>\n{_servo_box(i, friction)}\n'
                  f'{_servo_dress(AXIS_LOCAL[node.axis])}\n{_segment_geoms(node, friction)}')
     elif node.kind == "link":
         inner = _link_geoms(node, contact=plastic)
@@ -271,7 +274,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-SERVO_SPEED} {SERVO_SPEED}" '
             f'forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "wheel", "wheel"))
-        inner = f"""{_servo_box(friction)}
+        inner = f"""{_servo_box(i, friction)}
           <body name="{name}" pos="{_f(*hub)}">
             <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{WHEEL_DAMPING}"/>
             <geom type="cylinder" fromto="{_f(0, -half_t, 0, 0, half_t, 0)}"

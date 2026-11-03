@@ -36,5 +36,5 @@ the rim, not optimised), and the hollowed robot is lighter than the one
 evolution scored. Nothing here has been printed yet.
 
 Servo dimensions in `darwinbot/parts.py` (horn and mounting holes, body size)
-are placeholders marked "measure a real STS3215 and update": check them
-against a real servo before printing.
+come from the SO-ARM100 STEP model of the STS3215, not from a caliper
+measurement: check them against a real servo before printing.

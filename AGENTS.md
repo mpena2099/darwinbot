@@ -28,6 +28,7 @@ python tools/terrain_sheet.py --archive <archive.pkl>    # docs/img/terrains.png
 python tools/make_readme_figures.py --archive <archive.pkl> --types a,b,c,d   # README figures; --types pins the robots shown
 python tools/parts_sheet.py exports/<type>    # every printed part on one image
 python tools/render_assembled.py --archive <archive.pkl> --type <type>   # the robot built from its printed parts, standing and walking
+python tools/check_assembly.py --archive <archive.pkl> --type <type>    # printed parts and servo bodies: clashes and horn holes
 python experiments/prune.py --archive <archive.pkl> --types a,b --out pruned.pkl   # cut parts the robot does not need
 python experiments/polish.py --archive <archive.pkl> --types a,b --out polished.pkl   # longer controller search for chosen robots
 python experiments/merge_archives.py a.pkl b.pkl --out merged.pkl   # islands: best elite per cell
@@ -66,6 +67,6 @@ The plan is in `docs/roadmap.md` (Next, Later, and the ROS 2 extension). Notes f
 
 - The score and the terrains say what a robot must achieve, never how it should look or move: no rewards for symmetry or for familiar shapes. Fix a score rule that can be cheated so it measures its intent; fix the simulator when it allows what the real world does not. Accept a scoring change only after a short run against the current rule shows it does not shrink the archive's variety (cells, body types). Before changing a rule or an archive axis, check whether an earlier decision relied on it.
 - An incompatible change to the genome or the physics: bump `BODY_MODEL` in `evolve.py`; old archives are then refused with a clear message.
-- Hardware values come from `docs/hardware-dados.md`. The servo measures in `parts.py` are provisional ("measure a real STS3215 and update") until someone measures a real servo.
+- Hardware values come from `docs/hardware-dados.md`. The servo measures in `parts.py` come from the SO-ARM100 STEP model of the STS3215, not from a caliper, until someone measures a real servo.
 - `.scratch/` is a scratch area outside git; `checkpoints/`, `exports/` and `*.mp4` stay out too.
 - Commit messages and pull request descriptions carry no AI attribution.

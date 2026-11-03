@@ -169,7 +169,7 @@ def test_mirrored_legs_move_alike():
 def test_overlapping_legs_are_not_buildable():
     # short links on a short torso put the wheels of adjacent side legs
     # inside each other; the spread body has room
-    same = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.15,
+    same = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.13,
                        thigh=0.04, shin=0.04)
     spread = mo.template(3, wheels=True, wheel_rad=0.06)
 
@@ -199,7 +199,7 @@ def test_printability_violation_is_not_buildable():
 
 def test_unbuildable_body_scores_unstable_without_simulating():
     from darwinbot.inner import optimise_controller
-    morph = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.15,
+    morph = mo.template(3, wheels=True, wheel_rad=0.06, body_length=0.13,
                         thigh=0.04, shin=0.04)
     res = optimise_controller(morph, [te.flat()], budget=50, seconds=1.0)
 
@@ -618,7 +618,7 @@ def test_spine_segment_builds_and_moves():
     morph = mo.template(2)
     first = max(morph.nodes) + 1
     morph.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
-                                 length=0.12, width=0.10)
+                                 length=0.14, width=0.10)
     morph.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0,
                                      axis="pitch", length=0.08)
     morph = mo.decode(mo.encode(morph))

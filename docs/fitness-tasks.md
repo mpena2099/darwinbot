@@ -52,10 +52,11 @@ Ctrl+C saves the preset being trained and skips the rest.
 Per episode, from `darwinbot/fitness.py`:
 
 ```
-score = dx - 0.5 * |dy| - 0.05 * energy / (m * g) - 0.5 * fell
+score = dx - 0.5 * |dy| - 0.2 * |yaw| - 0.05 * energy / (m * g) - 0.5 * fell
 ```
 
-`dx` is forward displacement, `dy` lateral displacement, `energy` the mechanical
+`dx` is forward displacement, `dy` lateral displacement, `yaw` the net heading
+change in radians (charged at the rate a turn earns it), `energy` the mechanical
 work of all actuators, `m` the robot mass and `g = 9.81`. Dividing energy by
 weight turns it into metres and keeps heavy and light bodies comparable. A fall
 ends the episode but keeps the distance covered, so the fixed penalty only

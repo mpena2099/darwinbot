@@ -21,7 +21,7 @@ from numba import njit
 
 from darwinbot.builder import build_mjcf
 from darwinbot.controller import CONTROL_DT, Controller, advance_phases
-from darwinbot.morphology import Morphology, violations
+from darwinbot.morphology import SERVO_AXIS_OFFSET, Morphology, violations
 from darwinbot.terrain import Terrain
 
 EPISODE_SECONDS = 8.0
@@ -126,10 +126,14 @@ def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
 
 
 # A part sits a little inside the one it is mounted on (the servo in its
-# bracket): 17 to 26 mm across every archive so far. Deeper than this, the
-# part passes through its parent, as a wheel bolted to the torso edge did
-# (45 mm), which MuJoCo hides because it never collides a body with its parent.
+# bracket): 17 to 26 mm across every archive with the servo body centred on
+# its axis. Deeper than this, the part passes through its parent, as a wheel
+# bolted to the torso edge did (37 to 45 mm), which MuJoCo hides because it
+# never collides a body with its parent. A servo body sits SERVO_AXIS_OFFSET
+# behind its axis, so it may sink that much deeper.
 MOUNT_OVERLAP_MAX = 0.029    # m
+SERVO_OVERLAP_MAX = MOUNT_OVERLAP_MAX + SERVO_AXIS_OFFSET
+ELBOW_OVERLAP_MAX = 0.001    # m, an elbow plate into a module it does not carry
 
 
 def is_buildable(model: mujoco.MjModel) -> bool:
@@ -144,10 +148,35 @@ def is_buildable(model: mujoco.MjModel) -> bool:
     model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     try:
         mujoco.mj_forward(model, data)
-        return not any(robot[c.geom1] and robot[c.geom2] and c.dist < -MOUNT_OVERLAP_MAX
+        return not any(robot[c.geom1] and robot[c.geom2] and
+                       (c.dist < -_overlap_max(model, c) or _foreign_elbow(model, c))
                        for c in data.contact)
     finally:
         model.opt.disableflags = flags
+
+
+def _overlap_max(model: mujoco.MjModel, contact) -> float:
+    names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+             for g in (contact.geom1, contact.geom2)]
+    return SERVO_OVERLAP_MAX if any(n.startswith("servo") for n in names) else MOUNT_OVERLAP_MAX
+
+
+def _foreign_elbow(model: mujoco.MjModel, contact) -> bool:
+    """True when an elbow plate cuts into a module other than the one it
+    carries, deeper than ELBOW_OVERLAP_MAX. An elbow lives in the parent body,
+    so the parent filter hides it from a sibling: with the servo body behind
+    its axis, two elbows on one link tip can put each servo into the other
+    elbow, which a printed robot cannot do."""
+    if contact.dist >= -ELBOW_OVERLAP_MAX:
+        return False
+    for g, other in ((contact.geom1, contact.geom2), (contact.geom2, contact.geom1)):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+        if name.startswith("elbow"):
+            body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY,
+                                     model.geom_bodyid[other]) or ""
+            if body != "n" + name[len("elbow"):]:
+                return True
+    return False
 
 
 @njit(cache=True)

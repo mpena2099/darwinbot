@@ -54,6 +54,35 @@ def test_servo_bracket():
     _ok(p)
     for x, y in _mount_points():
         assert _hole_is_free(p, x, y, 1.0)
+    # the origin is the output axis: the body centre sits SERVO_AXIS_X behind
+    c = -parts.SERVO_AXIS_X
+    # four M2 holes up into the body's tapped holes (bottom face pattern)
+    for x in (5.0, -19.5):
+        for y in (-10.2, 10.2):
+            assert _hole_is_free(p, c + x, y, 1.0, r=1.0)
+    # no ears: the floor is solid where the old ear screws went
+    for x in (-20.0, 20.0):
+        assert not _hole_is_free(p, c + x, 0.0, 1.0)
+    bb = p.bounding_box()
+    assert abs((bb.min.X + bb.max.X) / 2 - c) < 0.01
+
+
+def test_servo_axis_offset_matches_the_simulation():
+    from darwinbot import morphology as mo
+    assert abs(mo.SERVO_AXIS_OFFSET * 1000 - parts.SERVO_AXIS_X) < 1e-9
+    assert mo.SERVO_CENTRE[0] < 0
+
+
+def test_horn_holes_follow_the_real_horn():
+    # 4 holes on a 9.9 mm square at 45 degrees to the body axes
+    assert parts.HORN_N_HOLES == 4
+    assert parts.HORN_BOLT_CIRCLE == pytest.approx(14.0)
+    x, y = zip(*parts.horn_hole_centres())
+    assert max(map(abs, x)) == pytest.approx(4.95, abs=0.02)
+    assert max(map(abs, y)) == pytest.approx(4.95, abs=0.02)
+    p = parts.link(80, 20, 6)
+    for px, py in parts.horn_hole_centres():
+        assert _hole_is_free(p, px, py, 3.0, r=1.0)
 
 
 def test_mount_pattern_is_a_square_that_fits_the_boss():
@@ -220,12 +249,14 @@ def test_torso_plate():
 
 
 def test_torso_plate_tabs_carry_edge_brackets():
-    # rear and side mounts on the edges: tabs grow the plate by half a bracket
+    # rear and side mounts on the edges: tabs grow the plate by half a bracket,
+    # less the axis offset, since the servo body sits behind its axis (inwards)
     p = parts.torso_plate(_polygon(200, 100), [(-100, 0), (70, 50), (70, -50)])
     _ok(p)
     ol = parts.SERVO_L + 2 * parts.SERVO_CLEARANCE + 2 * parts.WALL
-    assert p.bounding_box().min.X == pytest.approx(-100 - ol / 2, abs=0.1)
-    assert p.bounding_box().size.Y == pytest.approx(100 + ol, abs=0.1)
+    a = parts.SERVO_AXIS_X
+    assert p.bounding_box().min.X == pytest.approx(-100 + a - ol / 2, abs=0.1)
+    assert p.bounding_box().size.Y == pytest.approx(100 + ol - 2 * a, abs=0.1)
 
 
 def test_torso_tiles_keeps_a_plate_that_fits():

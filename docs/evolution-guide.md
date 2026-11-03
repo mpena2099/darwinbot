@@ -104,10 +104,10 @@ Selection needs a criterion. A robot's score, after a few seconds of
 simulation, is:
 
 ```
-score = forward progress - 0.5 × lateral drift - 0.05 × energy spent - 0.5 × (fell?)
+score = forward progress - 0.5 × lateral drift - 0.2 × heading change - 0.05 × energy spent - 0.5 × (fell?)
 ```
 
-Walking forward earns points; walking crooked, spending too much energy and
+Walking forward earns points; walking crooked, curving when not asked to, spending too much energy and
 falling lose points. With several terrains, the final score mixes the
 average with the worst terrain, to reward robust robots.
 

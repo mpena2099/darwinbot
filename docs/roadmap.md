@@ -48,8 +48,10 @@
   rule. Needs three seeds before a decision.
 - **Turn forwards, not backwards**: a turn earns its heading change up to the
   distance the torso travelled, in any direction, so a curve driven in reverse
-  still scores. Counting only forward progress in a turn makes the robot obey
-  the command; one short run against the current rule measures it.
+  still scores. In the 92-cell archive of the long3 run, 14 of the 114 turning
+  episodes that earned credit drove the curve in reverse, and only 1 of the 18
+  among the ten best robots. Counting only forward progress in a turn would
+  close the gap; one short run against the current rule measures what it costs.
 - **Servo count back as an archive axis**: nothing in the score or the
   archive favours a simpler body, and the best robots use 13 to 16 servos, the
   most expensive to build. With the servo count as an axis next to the number

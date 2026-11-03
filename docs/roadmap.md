@@ -11,13 +11,6 @@
   short runs filled 37 and 42 cells against 44 and 51, for similar best scores.
   The search belongs after training, on the robots picked for the showcase.
 
-- **Walking or rolling as the ground asks** (a wheel-stall reflex): today a
-  robot with legs ending in wheels has one rhythm, legs and wheels together.
-  A new gene per joint would let the wheels' load drive the legs' amplitude:
-  free wheels keep the legs still and the robot rolls; a wheel stalled against
-  an obstacle makes the legs start stepping, as a Tachikoma does. A local
-  reflex, not a decision, and the STS3215 reports load in wheel mode too.
-  Changes the controller, the firmware and the control file: new `BODY_MODEL`.
 - **Assemble every export virtually, then build one**: no robot has been
   assembled yet, even on screen. A script that places every exported part and
   a servo model in the spawn pose would check that holes and screws line up,
@@ -109,6 +102,18 @@
 
 ## Later
 
+- **Walking or rolling as the ground asks** (a wheel-stall reflex): a robot
+  with legs ending in wheels has one rhythm, legs and wheels together. A gene
+  per joint that scales the leg amplitude by a low-pass of the wheels' load
+  (branch `tachikoma`) did not work: two 8-batch runs kept the variety (46 and
+  52 cells, 19 moving robots each) but scored lower than without it (best
+  wheeled-legged 0.35 and 0.25 against 0.46 and 0.45), and freezing the signal
+  at its episode mean changed the scores little, so evolution used the gene as
+  a fixed leg weakener. A wheel that rolls freely already carries load, and the
+  signal sat between 0.4 and 0.6 most of the time. A stall signal from the gap
+  between the commanded and the measured wheel speed (the STS3215 reports both)
+  would separate free from stalled wheels; it changes the controller, the
+  firmware and the control file, with a new `BODY_MODEL`.
 - **Servo count as an archive axis**: a 6-servo body and a 16-servo one that
   move alike share a cell today, and the one with more motors usually wins it;
   the ten best robots average 13.8 servos. With the servo count as an axis,

@@ -206,7 +206,7 @@ verdade. O DarwinBot usa três defesas:
 
 Há ainda uma quarta defesa, a **seleção natural pela impressora**: um corpo
 só é construível se cada peça couber numa mesa de 220 mm, se cada link
-aguentar o torque de travamento do servo (1,91 N*m) com tensão de flexão de
+aguentar o torque de travamento do servo (2,94 N*m) com tensão de flexão de
 no máximo 25 MPa (metade do que o PLA suporta) e se nenhuma peça se
 sobrepuser. O tronco não tem limite: é cortado em placas do tamanho da mesa,
 unidas por placas de emenda, e cada segmento de coluna é uma placa própria. Corpo que quebra uma regra é pontuado como não

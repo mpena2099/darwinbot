@@ -98,7 +98,7 @@ amp1    = amp1_base * ganho                       # position, antes do corte de 
 amp2    = amp2_base * ganho
 offset  = offset_base + c * steer_shift
 pico    = (amp1 + 2 * amp2) * omega
-k       = min(1, 5.45 / pico)                     # corte pela velocidade do servo
+k       = min(1, 4.71 / pico)                     # corte pela velocidade do servo
 amp1    = amp1 * k
 amp2    = amp2 * k
 
@@ -108,7 +108,7 @@ alvo    = ramp * (offset + amp1 * sin(theta + phase1)
 alvo    = clamp(alvo, min, max)
 passos  = zero + sign * alvo * 4096 / (2π)
 
-speed   = clamp(speed_base + c * steer_shift, -5.45, 5.45)   # wheel
+speed   = clamp(speed_base + c * steer_shift, -4.71, 4.71)   # wheel
 vel     = ramp * speed * sign                     # wheel
 ```
 
@@ -130,7 +130,7 @@ vel     = ramp * speed * sign                     # wheel
   cada 4 ms, diferença pequena porque a carga varia devagar.
 - O arquivo traz as amplitudes e offsets decodificados, antes da direção e do
   corte de velocidade. O firmware aplica `c * steer_gain` e `c * steer_shift`
-  e só então refaz o corte `(amp1 + 2 * amp2) * omega <= 5,45 rad/s`, com as
+  e só então refaz o corte `(amp1 + 2 * amp2) * omega <= 4,71 rad/s`, com as
   duas amplitudes reduzidas na mesma proporção quando passam disso.
 - Nas rodas o `steer_shift` é uma mudança de velocidade em rad/s, cortada em
   `WHEEL_RANGE` (a velocidade máxima do servo, com sinal). Rodas ignoram fase e

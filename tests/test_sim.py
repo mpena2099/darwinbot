@@ -642,17 +642,16 @@ def test_spine_segment_builds_and_moves():
     assert swing > 0.02
 
 
-def test_legs_on_the_bottom_face_build_and_simulate():
+def test_servo_legs_on_a_torso_face_are_not_buildable():
+    # a servo body on the top or bottom face would pass through the 6 mm plate
     morph = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
     for k, (slot, rot) in enumerate(((10, 0.0), (11, 0.0), (3, 3 * np.pi / 2),
                                      (6, 3 * np.pi / 2)), start=1):
         morph.nodes[k] = mo.Node(k, "joint", 0, slot, rot)
     morph = mo.decode(mo.encode(morph))
-    assert morph.n_legs == 4 and morph.lowest_z() < -mo.TORSO_HEIGHT / 2
-    episode = Episode(morph, te.flat(), seconds=0.6)
-    assert episode.buildable
-    metrics = episode.run(_ctrl(morph, amp=0.3))
-    assert np.isfinite([metrics.dx, metrics.dy, metrics.energy]).all()
+    assert morph.n_legs == 4
+    assert any("torso face" in v for v in mo.violations(morph))
+    assert not Episode(morph, te.flat(), seconds=0.6).buildable
 
 
 def test_tilt_scales_progress_but_not_losses():

@@ -86,6 +86,8 @@ MAX_DEPTH  = 5      # core is depth 0
 MAX_SEGMENTS = 2    # spine plates per body
 
 LENGTH_RANGE = (0.04, 0.20)               # m, joint / link length
+CRADLE_LINK_MIN = 0.066                   # m: a link that carries a servo at its tip needs room for
+                                          # the U fork at its root and the child's cradle at its tip
 LINK_WIDTH_RANGE = (0.012, 0.030)         # m, link width
 LINK_THICK_RANGE = (0.003, 0.010)         # m, link thickness
 SPRING_BLADE_RANGE = (0.002, 0.008)       # m, TPU blade thickness of a spring
@@ -97,7 +99,8 @@ SKID_SIZE = (0.06, 0.03, 0.006)           # m, low-friction pad
 SKID_RADIUS = 0.015                       # m, contact radius of a skid
 SPIKE_LENGTH = 0.03                       # m
 SPIKE_RADIUS = 0.005                      # m
-ELBOW_RANGE = (0.025, 0.08)               # m, side slot offset from the link axis
+ELBOW_RANGE = (0.045, 0.08)               # m, side slot offset from the link axis; under 45 mm the
+                                          # child's printed cradle reaches back over the link axis
 WHEEL_RANGE_M = (0.03, 0.06)              # m, wheel radius
 CASTER_RANGE = (0.015, 0.035)             # m, free caster wheel radius
 CASTER_FORK_SIZE = (0.02, 0.02, 0.02)     # m, printed fork box of a caster
@@ -136,10 +139,10 @@ ELBOW_BOSS_R = 0.0155               # m, round end of a printed elbow plate (par
 SEGMENT_LENGTH_RANGE = (0.08, 0.22)      # m, spine plate length
 SEGMENT_WIDTH_RANGE = (0.08, 0.22)       # m, spine plate width
 SEGMENT_HEIGHT = 0.03                    # m, spine plate thickness
-ELBOW_OFFSET = (0.04 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
+ELBOW_OFFSET = (0.05 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
 
 # Printability: a part must print on a common bed and survive the servo stall torque.
-SERVO_STALL = 1.91       # N*m, STS3215 stall torque
+SERVO_STALL = 2.94       # N*m, STS3215 (12 V) stall torque
 PLA_STRENGTH = 50e6      # Pa, printed PLA
 STRENGTH_SAFETY = 0.5    # link bending stress must stay below half of PLA
 BED = 0.22               # m, largest part that fits a common print bed
@@ -689,8 +692,50 @@ def _inside(x: float, y: float, poly: List[Tuple[float, float]]) -> bool:
     return inside
 
 
+MAX_MOUNT_TILT = 25.0     # degrees a printed wedge takes up under a rolled cradle
+
+
+def _rx_deg(deg: float) -> np.ndarray:
+    a = np.radians(deg)
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+
+
+def _ry_deg(deg: float) -> np.ndarray:
+    a = np.radians(deg)
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+
+
+# cradle frame (output axis along Z, body behind it along -X) in the module
+# frame of a joint about each axis, as export.CRADLE_FRAME
+_CRADLE_FRAME = {"pitch": np.eye(3), "yaw": _rx_deg(-90.0),
+                 "roll": _rx_deg(180.0) @ _ry_deg(90.0)}
+
+
+def mount_tilt(morph: "Morphology", i: int) -> Optional[float]:
+    """Degrees a torso or segment mount of the servo at i is rolled away from
+    a cradle foot lying flat on the plate, 0 when the output axis stands
+    vertical (the foot then sits behind the body), or None when the module is
+    not a servo bolted to a plate. export.torso_mount turns the same angle
+    into a wedge."""
+    n = morph.nodes[i]
+    axis = "yaw" if n.kind == "wheel" else (n.axis if n.kind in ("joint", "segment") else None)
+    if axis is None or n.parent < 0 or morph.nodes[n.parent].kind not in ("core", "segment"):
+        return None
+    frame = morph.rel_frame(n)[1] @ _CRADLE_FRAME[axis]
+    if abs((frame @ np.array([0.0, 0.0, 1.0]))[2]) > 1.0 - 1e-6:
+        return 0.0
+    tilts = []
+    for s in (1.0, -1.0):
+        u = frame @ np.array([0.0, -s, 0.0])
+        tilts.append(float(np.degrees(np.arccos(np.clip(-u[2], -1.0, 1.0)))))
+    return min(tilts)
+
+
 def violations(morph: Morphology) -> List[str]:
     """Printability checks: link bending strength, bed footprint, elbow reach,
+    room for a servo cradle at a link tip, no servo on a torso face,
     and room for the electronics inside the torso contour."""
     out: List[str] = []
     poly = morph.torso_polygon()
@@ -701,6 +746,14 @@ def violations(morph: Morphology) -> List[str]:
     if not all(_inside(x, y, poly) for x, y in probes):
         out.append("torso contour does not hold the electronics")
     for i, n in morph.nodes.items():
+        if (n.kind in ("joint", "segment", "wheel") and n.parent >= 0
+                and morph.nodes[n.parent].kind == "core" and n.slot in FACE_SLOTS):
+            out.append(f"#{i} {n.kind}: a servo on a torso face passes through the plate")
+        tilt = mount_tilt(morph, i)
+        if tilt is not None and (tilt > MAX_MOUNT_TILT or (
+                tilt >= 0.5 and n.kind != "wheel" and n.axis == "roll")):
+            out.append(f"#{i} {n.kind}: mount rolled {tilt:.0f} degrees, more than a "
+                       f"printed wedge takes up")
         if n.kind == "segment":
             extent = max(n.length, n.width)
             if extent > BED + 1e-9:
@@ -723,6 +776,11 @@ def violations(morph: Morphology) -> List[str]:
             out.append(f"#{i} {n.kind}: {extent * 1000:.0f} mm "
                        f"({n.profile}) does not fit the "
                        f"{BED * 1000:.0f} mm bed")
+        servo_kids = [c for s, c in morph.child_map().get(i, {}).items() if s == 0
+                      if morph.nodes[c].kind in ("joint", "segment", "wheel")]
+        if servo_kids and n.length < CRADLE_LINK_MIN - 1e-9:
+            out.append(f"#{i} {n.kind}: {n.length * 1000:.0f} mm is too short to "
+                       f"carry a servo cradle (>= {CRADLE_LINK_MIN * 1000:.0f} mm)")
         if n.slot in (1, 2) and morph.nodes[n.parent].kind in (
                 "joint", "link", "spring"):
             parent_width = morph.nodes[n.parent].width
@@ -1012,7 +1070,7 @@ def template(n_pairs: int = 2, wheels: bool = False, yaw: bool = False,
     morph = Morphology(body_length, body_width, {0: Node(0, "core")})
     chain = []                       # (kind, slot on the parent, fields)
     if yaw:
-        chain.append(("joint", 0, dict(axis="yaw", length=0.06)))
+        chain.append(("joint", 0, dict(axis="yaw", length=0.07)))
     chain.append(("joint", 0, dict(axis="pitch", length=thigh, flip=True)))
     chain.append(("joint", 1, dict(axis="pitch", length=shin, flip=True,
                                    offset=ELBOW_OFFSET)))

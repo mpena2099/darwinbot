@@ -5,6 +5,10 @@ loja ou derivado, não de folha de dados oficial.
 
 ## Servo Feetech STS3215
 
+O projeto usa a versão de 12 V (C018), alimentada direto por uma LiPo 3S
+(11,1 V nominal, 12,6 V carregada), dentro da faixa de 6 a 12,6 V do servo. A
+versão de 7,4 V aceita no máximo 7,4 V, abaixo dos 8,4 V de uma 2S carregada.
+
 | Item | 7,4 V | 12 V |
 |---|---|---|
 | Torque de travamento | 19,5 kg·cm (1,91 N·m) | 30 kg·cm (2,94 N·m) |
@@ -115,7 +119,7 @@ comando), que encurtaria a leitura.
 |---|---|
 | Berço impresso do servo (PLA) | ~23 g (18,3 cm³ maciço, com o pé que parafusa na placa do tronco), somado aos 60 g do servo na simulação; a ponta do link e o fim do cotovelo trazem o berço do servo seguinte |
 | Placa ESP32-S3 | ~20 g (não verificado) |
-| LiPo 2S 1000 a 1500 mAh | pendente |
+| LiPo 3S (11,1 V) 1000 a 1500 mAh | ~110 a 140 g (não verificado) |
 | Regulador step-down | pendente |
 
 ## Berço, link em U e cunha

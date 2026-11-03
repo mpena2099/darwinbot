@@ -316,7 +316,7 @@ def test_elbow_offset_and_angle_reproduce_todays_frame():
                          offset=mo.ELBOW_OFFSET)
     for slot, side in ((1, 1.0), (2, -1.0)):
         off, rot = m.slot_frame(m.nodes[1], slot, m.nodes[2])
-        assert off == pytest.approx([0.10, side * 0.04, 0.0])
+        assert off == pytest.approx([0.10, side * 0.05, 0.0])
         assert rot == pytest.approx(mo._rz(side * np.pi / 2))
 
 
@@ -653,8 +653,10 @@ def test_face_slot_frame_points_up_and_down():
         assert abs(off[1]) <= mo.FACE_Y * m.body_width / 2 + 1e-9
 
 
-def test_bottom_mount_on_a_short_torso_is_buildable():
-    # the servo hangs outside the plate, so it never meets the electronics
+def test_servo_on_a_torso_face_is_not_buildable():
     short = mo.Morphology(0.15, 0.20, {0: mo.Node(0, "core"),
                                        1: mo.Node(1, "joint", 0, 10, 0.0)})
-    assert not mo.violations(short)
+    assert any("torso face" in v for v in mo.violations(short))
+    passive = mo.Morphology(0.15, 0.20, {0: mo.Node(0, "core"),
+                                         1: mo.Node(1, "foot", 0, 10, 0.0)})
+    assert not mo.violations(passive)

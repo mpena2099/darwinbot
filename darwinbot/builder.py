@@ -13,7 +13,7 @@ forward.
 The layout is a list of morphology.Actuator(slot, kind, axis) in model order
 (depth first, children by slot), which is the order of the <actuator> block.
 
-Parts are real: every joint is a Feetech STS3215 (7.4 V) with the torque and
+Parts are real: every joint is a Feetech STS3215 (12 V) with the torque and
 speed limits of its data sheet, minus a safety margin. Each servo adds a 60 g
 box, the torso carries a payload (ESP32, 2S LiPo, regulator), and links are
 printed. The torso is the contour polygon split into eight triangular prisms
@@ -46,7 +46,7 @@ from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
 SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
 LINK_DENSITY   = 1240.0  # kg/m^3, solid PLA printed link
-PAYLOAD_MASS   = 0.13    # kg: ESP32 + 2S LiPo + regulator
+PAYLOAD_MASS   = 0.17    # kg: ESP32 + 3S LiPo + regulator
 SERVO_MASS     = 0.060 + 0.015   # kg: the servo plus its printed bracket (~15 g of PLA)
 ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
@@ -222,33 +222,34 @@ def _foot_geoms(node, friction: float = 1.0) -> str:
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
-              layout: ActuatorLayout, friction: float = 1.0) -> str:
+              layout: ActuatorLayout, friction: float = 1.0, ranges=None) -> str:
     """MJCF body of one module and, recursively, of everything below it."""
     i = node.id
+    ranges = {} if ranges is None else ranges
     inner = ""
     plastic = _special_geom(PLASTIC_FACTOR, friction)
     if node.kind == "joint":
         name = f"j{i}"
-        rng = JOINT_RANGE[node.axis]
+        rng = ranges.get(i, (-JOINT_RANGE[node.axis], JOINT_RANGE[node.axis]))
         sign = -1.0 if node.flip else 1.0
         axis = sign * np.array(AXIS_LOCAL[node.axis])
         actuators.append(
             f'<position name="{name}" joint="{name}" kp="{JOINT_KP}" kv="0" '
-            f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
+            f'ctrlrange="{rng[0]:.4f} {rng[1]:.4f}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_link_geoms(node, contact=plastic)}')
+                 f'range="{rng[0]:.4f} {rng[1]:.4f}"/>\n{_link_geoms(node, contact=plastic)}')
     elif node.kind == "segment":
         name = f"j{i}"
-        rng = JOINT_RANGE[node.axis]
+        rng = ranges.get(i, (-JOINT_RANGE[node.axis], JOINT_RANGE[node.axis]))
         sign = -1.0 if node.flip else 1.0
         axis = sign * np.array(AXIS_LOCAL[node.axis])
         actuators.append(
             f'<position name="{name}" joint="{name}" kp="{JOINT_KP}" kv="0" '
-            f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
+            f'ctrlrange="{rng[0]:.4f} {rng[1]:.4f}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_segment_geoms(node, friction)}')
+                 f'range="{rng[0]:.4f} {rng[1]:.4f}"/>\n{_segment_geoms(node, friction)}')
     elif node.kind == "link":
         inner = _link_geoms(node, contact=plastic)
     elif node.kind == "spring":
@@ -316,7 +317,8 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                          for slot, c in sorted(children.get(i, {}).items()) if slot)
     # Actuators follow the depth first order of Morphology.order.
     below = "".join(
-        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction)
+        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction,
+                  ranges)
         for _, c in sorted(children.get(i, {}).items()))
     # A joint's servo body is fixed to the part it is mounted on, as on the
     # robot, where only the horns turn with the link: it lives in the parent
@@ -335,14 +337,20 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
                terrain_world: str = "", spawn_x: float = 0.0,
                ground_z: float = 0.0,
                payload: float = 0.0,
-               terrain_friction: float = 1.0) -> Tuple[str, ActuatorLayout]:
+               terrain_friction: float = 1.0,
+               ranges=None) -> Tuple[str, ActuatorLayout]:
+    """ranges: {node id: (lo, hi)} joint limits in rad; None measures them
+    with joint_ranges, {} keeps the JOINT_RANGE defaults."""
+    if ranges is None:
+        ranges = joint_ranges(morph)
     friction = terrain_friction
     actuators: list = []
     layout: ActuatorLayout = []
     frames = morph.frames()
     children = morph.child_map()
     legs = "".join(
-        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction)
+        _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction,
+                  ranges)
         for _, c in sorted(children.get(0, {}).items())
     )
     assert layout == morph.layout()
@@ -382,3 +390,82 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
   </actuator>
 </mujoco>"""
     return xml, layout
+
+
+# A link turning about its joint must not pass through the part its servo is
+# mounted on: MuJoCo never collides a body with its parent, so nothing in the
+# physics stops it. Each joint is swept on its own from 0 towards both ends of
+# JOINT_RANGE, and its range stops one step before the first pose where the
+# child (or anything below it) cuts into the parent's geoms. Contacts within
+# HUB_RADIUS of the joint axis are the U fork clasping the horns around the
+# cradle, which the printed parts are drawn to clear, and do not count.
+HUB_RADIUS = 0.026          # m
+SWEEP_STEP = np.radians(3.0)
+_RANGES: dict = {}
+
+
+def joint_ranges(morph: Morphology) -> dict:
+    """{node id: (lo, hi)} rad for every servo joint, inside JOINT_RANGE."""
+    import mujoco
+    from darwinbot.morphology import encode
+    key = encode(morph).tobytes()
+    if key in _RANGES:
+        return _RANGES[key]
+    xml, _ = build_mjcf(morph, ranges={})
+    model = mujoco.MjModel.from_xml_string(xml)
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    data = mujoco.MjData(model)
+    robot = model.geom_contype == 2
+    out = {}
+    for i, node in morph.nodes.items():
+        if node.kind not in ("joint", "segment"):
+            continue
+        j = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"j{i}")
+        child = model.jnt_bodyid[j]
+        parent = model.body_parentid[child]
+        below = {b for b in range(model.nbody) if _descends(model, b, child)}
+        servo = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"servo{i}")
+        lim = JOINT_RANGE[node.axis]
+        ends = []
+        for sign in (1.0, -1.0):
+            reach = 0.0
+            for a in np.arange(SWEEP_STEP, lim + 1e-9, SWEEP_STEP):
+                data.qpos[:] = model.qpos0
+                data.qpos[model.jnt_qposadr[j]] = sign * a
+                mujoco.mj_forward(model, data)
+                if _blocked(model, data, j, child, parent, below, servo, robot):
+                    break
+                reach = a
+            ends.append(sign * reach)
+        out[i] = (round(float(ends[1]), 4), round(float(ends[0]), 4))
+    if len(_RANGES) > 4096:
+        _RANGES.clear()
+    _RANGES[key] = out
+    return out
+
+
+def _descends(model, b: int, root: int) -> bool:
+    while b > 0:
+        if b == root:
+            return True
+        b = model.body_parentid[b]
+    return False
+
+
+def _blocked(model, data, j, child, parent, below, servo, robot) -> bool:
+    """True when a geom of the moving side cuts into a geom of the parent
+    body away from the joint hub."""
+    anchor, axis = data.xanchor[j], data.xaxis[j]
+    for c in data.contact[:data.ncon]:
+        g1, g2 = c.geom1, c.geom2
+        if not (robot[g1] and robot[g2]) or c.dist > -1e-4:
+            continue
+        b1, b2 = model.geom_bodyid[g1], model.geom_bodyid[g2]
+        if not ((b1 in below and b2 == parent) or (b2 in below and b1 == parent)):
+            continue
+        if servo in (g1, g2):
+            continue
+        r = c.pos - anchor
+        if np.linalg.norm(r - (r @ axis) * axis) > HUB_RADIUS:
+            return True
+    return False

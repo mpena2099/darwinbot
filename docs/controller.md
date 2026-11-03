@@ -15,7 +15,7 @@ Per node slot `s`, with base `b = 1 + 6 * s`:
 | Offset | Gene | Range | Meaning |
 |--------|------|-------|---------|
 | +0, +1 | `amp1`, `phase1` | 0 - 0.8 rad, 0 - 2*pi | first harmonic |
-| +2 | `offset` | -0.6 - 0.6 rad | joint centre (for a wheel: signed speed, -5.45 - 5.45 rad/s) |
+| +2 | `offset` | -0.6 - 0.6 rad | joint centre (for a wheel: signed speed, -4.71 - 4.71 rad/s) |
 | +3, +4 | `amp2`, `phase2` | 0 - 0.8 rad, 0 - 2*pi | second harmonic |
 | +5 | `sigma` | -3 - 3 rad/s | load feedback gain (Tegotae) |
 
@@ -34,6 +34,6 @@ gaits can appear without programmed coupling between legs (Tegotae, Owaki et
 al.). With `sigma = 0` it is an open-loop CPG. `ramp` fades the gait in over
 `RAMP_TIME = 0.5 s`. Genes of absent modules are ignored, and a wheel only uses
 its `offset` gene. The total amplitude is clipped so that
-`(amp1 + 2 * amp2) * omega <= 5.45 rad/s`, the servo speed limit. The
+`(amp1 + 2 * amp2) * omega <= 4.71 rad/s`, the servo speed limit. The
 simulation updates the servo targets at 50 Hz and holds them in between, like
 the ESP32.

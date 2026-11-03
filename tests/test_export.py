@@ -290,7 +290,7 @@ def test_segment_plate_and_spine_servo_row(tmp_path):
     seg = next(i for i, n in morph.nodes.items() if n.kind == "segment")
     rows = {item: q for item, q, _ in bom_rows(morph)}
     assert rows["segment_plate_120x100.stl"] == 1
-    assert rows["Feetech STS3215 servo, 7.4 V"] == morph.n_servos
+    assert rows["Feetech STS3215 servo, 12 V (C018)"] == morph.n_servos
     assert "spine servo" in parent_chain(morph, seg)
     out = tmp_path / "robot"
     export_robot(elite, out, "spine", stl=True)
@@ -408,3 +408,25 @@ def test_elbow_trim_follows_distance_angle_and_roll():
     assert at30 != at90 and y1 - y0 > x1 - x0
     # never under the thinnest fin, whatever the cradle does
     assert elbow_trim(25, 30, "pitch")[0] == 1
+
+
+def test_mount_rule_matches_the_exported_cradles():
+    # morphology.mount_tilt (the simulation's rule) and export.torso_mount
+    # (the printed foot or wedge) must agree on which mounts cannot be bolted
+    from darwinbot import export
+    for seed in range(40):
+        rng = np.random.default_rng(seed)
+        g = mo.random_morphology(rng)
+        for _ in range(int(rng.integers(0, 15))):
+            g = mo.mutate(g, rng)
+        m = mo.decode(g)
+        for i, node in m.nodes.items():
+            if not i or (node.parent == 0 and node.slot in mo.FACE_SLOTS):
+                continue
+            t, mount = mo.mount_tilt(m, i), export.torso_mount(m, i)
+            assert (t is None) == (mount is None)
+            if t is None:
+                continue
+            rule = t > mo.MAX_MOUNT_TILT or (
+                t >= 0.5 and node.kind != "wheel" and node.axis == "roll")
+            assert rule == (mount.kind == "free")

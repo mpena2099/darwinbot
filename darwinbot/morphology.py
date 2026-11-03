@@ -115,6 +115,23 @@ SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
 # body sits behind it, along local -X, away from the link it drives.
 SERVO_AXIS_OFFSET = 0.0125          # m
 SERVO_CENTRE = np.array([-SERVO_AXIS_OFFSET, 0.0, 0.0])   # in the module frame
+
+
+def servo_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Half extents and centre of a servo body in its module frame, for a
+    joint turning about `axis` (pitch, yaw, roll; a wheel turns about local Y
+    like a yaw joint). The STS3215 output axis runs through its 35 mm height,
+    centred on it (the link clasps both horns), and sits SERVO_AXIS_OFFSET
+    from the body centre along the 45 mm length: behind the axis along -X,
+    or below it (-Z) for a roll joint, whose axis is X itself."""
+    L, W, H = SERVO_BOX
+    if axis == "pitch":
+        return np.array([L, W, H]) / 2, SERVO_CENTRE.copy()
+    if axis == "roll":
+        return np.array([H, W, L]) / 2, np.array([0.0, 0.0, -SERVO_AXIS_OFFSET])
+    return np.array([L, H, W]) / 2, SERVO_CENTRE.copy()
+
+
 ELBOW_BOSS_R = 0.0155               # m, round end of a printed elbow plate (parts.END_BOSS_D / 2)
 SEGMENT_LENGTH_RANGE = (0.08, 0.22)      # m, spine plate length
 SEGMENT_WIDTH_RANGE = (0.08, 0.22)       # m, spine plate width
@@ -174,7 +191,8 @@ def is_joint(kind: str) -> bool:
 
 def segment_center(node: "Node") -> np.ndarray:
     """Centre of a segment plate in the node frame."""
-    return np.array([SERVO_BOX[0] / 2 + node.length / 2, 0.0, 0.0])
+    half, centre = servo_box(node.axis)
+    return np.array([centre[0] + half[0] + node.length / 2, 0.0, 0.0])
 
 
 def segment_box(node: "Node") -> Tuple[np.ndarray, np.ndarray]:
@@ -521,7 +539,7 @@ class Morphology:
         s = 1.0
         if abs(rot[1, 1]) > 0.5:
             s = np.sign(rot[1, 1]) * (-1.0 if pos[1] < 0 else 1.0)
-        return np.array([0.0, s * (SERVO_BOX[1] / 2 + half_t), 0.0])
+        return np.array([0.0, s * (servo_box("yaw")[0][1] + half_t), 0.0])
 
     def caster_hub(self, node: Node, pos: np.ndarray, rot: np.ndarray) -> np.ndarray:
         """Caster wheel centre offset from the node origin, in the node frame:
@@ -597,11 +615,13 @@ class Morphology:
     def lowest_z(self) -> float:
         """Lowest point of the body relative to the torso centre at rest."""
         low = -TORSO_HEIGHT / 2
-        corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1)
-                            for sz in (-1, 1)]) * (np.array(SERVO_BOX) / 2) + SERVO_CENTRE
+        unit = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1)
+                         for sz in (-1, 1)])
         for i, (pos, rot) in self.frames().items():
             n = self.nodes[i]
             if n.kind in ("joint", "wheel", "segment"):
+                half, centre = servo_box("yaw" if n.kind == "wheel" else n.axis)
+                corners = unit * half + centre
                 low = min(low, float((pos + corners @ rot.T)[:, 2].min()))
             if n.kind == "segment":
                 centre, half = segment_box(n)

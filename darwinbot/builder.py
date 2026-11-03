@@ -35,7 +35,7 @@ from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
                                   ELECTRONICS_BOX, ELBOW_BOSS_R, SEGMENT_HEIGHT,
-                                  SERVO_BOX, SERVO_CENTRE,
+                                  SERVO_BOX, servo_box,
                                   SKID_SIZE, SPIKE_LENGTH, SPIKE_RADIUS,
                                   SPRING_DAMPING, TAIL_BAR_SIZE, TAIL_TIP_RADIUS,
                                   TORSO_HEIGHT, Actuator, ActuatorLayout,
@@ -47,7 +47,7 @@ SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
 LIMB_DENSITY   = 300.0
 LINK_DENSITY   = 1240.0  # kg/m^3, solid PLA printed link
 PAYLOAD_MASS   = 0.13    # kg: ESP32 + 2S LiPo + regulator
-SERVO_MASS     = 0.060   # kg
+SERVO_MASS     = 0.060 + 0.015   # kg: the servo plus its printed bracket (~15 g of PLA)
 ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
@@ -126,9 +126,9 @@ def _frame_attrs(morph: Morphology, node) -> str:
     return f'pos="{_f(*off)}" xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
 
 
-def _servo_box(i: int, friction: float = 1.0) -> str:
-    half = _f(*(np.array(SERVO_BOX) / 2))
-    return (f'<geom name="servo{i}" type="box" pos="{_f(*SERVO_CENTRE)}" size="{half}" mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" '
+def _servo_box(i: int, axis: str, friction: float = 1.0) -> str:
+    half, centre = servo_box(axis)
+    return (f'<geom name="servo{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" '
             f'{_special_geom(PLASTIC_FACTOR, friction)}/>')
 
 
@@ -141,20 +141,18 @@ HORN_RGBA = "0.80 0.80 0.82 1"
 HORN_RADIUS, HORN_THICK = 0.011, 0.003
 
 
-def _servo_dress(axis_local) -> str:
-    """Bracket around the lower 60% of the servo and the horn on the face the
-    joint axis points out of."""
-    sx, sy, sz = np.array(SERVO_BOX) / 2
+def _servo_dress(axis: str) -> str:
+    """Printed cradle around the servo and the horns on the two faces the
+    joint axis points out of (the link clasps both)."""
+    half, centre = servo_box(axis)
     wall = 0.0025
-    h = 0.6 * sz
-    bracket = (f'<geom type="box" pos="{_f(SERVO_CENTRE[0], 0, -sz + h - wall)}" '
-               f'size="{_f(sx + wall, sy + wall, h)}" rgba="{BRACKET_RGBA}" {VISUAL_GEOM}/>')
-    a = np.abs(np.asarray(axis_local, dtype=float))
-    face = float(a @ (np.array([sx, sy, sz]) + SERVO_CENTRE))
-    start, end = a * face, a * (face + HORN_THICK)
-    horn = (f'<geom type="cylinder" fromto="{_f(*start, *end)}" size="{HORN_RADIUS}" '
-            f'rgba="{HORN_RGBA}" {VISUAL_GEOM}/>')
-    return f"{bracket}\n{horn}"
+    cradle = (f'<geom type="box" pos="{_f(*centre)}" '
+              f'size="{_f(*(half + wall))}" rgba="{BRACKET_RGBA}" {VISUAL_GEOM}/>')
+    a = np.abs(np.asarray(AXIS_LOCAL[axis], dtype=float))
+    face = float(a @ half)
+    horns = [f'<geom type="cylinder" fromto="{_f(*(s * a * face), *(s * a * (face + HORN_THICK)))}" '
+             f'size="{HORN_RADIUS}" rgba="{HORN_RGBA}" {VISUAL_GEOM}/>' for s in (1, -1)]
+    return "\n".join([cradle] + horns)
 
 
 def _rot_z(a: float) -> np.ndarray:
@@ -239,8 +237,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_servo_box(i, friction)}\n{_servo_dress(AXIS_LOCAL[node.axis])}\n'
-                 f'{_link_geoms(node, contact=plastic)}')
+                 f'range="{-rng} {rng}"/>\n{_link_geoms(node, contact=plastic)}')
     elif node.kind == "segment":
         name = f"j{i}"
         rng = JOINT_RANGE[node.axis]
@@ -251,8 +248,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-rng} {rng}" forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "joint", node.axis))
         inner = (f'<joint name="{name}" type="hinge" axis="{_f(*axis)}" '
-                 f'range="{-rng} {rng}"/>\n{_servo_box(i, friction)}\n'
-                 f'{_servo_dress(AXIS_LOCAL[node.axis])}\n{_segment_geoms(node, friction)}')
+                 f'range="{-rng} {rng}"/>\n{_segment_geoms(node, friction)}')
     elif node.kind == "link":
         inner = _link_geoms(node, contact=plastic)
     elif node.kind == "spring":
@@ -274,7 +270,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-SERVO_SPEED} {SERVO_SPEED}" '
             f'forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "wheel", "wheel"))
-        inner = f"""{_servo_box(i, friction)}
+        inner = f"""{_servo_box(i, "yaw", friction)}
           <body name="{name}" pos="{_f(*hub)}">
             <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{WHEEL_DAMPING}"/>
             <geom type="cylinder" fromto="{_f(0, -half_t, 0, 0, half_t, 0)}"
@@ -322,7 +318,14 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     below = "".join(
         _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction)
         for _, c in sorted(children.get(i, {}).items()))
-    return f"""
+    # A joint's servo body is fixed to the part it is mounted on, as on the
+    # robot, where only the horns turn with the link: it lives in the parent
+    # body, at the joint frame, so it never swings into its own mount.
+    mount = ""
+    if node.kind in ("joint", "segment"):
+        mount = (f'\n      <frame {_frame_attrs(morph, node)}>\n        '
+                 f'{_servo_box(i, node.axis, friction)}\n        {_servo_dress(node.axis)}\n      </frame>')
+    return f"""{mount}
       <body name="n{i}" {_frame_attrs(morph, node)}>
         {inner}{below}
       </body>"""

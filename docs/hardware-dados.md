@@ -113,6 +113,7 @@ comando), que encurtaria a leitura.
 
 | Peça | Massa |
 |---|---|
+| Suporte impresso do servo (PLA) | ~15 g (11,8 cm³ maciço), somado aos 60 g do servo na simulação |
 | Placa ESP32-S3 | ~20 g (não verificado) |
 | LiPo 2S 1000 a 1500 mAh | pendente |
 | Regulador step-down | pendente |

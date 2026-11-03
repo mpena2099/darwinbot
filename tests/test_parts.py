@@ -54,6 +54,25 @@ def test_servo_bracket():
     _ok(p)
     for x, y in _mount_points():
         assert _hole_is_free(p, x, y, 1.0)
+    # four M2 holes up into the body's tapped holes (bottom face pattern)
+    for x in (5.0, -19.5):
+        for y in (-10.2, 10.2):
+            assert _hole_is_free(p, x, y, 1.0, r=1.0)
+    # no ears: the floor is solid where the old ear screws went
+    for x in (-20.0, 20.0):
+        assert not _hole_is_free(p, x, 0.0, 1.0)
+
+
+def test_horn_holes_follow_the_real_horn():
+    # 4 holes on a 9.9 mm square at 45 degrees to the body axes
+    assert parts.HORN_N_HOLES == 4
+    assert parts.HORN_BOLT_CIRCLE == pytest.approx(14.0)
+    x, y = zip(*parts.horn_hole_centres())
+    assert max(map(abs, x)) == pytest.approx(4.95, abs=0.02)
+    assert max(map(abs, y)) == pytest.approx(4.95, abs=0.02)
+    p = parts.link(80, 20, 6)
+    for px, py in parts.horn_hole_centres():
+        assert _hole_is_free(p, px, py, 3.0, r=1.0)
 
 
 def test_mount_pattern_is_a_square_that_fits_the_boss():

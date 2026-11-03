@@ -17,10 +17,30 @@ Fonte: [Waveshare ST3215](https://www.waveshare.com/st3215-servo.htm?sku=33014).
 
 - Massa: 70 g (Waveshare) ou 55 g (lojas, não verificado). Usar 60 g até
   pesar um servo real.
-- Dimensões: 45,2 × 24,7 × 35 mm (não verificado).
 - Encoder magnético de 12 bits (4096 passos por volta), sem batente.
 - Barramento serial TTL half-duplex, IDs 0 a 253, padrão 1 Mbps.
 - Velocidade em modo roda: sem dado; usar a velocidade sem carga.
+
+### Medidas do corpo e da furação
+
+Vêm de duas fontes independentes que concordam no que importa para encaixar
+e parafusar: o modelo STEP do projeto [SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100)
+(`STEP/SO100/STS3215_03a.step`, 2025, Apache-2.0) e o STEP e o desenho 2D da
+[Waveshare](https://www.waveshare.com/wiki/ST3215_Servo) (ST3215, mesmo corpo,
+2022). `darwinbot/parts.py` usa essas medidas; ainda não foram conferidas com
+paquímetro num servo real. Origem no centro do corpo, x ao longo do corpo, z ao
+longo do eixo de saída. As duas fontes divergem só na altura (até 2 mm) e no
+diâmetro do horn (0,8 mm); a tabela traz as duas quando divergem.
+
+| Item | Valor |
+|---|---|
+| Corpo (x × y) | 45,4 × 24,8 mm (Waveshare: 45,22 × 24,72) |
+| Altura do corpo, sem horns | 30,7 mm, faces em z = -15,5 e +15,2 (Waveshare: 32) |
+| Altura com os dois horns | 39,6 mm com o eixo saliente (Waveshare: 37,25); 35 mm com um horn só |
+| Eixo de saída | a +12,5 mm do centro do corpo, nos dois lados (eixo duplo) |
+| Disco do horn | Ø20 mm (Waveshare: Ø19,2), 2,2 mm de espessura, um em cada face |
+| Furação do horn | 4 furos Ø2,5 mm num quadrado de 9,9 mm (círculo de Ø14,0 mm), a 45° dos eixos do corpo, mais um furo central Ø2,5 mm para o parafuso |
+| Furação de fixação | 4 furos M2 roscados por face (topo e base), em x = +5,0 e -19,5 (base) ou -15,7 (topo), y = ±10,2 (Waveshare: ±10,25); o corpo não tem orelhas |
 
 ### Parâmetros MuJoCo usados por outros projetos
 

@@ -23,15 +23,18 @@ import xml.etree.ElementTree as ET
 import mujoco
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "experiments"))
-from replay import load                                    # noqa: E402
+from assembly import placements                             # noqa: E402
+from replay import load                                     # noqa: E402
 
-from darwinbot import builder, export, parts, morphology as mo   # noqa: E402
+from darwinbot import builder, parts, morphology as mo   # noqa: E402
 from darwinbot.sim import Episode                          # noqa: E402
 from darwinbot.terrain import get_terrains                 # noqa: E402
 
-PLA = "0.93 0.55 0.15 1"         # orange PLA, so it stands out from the floor
-TPU = "0.12 0.12 0.12 1"
+COLOUR = {"pla": "0.93 0.55 0.15 1",     # orange PLA, stands out from the floor
+          "spring": builder.SPRING_RGBA,
+          "tpu": "0.12 0.12 0.12 1"}
 SERVO = "0.10 0.10 0.10 1"
 BOARD = "0.10 0.45 0.20 1"
 BATTERY = "0.20 0.25 0.60 1"
@@ -42,18 +45,6 @@ def _mat_quat(rot) -> str:
     q = np.zeros(4)
     mujoco.mju_mat2Quat(q, np.asarray(rot, dtype=float).reshape(9))
     return " ".join(f"{v:.6f}" for v in q)
-
-
-def _rx(deg):
-    a = np.radians(deg)
-    c, s = np.cos(a), np.sin(a)
-    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
-
-
-def _ry(deg):
-    a = np.radians(deg)
-    c, s = np.cos(a), np.sin(a)
-    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
 
 
 class Meshes:
@@ -93,16 +84,13 @@ def assembled_xml(morph, folder) -> str:
     meshes = Meshes(folder)
     bodies = {b.get("name"): b for b in root.iter("body")}
     cm = morph.child_map()
-    sx, sy, sz = np.array(mo.SERVO_BOX) / 2
+    sz = np.array(mo.SERVO_BOX)[2] / 2
 
     # torso: hide the simulated prism, put the plate under the edge brackets
     torso = bodies["torso"]
     for g in list(torso.findall("geom")):
         _hide(g)
-    plate = meshes.get("torso_plate", lambda: parts.torso_plate(
-        export.torso_polygon_mm(morph), export.mount_positions_mm(morph)))
     floor_z = -sz - WALL                       # bracket floor = top of the plate
-    torso.append(_mesh_geom(plate, (0, 0, floor_z - parts.PLATE_T / 1000), np.eye(3), PLA))
     ex, ey = mo.ELECTRONICS_BOX
     torso.append(ET.Element("geom", type="box", pos=f"0 0 {floor_z + 0.004:.4f}",
                             size=f"{0.029:.4f} {0.0115:.4f} 0.004", rgba=BOARD,
@@ -111,6 +99,7 @@ def assembled_xml(morph, folder) -> str:
                             size=f"{ex / 4:.4f} {ey / 2.5:.4f} 0.011", rgba=BATTERY,
                             contype="0", conaffinity="0", density="0"))
 
+    # sim shapes the printed parts replace: bracket visual, plate boxes, caps
     for i, node in morph.nodes.items():
         body = bodies.get(f"n{i}")
         if body is None:
@@ -122,56 +111,27 @@ def assembled_xml(morph, folder) -> str:
                     _hide(g)
                 elif g.get("type") == "box" and g.get("mass") is not None:
                     g.set("rgba", SERVO)
-            br = meshes.get("servo_bracket", parts.servo_bracket)
-            body.append(_mesh_geom(br, (0, 0, -sz - WALL), np.eye(3), PLA))
         if node.kind in ("joint", "link", "spring"):
             for g in geoms:
                 if _is_plate(g):
                     _hide(g)
-            t = mo.plate_thick(node)
-            bend = int(round(np.degrees(node.bend))) if node.profile != "straight" else 0
-            L, W = export._mm(node.length), export._mm(node.width)
-            T = export._mm(t)
-            name = export.link_name(node.profile, bend, L, W, T)
-            m = meshes.get(name, lambda: parts.link(L, W, T, node.profile, bend))
-            body.append(_mesh_geom(m, (0, 0, -t / 2), np.eye(3),
-                                   builder.SPRING_RGBA if node.kind == "spring" else PLA))
-            tip, rot = mo.link_tip(node)
-            for slot, c in sorted(cm.get(i, {}).items()):
-                if not slot:
-                    continue
-                d = export._mm(mo.elbow_distance(morph.nodes[c]))
-                ang = int(round(np.degrees(mo.elbow_angle(morph.nodes[c]))))
-                name = f"elbow_{d}mm_{ang}deg_{W}x{T}"
-                m = meshes.get(name, lambda: parts.elbow_plate(d, ang, W, T))
-                flip = np.eye(3) if slot == 1 else _rx(180)
-                r = rot @ flip
-                body.append(_mesh_geom(m, tip + r @ np.array([0, 0, -t / 2]), r, PLA))
             if i not in cm and node.kind != "spring":       # free end: TPU cap
                 for g in body.findall("geom"):
                     if g.get("type") == "sphere":
                         _hide(g)
-                r_mm = export._mm(mo.section_radius(node))
-                m = meshes.get(f"foot_{r_mm}", lambda: parts.foot(r_mm))
-                body.append(_mesh_geom(m, tip, rot @ _ry(90), TPU))
-        elif node.kind == "foot":
-            for g in geoms:
+        elif node.kind in ("foot", "wheel"):
+            for g in (body.find("body") if node.kind == "wheel" else body).findall("geom"):
                 _hide(g)
-            r_mm = export._mm(node.foot_rad)
-            name = export.foot_name(node.foot_shape, r_mm)
-            m = meshes.get(name, lambda: parts.foot(r_mm, node.foot_shape))
-            rot = _ry(90) if node.foot_shape == "sphere" else np.eye(3)
-            body.append(_mesh_geom(m, (0, 0, 0), rot, TPU))
-        elif node.kind == "wheel":
-            wb = body.find("body")
-            for g in wb.findall("geom"):
-                _hide(g)
-            r_mm = export._mm(node.wheel_rad)
-            m = meshes.get(f"wheel_{r_mm}", lambda: parts.wheel(r_mm))
-            wb.append(_mesh_geom(m, (0, 0, 0), _rx(90), PLA))
-            wb.append(ET.Element("geom", type="cylinder", fromto="0 -0.002 0 0 0.002 0",
-                                 size=f"{node.wheel_rad + 0.0015:.4f}", rgba=TPU,
-                                 contype="0", conaffinity="0", density="0"))
+
+    for p in placements(morph):
+        m = meshes.get(p.name, p.make)
+        bodies[p.body].append(_mesh_geom(m, np.array(p.pos) / 1000, p.rot, COLOUR[p.kind]))
+    for i, node in morph.nodes.items():         # wheel tyre, around the plate
+        if node.kind == "wheel":
+            bodies[f"w{i}"].append(ET.Element(
+                "geom", type="cylinder", fromto="0 -0.002 0 0 0.002 0",
+                size=f"{node.wheel_rad + 0.0015:.4f}", rgba=COLOUR["tpu"],
+                contype="0", conaffinity="0", density="0"))
 
     asset = root.find("asset")
     for a in meshes.assets:

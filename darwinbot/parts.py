@@ -17,17 +17,26 @@ from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Locations,
                        Part, Polygon, Pos, Rot, Sphere, SlotOverall, extrude,
                        export_stl as _export_stl)
 
-# --- measure a real STS3215 and update ------------------------------------
-SERVO_L = 45.2          # body length (along the output axis offset direction)
-SERVO_W = 24.7          # body width
-SERVO_H = 35.0          # body height
+# --- Feetech STS3215, from the SO-ARM100 STEP model (STS3215_03a, 2025) and the
+# Waveshare ST3215 STEP and drawing (2022), which agree on these values ------
+# (the SO-ARM100 model is Apache-2.0), not yet checked on a real servo: confirm
+# every value below with calipers before printing. The body frame has x along
+# the body length and z along the output axis, the origin at the body centre.
+SERVO_L = 45.4          # body length (x), towards the output axis
+SERVO_W = 24.8          # body width (y)
+SERVO_H = 35.0          # envelope along z, horns included
+SERVO_BODY_H = 30.7     # body alone, from z = -15.5 to z = +15.2
+SERVO_Z0 = -15.5        # face on the mounting side
+SERVO_AXIS_X = 12.5     # output axis offset from the body centre, both horns
 SERVO_CLEARANCE = 0.4   # printing slack per side
-HORN_BOLT_CIRCLE = 20.0 # PLACEHOLDER: horn screw pattern diameter
-HORN_N_HOLES = 4        # PLACEHOLDER: number of horn screw holes
-HORN_HOLE_D = 3.0       # PLACEHOLDER: horn screw hole diameter
-HORN_BORE_D = 6.0       # PLACEHOLDER: clearance for the horn hub
-EAR_HOLE_D = 3.4        # PLACEHOLDER: servo mounting ear screw hole
-EAR_HOLE_DX = 40.0      # PLACEHOLDER: ear hole spacing along the body
+HORN_BOLT_CIRCLE = 14.0 # 4 holes on a 9.9 mm square
+HORN_HOLE_YAW = 45.0    # hole pattern turned to the body axes
+HORN_N_HOLES = 4
+HORN_HOLE_D = 2.5       # M2 clearance
+HORN_BORE_D = 6.0       # clearance for the centre screw head
+SERVO_M2 = 2.4          # M2 clearance for the body mounting holes
+SERVO_TAP_X = (5.0, -19.5)   # tapped M2 holes on the mounting face; the far
+SERVO_TAP_Y = 10.2           # face has them at x = +5.0 and -15.7
 # ---------------------------------------------------------------------------
 
 WALL = 2.5              # wall thickness (>= 2)
@@ -51,7 +60,10 @@ FOOT_MIN_R = 8.6        # keeps the wall around the socket >= 2 mm
 SPRING_FLEX = 12.0      # TPU blade length, matches morphology.SPRING_FLEX_LEN
 MOUNT_SIDE = 16.0       # M3 mounting pattern: 4 holes on a square of this side
 MOUNT_MIN_W = MOUNT_SIDE + M3 + 2 * WALL   # narrowest part that holds the pattern
-END_BOSS_D = HORN_BOLT_CIRCLE + 2 * (HORN_HOLE_D / 2 + WALL)   # keeps the horn holes inside
+# end boss of a link or elbow, wide enough for the horn holes and for the M3
+# pattern of the bracket bolted on the far side
+END_BOSS_D = max(HORN_BOLT_CIRCLE + 2 * (HORN_HOLE_D / 2 + WALL),
+                 MOUNT_SIDE * math.sqrt(2) + M3 + 2 * WALL)
 SPRING_BLOCK = MOUNT_MIN_W   # mounting block length at each end of the blade
 TAIL_W = 15.0           # tail bar width, matches morphology.TAIL_BAR_SIZE
 TAIL_T = 6.0            # tail bar thickness
@@ -60,13 +72,21 @@ SPIKE_L, SPIKE_R = 30.0, 5.0               # TPU tip, tapered to SPIKE_TIP_R
 SPIKE_TIP_R = 1.5
 
 
+def horn_hole_centres() -> list:
+    """(x, y) of the HORN_N_HOLES horn screw holes about the output axis: at
+    HORN_HOLE_YAW to the body axes, so a 9.9 mm square on the 14 mm circle."""
+    r = HORN_BOLT_CIRCLE / 2
+    return [(r * math.cos(math.radians(HORN_HOLE_YAW + 360.0 * i / HORN_N_HOLES)),
+             r * math.sin(math.radians(HORN_HOLE_YAW + 360.0 * i / HORN_N_HOLES)))
+            for i in range(HORN_N_HOLES)]
+
+
 def _horn_holes(thickness: float) -> Part:
     """Cutter: horn bore plus the screw circle, centred on the origin."""
     with BuildPart() as c:
         Cylinder(HORN_BORE_D / 2, thickness * 3)
-        for i in range(HORN_N_HOLES):
-            a = 2 * math.pi * i / HORN_N_HOLES
-            with Locations((HORN_BOLT_CIRCLE / 2 * math.cos(a), HORN_BOLT_CIRCLE / 2 * math.sin(a))):
+        for x, y in horn_hole_centres():
+            with Locations((x, y)):
                 Cylinder(HORN_HOLE_D / 2, thickness * 3)
     return c.part
 
@@ -102,18 +122,22 @@ def _bar(x0: float, x1: float, width_mm: float, thick_mm: float) -> Part:
 
 
 def servo_bracket() -> Part:
-    """Open-top box holding one servo body, with ear screw holes."""
+    """Open-top box holding one servo body: the floor takes four M2 screws
+    into the body's tapped holes, the side walls two M3 cross screws, and the
+    M3 mounting pattern at the origin bolts the bracket to a torso tab or to a
+    link end."""
     iw, il = SERVO_W + 2 * SERVO_CLEARANCE, SERVO_L + 2 * SERVO_CLEARANCE
     ow, ol = iw + 2 * WALL, il + 2 * WALL
     h = SERVO_H * 0.6 + WALL            # holds the lower 60% of the body
     box = Box(ol, ow, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
     pocket = Pos(0, 0, WALL) * Box(il, iw, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
     part = box - pocket
-    # mounting pattern through the floor, centred under the servo axis
+    # mounting pattern through the floor, centred under the servo body
     part -= Pos(0, 0, 0) * _mount_holes(WALL)
-    # ear screws go through the floor, along the servo length
-    for sx in (-EAR_HOLE_DX / 2, EAR_HOLE_DX / 2):
-        part -= Pos(sx, 0, 0) * Cylinder(EAR_HOLE_D / 2, WALL * 3)
+    # M2 screws from under the floor into the body's tapped holes
+    for sx in SERVO_TAP_X:
+        for sy in (-SERVO_TAP_Y, SERVO_TAP_Y):
+            part -= Pos(sx, sy, 0) * Cylinder(SERVO_M2 / 2, WALL * 3)
     # two M3 holes through each side wall for cross screws
     for sx in (-il / 4, il / 4):
         part -= Pos(sx, 0, h / 2 + WALL) * Rot(X=90) * Cylinder(M3 / 2, ow * 2)
@@ -125,7 +149,8 @@ def link(length_mm: float, width_mm: float = LINK_W,
          bend_deg: float = 0.0) -> Part:
     """Plate between two servo axes (horn at x=0, next bracket at the tip).
     Both ends carry a round boss of END_BOSS_D (or the width, if wider), so the
-    horn holes stay inside the material for any width. An L link is two equal
+    horn holes and the M3 mounting pattern stay inside the material for any
+    width. An L link is two equal
     bars and an arc three, turned about Z so the whole path keeps its length;
     each piece is a straight bar and the pieces are unioned."""
     if length_mm < width_mm:

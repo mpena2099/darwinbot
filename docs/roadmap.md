@@ -102,14 +102,16 @@
 
 ## Later
 
-- **Migration between islands**: islands train apart and only meet when
-  their archives are merged for the showcase. Merging them at every 12 h
-  session change and letting each one resume from the merged archive, with its
-  own seed, would let a limb found on one island be grafted on a body from
-  another; it may also make the islands alike. `tools/kaggle/islands.py`
-  already resumes islands from a merged archive. Measured inside a long run:
-  two islands migrate, three stay apart, compared on cells, types and scores
-  after a day.
+- **Migration between islands** (an open idea, not a plan): islands train
+  apart and only meet when their archives are merged for the showcase. Merging
+  them now and then and letting each resume from the merged archive, with its
+  own seed, could let a limb found on one island be grafted on a body from
+  another. Against it: the islands would grow alike, losing what makes them
+  worth having; the showcase merge already keeps the best robot of every
+  cell, so the gain is only the new robots cross-island grafts would make,
+  which is not shown; a weak island spreads to the others; and every session
+  change gets one more step that can fail. `tools/kaggle/islands.py` already
+  resumes islands from a merged archive.
 - **Walking or rolling as the ground asks** (a wheel-stall reflex): a robot
   with legs ending in wheels has one rhythm, legs and wheels together. A gene
   per joint that scales the leg amplitude by a low-pass of the wheels' load

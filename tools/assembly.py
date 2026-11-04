@@ -37,6 +37,24 @@ class Placement(NamedTuple):
     horn:   bool = False       # bolted to a servo horn: has the horn holes
 
 
+_MADE: dict = {}
+_MADE_MAX = 512
+
+
+def solid(morph, p: Placement):
+    """The build123d solid of a placement of `morph`, built once per STL name
+    and body: equal names are equal parts (a cradle depends on the whole
+    body, so the body is part of the key), and the CAD booleans are what a
+    check spends its time on, so a pose check or a second look at a body
+    reuses them."""
+    key = (repr(morph), p.name)
+    if key not in _MADE:
+        if len(_MADE) >= _MADE_MAX:
+            _MADE.clear()
+        _MADE[key] = p.make()
+    return _MADE[key]
+
+
 def rx(deg: float) -> np.ndarray:
     a = np.radians(deg)
     c, s = np.cos(a), np.sin(a)

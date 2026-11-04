@@ -32,7 +32,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from assembly import placements, printed_frames, printed_rest  # noqa: E402
+from assembly import placements, printed_frames, printed_rest, solid  # noqa: E402
 
 from build123d import Box, Location, Pos, gp_Trsf          # noqa: E402
 
@@ -186,12 +186,9 @@ def lap_pairs(morph, records) -> set:
 
 def _build(morph, records, step_path):
     """([(label, solid)], frames) with one solid per printed part and servo."""
-    made = {}
     solids = []
-    for p in records:
-        if p.name not in made:                    # one solid per distinct STL
-            made[p.name] = p.make()
-        solids.append((p.label, p.body, p.pos, p.rot, made[p.name]))
+    for p in records:                             # one solid per distinct STL
+        solids.append((p.label, p.body, p.pos, p.rot, solid(morph, p)))
     bodies = {}
     servo = []
     for i, node in morph.nodes.items():

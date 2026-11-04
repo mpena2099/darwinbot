@@ -624,7 +624,7 @@ def test_spine_segment_builds_and_moves():
     first = max(morph.nodes) + 1
     morph.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
                                  length=0.14, width=0.10)
-    morph.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0,
+    morph.nodes[first + 1] = mo.Node(first + 1, "joint", first, 2, 0,
                                      axis="pitch", length=0.08)
     morph = mo.decode(mo.encode(morph))
     episode = Episode(morph, te.flat(), seconds=0.6)

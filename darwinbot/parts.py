@@ -399,8 +399,8 @@ def link(length_mm: float, width_mm: float = LINK_W,
         part += child.moved(Location(trsf))
     if foot_r:
         # the foot slides over a spigot; clear its body out of the tip
-        r, shape = foot_r if isinstance(foot_r, tuple) else (foot_r, "sphere")
-        cut, spigot = _spigot_end(frame, r, shape)
+        r, shape, *roll = foot_r if isinstance(foot_r, tuple) else (foot_r, "sphere")
+        cut, spigot = _spigot_end(frame * Rot(X=roll[0] if roll else 0.0), r, shape)
         part -= cut
         part += spigot
     return part
@@ -433,7 +433,7 @@ def _side_bars(frame, width_mm: float, thick_mm: float, bars) -> Part:
     foot shape); the module sits `distance` to the side, turned by the angle
     (mirrored on the other side), and a foot gets a spigot."""
     out = None
-    for dist, angle, foot_r, shape in bars:
+    for dist, angle, foot_r, shape, *roll in bars:
         s = 1.0 if dist > 0 else -1.0
         bar = Pos(0, 0, -thick_mm / 2) * (Rot(Z=90.0 * s) * _bar(0.0, abs(dist), width_mm, thick_mm))
         # the bar's start boss belongs to its own side of the tip: the other
@@ -442,7 +442,8 @@ def _side_bars(frame, width_mm: float, thick_mm: float, bars) -> Part:
             _boxc(-400, 400, 0, 400, -400, 400)
         cut = spigot = None
         if foot_r:
-            cut, spigot = _spigot_end(Pos(0, dist, 0) * Rot(Z=s * angle), foot_r, shape)
+            cut, spigot = _spigot_end(Pos(0, dist, 0) * Rot(Z=s * angle)
+                                      * Rot(X=roll[0] if roll else 0.0), foot_r, shape)
             bar -= cut
             bar += spigot
         out = frame * bar if out is None else out + frame * bar

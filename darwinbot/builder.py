@@ -43,7 +43,7 @@ from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   SKID_SIZE, SPIKE_LENGTH, SPIKE_RADIUS,
                                   SPRING_DAMPING, TAIL_BAR_SIZE, TAIL_TIP_RADIUS,
                                   TORSO_HEIGHT, FACE_SLOTS, SERVO_AXIS_OFFSET, Actuator, ActuatorLayout,
-                                  Morphology, elbow_angle, elbow_distance, link_path,
+                                  Morphology, elbow_angle, elbow_distance, link_path, section_radius,
                                   link_tip, plate_thick, segment_box,
                                   spring_stiffness)
 
@@ -311,7 +311,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
             f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {plastic}/>')
 
 
-def _foot_geoms(node, friction: float = 1.0) -> str:
+def _foot_shape_geoms(node, friction: float = 1.0) -> str:
     """Foot of the shape picked by the AXIS gene. All TPU. The pad is a disc
     with its axis along local X (the limb direction), so its flat face looks
     down when the limb points down; the claws spread in the local XY plane."""
@@ -333,6 +333,39 @@ def _foot_geoms(node, friction: float = 1.0) -> str:
         return "\n        ".join(out)
     return (f'<geom type="sphere" size="{r:.4f}" density="{LIMB_DENSITY}" '
             f'rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+
+
+def _foot_hub(i: int, back: float) -> str:
+    """The printed foot's socket hub (parts._socketed): a 16 mm cylinder 12 mm
+    long behind the shape, over the end of the limb. Collision only."""
+    return (f'<geom name="hub{i}" type="cylinder" fromto="{_f(back, 0, 0, back - 0.012, 0, 0)}" '
+            f'size="0.008" {PART_ONLY} rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+
+
+def _foot_geoms(node, friction: float = 1.0) -> str:
+    """Foot shape plus the stem or hub the printed cap has behind it."""
+    r = node.foot_rad
+    out = _foot_shape_geoms(node, friction)
+    if node.foot_shape == "sphere":
+        rs = max(r, 0.0086)
+        out += (f'\n        <geom name="hub{node.id}" type="cylinder" fromto="{_f(-10 * rs / 9, 0, 0, 0, 0, 0)}" '
+                f'size="{rs:.4f}" {PART_ONLY} rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
+    else:
+        back = {"blade": -r, "pad": -r / 6, "claw": 0.0}[node.foot_shape]
+        out += "\n        " + _foot_hub(node.id, back)
+    return out
+
+
+def _cap_geoms(node) -> str:
+    """The TPU cap printed over the free end of a link (a sphere foot of the
+    section radius), at the tip of its path."""
+    tip, rot = link_tip(node)
+    rs = max(float(section_radius(node)), 0.0086)
+    back = tip + rot @ np.array([-10 * rs / 9, 0.0, 0.0])
+    return (f'<geom name="cap{node.id}" type="sphere" pos="{_f(*tip)}" size="{rs:.4f}" '
+            f'{PART_ONLY} rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>\n        '
+            f'<geom name="hub{node.id}" type="cylinder" fromto="{_f(*back, *tip)}" size="{rs:.4f}" '
+            f'{PART_ONLY} rgba="0.2 0.2 0.2 1" {ROBOT_GEOM}/>')
 
 
 def _node_xml(morph: Morphology, node, frames, children, actuators: list,
@@ -435,6 +468,8 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     if node.kind in ("joint", "link", "spring"):
         inner += "".join(f"\n{_elbow_geom(morph, node, morph.nodes[c], slot, friction)}"
                          for slot, c in sorted(children.get(i, {}).items()) if slot)
+    if node.kind in ("joint", "link") and i not in children:
+        inner += f"\n{_cap_geoms(node)}"
     # Actuators follow the depth first order of Morphology.order.
     below = "".join(
         _node_xml(morph, morph.nodes[c], frames, children, actuators, layout, friction,
@@ -613,8 +648,11 @@ class AssemblyRules:
                         return True
             if rg == "tab" and rh in ("link", "other") and nh == ng_:
                 return True
+            if rg == "other" and rh == "link" and nh == ng_:
+                return True                            # a cap over its own link end
             if rg in ("link", "other") and rh == "link" and nh == self.parent.get(ng_):
-                if np.linalg.norm(np.asarray(pos) - xpos[ng_]) <= HUB_RADIUS:
+                if np.linalg.norm(np.asarray(pos) - xpos[ng_]) <= (
+                        HUB_RADIUS if rg == "link" else 0.04):
                     return True                        # plates lapped at the joint
         return False
 
@@ -670,6 +708,7 @@ class AssemblyRules:
 
 
 SWEEP_STEP = np.radians(3.0)
+SWEEP_MARGIN = np.radians(8.0)   # kept clear of the first clashing angle
 POSE_SAMPLES = 96           # random poses a joint range must keep clean
 SHRINK = 0.8                # factor a range takes when a pose clashes
 _RANGES: dict = {}
@@ -724,12 +763,23 @@ def joint_ranges(morph: Morphology) -> dict:
     for i in nodes:
         ends = []
         for sign in (1.0, -1.0):
-            reach = 0.0
+            reach, blocked = 0.0, None
             for a in np.arange(SWEEP_STEP, limit[i] + 1e-9, SWEEP_STEP):
                 pose({i: sign * a})
                 if rules.clashes(model, data, first=True):
+                    blocked = a
                     break
                 reach = a
+            if blocked is not None:           # where between the two steps it starts
+                lo, hi = reach, blocked
+                for _ in range(5):
+                    mid = (lo + hi) / 2
+                    pose({i: sign * mid})
+                    if rules.clashes(model, data, first=True):
+                        hi = mid
+                    else:
+                        lo = mid
+                reach = max(0.0, lo - SWEEP_MARGIN)
             ends.append(sign * reach)
         out[i] = (float(ends[1]), float(ends[0]))
     # all the joints together

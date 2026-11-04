@@ -52,12 +52,13 @@ def link_name(profile, bend_deg, length, width, thick, axis=None, foot_r=None,
         name += f"_c{tip_axis[0][0]}" + (f"r{tip_axis[1]}" if tip_axis[1] else "")
     if foot_r:
         name += (f"_foot{foot_r}" if isinstance(foot_r, int)
-                 else f"_foot{foot_r[1]}{foot_r[0]}")
+                 else f"_foot{foot_r[1]}{foot_r[0]}" + (f"a{foot_r[2]}" if len(foot_r) > 2 and foot_r[2] else ""))
     if len(elbow) >= 2 and any(e is not None for e in elbow[:2]):
         name += "_e" + "_".join("0" if e is None else "x".join(str(v) for v in e)
                                 for e in elbow[:2])
-    for d, a, r, shape in (elbow[2] if len(elbow) > 2 else ()):
-        name += f"_b{d}a{a}" + (f"{shape[0]}{r}" if r else "")
+    for d, a, r, shape, *roll in (elbow[2] if len(elbow) > 2 else ()):
+        name += f"_b{d}a{a}" + (f"{shape[0]}{r}" if r else "") + (
+            f"x{roll[0]}" if roll and roll[0] else "")
     if len(elbow) > 3 and elbow[3]:
         name += "_k%05d" % (zlib.crc32(repr(elbow[3]).encode()) % 100000)
     return name
@@ -156,7 +157,8 @@ def link_args(morph, i):
             if child.kind == "foot":
                 tip_foot = _mm(child.foot_rad)
                 if child.foot_shape != "sphere":
-                    tip_foot = (tip_foot, child.foot_shape)
+                    tip_foot = (tip_foot, child.foot_shape,
+                                int(round(np.degrees(child.rot))) % 360)
             continue
         side = 1 if slot == 1 else -1
         dist = _mm(morpho.elbow_distance(child))
@@ -169,8 +171,9 @@ def link_args(morph, i):
         elif child.kind == "spring":
             continue         # a flexure has its own plate; the TPU part is not drawn
         elif child.kind == "foot":
-            bars.append((side * dist, angle, _mm(child.foot_rad),
-                         child.foot_shape))
+            bars.append((side * dist, angle, _mm(child.foot_rad), child.foot_shape,
+                         int(round(np.degrees(child.rot))) % 360
+                         if child.foot_shape != "sphere" else 0))
         else:
             bars.append((side * dist, angle, 0, ""))
     return (_mm(node.length), _mm(node.width),

@@ -102,7 +102,8 @@ def terminal_geoms(model: mujoco.MjModel, morph: Morphology):
         first = model.body_geomadr[body]
         # physical geoms only: the look-only bracket and horn have contype 0
         own = [g for g in range(first, first + model.body_geomnum[body])
-               if model.geom_contype[g] != 0]
+               if model.geom_contype[g] != 0
+               and not (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("hub")]
         # Foot and terminal shapes: prefer a non-box geom for contact; a free
         # tip was already resolved by its name above.
         non_box = [g for g in own if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX]

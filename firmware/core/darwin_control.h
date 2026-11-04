@@ -10,9 +10,9 @@
 // Wheel: speed = ramp(t) * speed * sign, phase and load ignored.
 // Steering: command c in [-1, 1] scales position amplitudes by
 // clip(1 + c * steer_gain, 0, 2), shifts position offsets by c * steer_shift
-// and shifts wheel speeds by c * steer_shift (clipped to +/-5.45 rad/s).
+// and shifts wheel speeds by c * steer_shift (clipped to +/-4.71 rad/s).
 // Steering is applied before the amplitude speed clip.
-// Amplitudes are clipped so (amp1 + 2 amp2) * omega <= 5.45 rad/s.
+// Amplitudes are clipped so (amp1 + 2 amp2) * omega <= 4.71 rad/s.
 #pragma once
 
 #include <vector>
@@ -41,7 +41,7 @@ struct ServoParams {
 class Controller {
 public:
     static constexpr int kSubsteps = 5;       // 4 ms each at 50 Hz
-    static constexpr float kServoSpeed = 5.45f;
+    static constexpr float kServoSpeed = 4.71f;
     static constexpr float kLoadFullScale = 0.7f;   // control.json default
 
     Controller(float frequency, float ramp_time, float control_hz,

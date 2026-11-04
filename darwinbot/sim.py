@@ -19,9 +19,9 @@ import mujoco
 import numpy as np
 from numba import njit
 
-from darwinbot.builder import build_mjcf
+from darwinbot.builder import AssemblyRules, build_mjcf
 from darwinbot.controller import CONTROL_DT, Controller, advance_phases
-from darwinbot.morphology import SERVO_AXIS_OFFSET, Morphology, violations
+from darwinbot.morphology import Morphology, violations
 from darwinbot.terrain import Terrain
 
 EPISODE_SECONDS = 8.0
@@ -102,7 +102,8 @@ def terminal_geoms(model: mujoco.MjModel, morph: Morphology):
         first = model.body_geomadr[body]
         # physical geoms only: the look-only bracket and horn have contype 0
         own = [g for g in range(first, first + model.body_geomnum[body])
-               if model.geom_contype[g] != 0]
+               if model.geom_contype[g] != 0
+               and not (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("hub")]
         # Foot and terminal shapes: prefer a non-box geom for contact; a free
         # tip was already resolved by its name above.
         non_box = [g for g in own if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX]
@@ -125,58 +126,21 @@ def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
     return duty, height, share
 
 
-# A part sits a little inside the one it is mounted on (the servo in its
-# bracket): 17 to 26 mm across every archive with the servo body centred on
-# its axis. Deeper than this, the part passes through its parent, as a wheel
-# bolted to the torso edge did (37 to 45 mm), which MuJoCo hides because it
-# never collides a body with its parent. A servo body sits SERVO_AXIS_OFFSET
-# behind its axis, so it may sink that much deeper.
-MOUNT_OVERLAP_MAX = 0.029    # m
-SERVO_OVERLAP_MAX = MOUNT_OVERLAP_MAX + SERVO_AXIS_OFFSET
-ELBOW_OVERLAP_MAX = 0.001    # m, an elbow plate into a module it does not carry
-
-
-def is_buildable(model: mujoco.MjModel) -> bool:
-    """True when no two robot geoms touch at the spawn pose, and no part sinks
-    into the part it is mounted on deeper than MOUNT_OVERLAP_MAX."""
+def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
+    """True when the printed parts of the body assemble in the spawn pose: no
+    two robot geoms overlap except where the design laps them (a servo in its
+    cradle, a link in the U fork around its servo, an elbow on its link tip;
+    see builder.AssemblyRules). The parent filter of MuJoCo is switched off,
+    so a part that cuts into the one it is mounted on counts, and pairs of
+    parts that cannot move against each other are measured one by one."""
     data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    robot = model.geom_contype == 2
-    if any(robot[c.geom1] and robot[c.geom2] for c in data.contact):
-        return False
     flags = model.opt.disableflags
     model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     try:
         mujoco.mj_forward(model, data)
-        return not any(robot[c.geom1] and robot[c.geom2] and
-                       (c.dist < -_overlap_max(model, c) or _foreign_elbow(model, c))
-                       for c in data.contact)
+        return not AssemblyRules(morph, model).clashes(model, data, fixed=True, first=True)
     finally:
         model.opt.disableflags = flags
-
-
-def _overlap_max(model: mujoco.MjModel, contact) -> float:
-    names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
-             for g in (contact.geom1, contact.geom2)]
-    return SERVO_OVERLAP_MAX if any(n.startswith("servo") for n in names) else MOUNT_OVERLAP_MAX
-
-
-def _foreign_elbow(model: mujoco.MjModel, contact) -> bool:
-    """True when an elbow plate cuts into a module other than the one it
-    carries, deeper than ELBOW_OVERLAP_MAX. An elbow lives in the parent body,
-    so the parent filter hides it from a sibling: with the servo body behind
-    its axis, two elbows on one link tip can put each servo into the other
-    elbow, which a printed robot cannot do."""
-    if contact.dist >= -ELBOW_OVERLAP_MAX:
-        return False
-    for g, other in ((contact.geom1, contact.geom2), (contact.geom2, contact.geom1)):
-        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
-        if name.startswith("elbow"):
-            body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY,
-                                     model.geom_bodyid[other]) or ""
-            if body != "n" + name[len("elbow"):]:
-                return True
-    return False
 
 
 @njit(cache=True)
@@ -208,7 +172,7 @@ class Episode:
         self.torso = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso")
         self.mass  = float(self.model.body_subtreemass[self.torso])
         self.hold  = control_hold(self.model.opt.timestep)
-        self.buildable = is_buildable(self.model) and not violations(morph)
+        self.buildable = is_buildable(self.model, morph) and not violations(morph)
         self.reach = morph.max_reach
         self._robot = self.model.geom_contype == 2
         self._tgeoms, self._twheel = terminal_geoms(self.model, morph)

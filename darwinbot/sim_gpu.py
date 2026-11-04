@@ -41,7 +41,7 @@ class BatchEpisode:
                                       terrain_friction=terrain.friction)
         model = mujoco.MjModel.from_xml_string(xml)
         self.dt = float(model.opt.timestep)
-        self.buildable = is_buildable(model) and not violations(morph)
+        self.buildable = is_buildable(model, morph) and not violations(morph)
         self.mass = float(model.body_subtreemass[
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso")])
         if not self.buildable:

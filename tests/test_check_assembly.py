@@ -44,6 +44,55 @@ def test_clean_body_passes(tmp_path, capsys):
     assert name in out
 
 
+def _two_children_on_one_link():
+    """The template with a second side module on the first thigh: slots 1 and 2
+    of one link both carry a servo."""
+    morph = mo.template(2)
+    i = max(morph.nodes) + 1
+    morph.nodes[i] = mo.Node(i, "joint", 1, 2, 0, axis="pitch", length=0.10)
+    return morph
+
+
+@pytest.mark.parametrize("make", [lambda: mo.template(2),
+                                  _two_children_on_one_link,
+                                  lambda: mo.template(2, yaw=True),
+                                  lambda: mo.template(2, wheels=True)])
+def test_clean_templates_clear_at_spawn_and_while_walking(make):
+    morph = make()
+    ctrl = np.random.default_rng(0).uniform(0, 1, co.CTRL_LENGTH)
+    frames = [ca.spawn_frames(morph)] + ca.walk_frames(morph, ctrl)
+    assert len(frames) == 1 + len(ca.WALK_TIMES)
+    for pose in frames:
+        clashes, _ = ca.report(morph, frames=pose)
+        assert clashes == []
+
+
+def test_a_walk_report_covers_the_whole_walk():
+    morph = mo.template(2)
+    ctrl = np.random.default_rng(0).uniform(0, 1, co.CTRL_LENGTH)
+    clashes, horns = ca.report(morph, ctrl=ctrl, walk=True)
+    assert clashes == []
+    assert len(horns) == morph.n_servos
+
+
+def test_every_pair_is_checked_including_parent_and_child():
+    # a link pushed into the servo it turns about is a clash, not a joint
+    morph = mo.template(2)
+    records = assembly.placements(morph)
+    k = next(i for i, p in enumerate(records) if p.label == "link1")
+    records[k] = records[k]._replace(pos=(-20.0, 0.0, 0.0))
+    clashes, _ = ca.report(morph, records=records)
+    assert any("link1" in (a, b) for a, b, _ in clashes)
+
+
+def test_a_lap_is_allowed_only_between_screwed_parts():
+    morph = mo.template(2)
+    pairs = ca.lap_pairs(morph, assembly.placements(morph))
+    assert frozenset(("cradle1", "servo1")) in pairs
+    assert frozenset(("link1", "servo1")) not in pairs
+    assert frozenset(("link1", "link2")) not in pairs
+
+
 def test_horn_patterns_line_up_on_a_clean_body():
     morph = mo.template(2)
     clashes, horns = ca.report(morph)
@@ -73,3 +122,34 @@ def test_rotated_horn_pattern_is_flagged():
     records[k] = records[k]._replace(rot=records[k].rot @ turn)
     _, horns = ca.report(morph, records=records)
     assert dict(horns)[records[k].label] > ca.MAX_GAP
+
+
+def _evolved_body(seed):
+    """A body made the way evolution makes them: a random seed and mutations."""
+    rng = np.random.default_rng(seed)
+    genes = mo.random_morphology(rng)
+    for _ in range(int(rng.integers(0, 25))):
+        genes = mo.mutate(genes, rng)
+    return mo.decode(genes)
+
+
+def test_bodies_the_generator_makes_are_accepted_and_assemble():
+    """Most of what random_morphology and mutate make is buildable, and of the
+    bodies without a spring (whose printed plates are not drawn to stack yet)
+    most have no printed clash at the spawn pose."""
+    from darwinbot.sim import Episode
+    from darwinbot.terrain import get_terrains
+    flat = get_terrains("flat")[0]
+    accepted, clean, checked = 0, 0, 0
+    for seed in range(14):
+        body = _evolved_body(seed)
+        if not Episode(body, flat, seconds=0.1).buildable:
+            continue
+        accepted += 1
+        if any(n.kind == "spring" for n in body.nodes.values()):
+            continue
+        checked += 1
+        clashes, _ = ca.report(body)
+        clean += not clashes
+    assert accepted >= 10
+    assert checked and clean >= 0.6 * checked

@@ -59,7 +59,10 @@ def test_no_yaw_leg_has_one_fewer_actuator():
     assert no_yaw.model.nu == len(no_yaw.layout)
 
 
-def test_spring_is_a_passive_hinge():
+def test_spring_is_a_passive_hinge(monkeypatch):
+    # springs are disabled for training (no printed part yet); the simulator
+    # still models them
+    monkeypatch.setattr(mo, "DISABLED_KINDS", ())
     """A spring adds a joint and no actuator, with the flexure stiffness."""
     morph = mo.template(1)
     i = max(morph.nodes) + 1
@@ -185,7 +188,9 @@ def test_side_modules_hang_from_an_elbow_plate():
 
     assert side and ep.buildable
     for i in side:
-        g = ep.model.geom(f"elbow{i}")
+        # a servo child hangs on a strut, anything else on a bar
+        name = f"strut{i}" if morph.nodes[i].kind in ("joint", "wheel") else f"elbow{i}"
+        g = ep.model.geom(name)
         assert g.bodyid[0] == ep.model.body(f"n{morph.nodes[i].parent}").id
 
 
@@ -382,7 +387,7 @@ def test_skid_and_spike_friction_beats_the_terrain():
         morph.nodes[i] = mo.Node(i, kind, 0, 0 if kind == "skid" else 1, 0.0)
     ep = Episode(morph, te.flat(), seconds=1.0)
     floor = max(ep.model.geom_priority[g] for g in range(ep.model.ngeom)
-                if ep.model.geom_contype[g] != 2)
+                if ep.model.geom_contype[g] == 1)
     for name in ("skid", "spike"):
         g = next(g for g in range(ep.model.ngeom) if (ep.model.geom(g).name or "").startswith(name))
         assert ep.model.geom_priority[g] > floor
@@ -619,7 +624,7 @@ def test_spine_segment_builds_and_moves():
     first = max(morph.nodes) + 1
     morph.nodes[first] = mo.Node(first, "segment", 0, 1, 0, axis="pitch",
                                  length=0.14, width=0.10)
-    morph.nodes[first + 1] = mo.Node(first + 1, "joint", first, 3, 0,
+    morph.nodes[first + 1] = mo.Node(first + 1, "joint", first, 2, 0,
                                      axis="pitch", length=0.08)
     morph = mo.decode(mo.encode(morph))
     episode = Episode(morph, te.flat(), seconds=0.6)
@@ -642,17 +647,16 @@ def test_spine_segment_builds_and_moves():
     assert swing > 0.02
 
 
-def test_legs_on_the_bottom_face_build_and_simulate():
+def test_servo_legs_on_a_torso_face_are_not_buildable():
+    # a servo body on the top or bottom face would pass through the 6 mm plate
     morph = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
     for k, (slot, rot) in enumerate(((10, 0.0), (11, 0.0), (3, 3 * np.pi / 2),
                                      (6, 3 * np.pi / 2)), start=1):
         morph.nodes[k] = mo.Node(k, "joint", 0, slot, rot)
     morph = mo.decode(mo.encode(morph))
-    assert morph.n_legs == 4 and morph.lowest_z() < -mo.TORSO_HEIGHT / 2
-    episode = Episode(morph, te.flat(), seconds=0.6)
-    assert episode.buildable
-    metrics = episode.run(_ctrl(morph, amp=0.3))
-    assert np.isfinite([metrics.dx, metrics.dy, metrics.energy]).all()
+    assert morph.n_legs == 4
+    assert any("torso face" in v for v in mo.violations(morph))
+    assert not Episode(morph, te.flat(), seconds=0.6).buildable
 
 
 def test_tilt_scales_progress_but_not_losses():

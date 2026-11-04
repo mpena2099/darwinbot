@@ -7,7 +7,7 @@ external libraries, float math), so it can be tested without the ESP32.
 `docs/formato-controle.md`: one phase oscillator per position servo with
 Tegotae load feedback (`dtheta = omega - sigma * N * cos(theta)`, five
 substeps per control tick), the start ramp, the speed clip
-`(amp1 + 2 * amp2) * omega <= 5.45 rad/s`, joint clamping and the servo step
+`(amp1 + 2 * amp2) * omega <= 4.71 rad/s`, joint clamping and the servo step
 conversion (`zero + sign * target * 4096 / 2pi`, rounded). Wheels get only a
 ramped, signed speed and ignore phase and load.
 

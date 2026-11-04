@@ -214,7 +214,7 @@ exist. DarwinBot uses three defenses:
 
 There is a fourth defense, **natural selection by the printer**: a body is
 buildable only if every part fits a 220 mm print bed, every link survives
-the servo stall torque (1.91 N*m) with a bending stress of at most 25 MPa
+the servo stall torque (2.94 N*m) with a bending stress of at most 25 MPa
 (half of what PLA takes), and no parts overlap. The torso has no limit: it
 is split into bed-sized tiles joined by splice plates, and each spine segment is its own plate. A body that breaks a
 rule is scored as unbuildable and is never simulated.

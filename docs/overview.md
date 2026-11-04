@@ -26,7 +26,7 @@ that affect the child are optimised; the rest stay in the genome and become
 active again if a module returns.
 
 Construction rules act as natural selection by the printer. A body is buildable
-only if every part fits a 220 mm print bed, every link bends under the 1.91 N*m
+only if every part fits a 220 mm print bed, every link bends under the 2.94 N*m
 servo stall torque with a stress of at most 25 MPa (half of what PLA takes), and
 no parts overlap at spawn. The torso is not limited: its outline is split into
 bed-sized tiles joined by splice plates, and each spine segment is its own plate. A body that breaks a rule scores as unbuildable

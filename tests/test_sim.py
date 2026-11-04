@@ -59,7 +59,10 @@ def test_no_yaw_leg_has_one_fewer_actuator():
     assert no_yaw.model.nu == len(no_yaw.layout)
 
 
-def test_spring_is_a_passive_hinge():
+def test_spring_is_a_passive_hinge(monkeypatch):
+    # springs are disabled for training (no printed part yet); the simulator
+    # still models them
+    monkeypatch.setattr(mo, "DISABLED_KINDS", ())
     """A spring adds a joint and no actuator, with the flexure stiffness."""
     morph = mo.template(1)
     i = max(morph.nodes) + 1

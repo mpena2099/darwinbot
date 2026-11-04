@@ -416,7 +416,10 @@ def test_spring_round_trip():
     assert np.allclose(mo.encode(mo.decode(genes)), genes)
 
 
-def test_spring_is_a_passive_link():
+def test_spring_is_a_passive_link(monkeypatch):
+    # springs are disabled for training (no printed part yet); the simulator
+    # still models them
+    monkeypatch.setattr(mo, "DISABLED_KINDS", ())
     m = _single_spring()
     assert (m.n_springs, m.n_servos, m.n_terminals) == (1, 0, 1)
     assert mo.N_SLOTS["spring"] == 3
@@ -431,7 +434,10 @@ def test_spring_stiffness_grows_with_the_cube_of_the_blade():
     assert k(0.008) == pytest.approx(64 * k(0.002))
 
 
-def test_soft_spring_blade_does_not_fail_the_strength_check():
+def test_soft_spring_blade_does_not_fail_the_strength_check(monkeypatch):
+    # springs are disabled for training (no printed part yet); the simulator
+    # still models them
+    monkeypatch.setattr(mo, "DISABLED_KINDS", ())
     m = mo.template(2)
     i = max(m.nodes) + 1
     m.nodes[i] = mo.Node(i, "spring", 0, 0, 0.0, length=0.08, width=0.02, thick=0.002)

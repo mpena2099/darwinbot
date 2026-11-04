@@ -812,6 +812,11 @@ def _bundle_length(morph: "Morphology", i: int) -> float:
     return total
 
 
+# Module kinds whose printed parts do not assemble yet: the repair turns them
+# into their nearest buildable kind and violations rejects them.
+DISABLED_KINDS = ("spring",)
+
+
 def violations(morph: Morphology) -> List[str]:
     """Printability checks: link bending strength, bed footprint, elbow reach,
     room for a servo cradle at a link tip, no servo on a torso face,
@@ -825,6 +830,8 @@ def violations(morph: Morphology) -> List[str]:
     if not all(_inside(x, y, poly) for x, y in probes):
         out.append("torso contour does not hold the electronics")
     for i, n in morph.nodes.items():
+        if n.kind in DISABLED_KINDS:
+            out.append(f"#{i} {n.kind}: no printed part assembles yet")
         if (n.kind in ("joint", "segment", "wheel") and n.parent >= 0
                 and morph.nodes[n.parent].kind == "core" and n.slot in FACE_SLOTS):
             out.append(f"#{i} {n.kind}: a servo on a torso face passes through the plate")
@@ -1202,6 +1209,8 @@ def fit_rules(morph: Morphology) -> Morphology:
                 and n.slot in FACE_SLOTS):
             n.kind = "link" if n.kind == "joint" else "foot"
             n.axis, n.flip = "pitch", False
+        if n.kind in DISABLED_KINDS:      # no printed part yet: the nearest buildable kind
+            n.kind, n.axis, n.flip = "link", "pitch", False
     cm = morph.child_map()
     for i in sorted(morph.nodes):
         n = morph.nodes[i]

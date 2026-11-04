@@ -32,7 +32,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from assembly import placements, printed_frames, printed_rest  # noqa: E402
+from assembly import placements, printed_frames, printed_rest, solid  # noqa: E402
 
 from build123d import Box, Location, Pos, gp_Trsf          # noqa: E402
 
@@ -184,14 +184,35 @@ def lap_pairs(morph, records) -> set:
     return out
 
 
+SLIVER = 100.0  # mm^3: the corner where an elbow plate meets the link of the module it carries
+
+
+def sliver_pairs(morph, records) -> set:
+    """Labels of an elbow plate and the link of the module it carries: the
+    plate's strut ends in the cradle the link's U fork clasps, and the two
+    touch at a corner by a few cubic millimetres. The same goes for a foot cap
+    and the link whose spigot it sits on."""
+    from darwinbot.export import print_owner
+    out = set()
+    for p in records:
+        if p.label.startswith("foot"):
+            node = morph.nodes[p.owner]
+            holder = p.owner if node.kind in ("joint", "link", "spring") else node.parent
+            if holder > 0:
+                out.add(frozenset((p.label, f"link{print_owner(morph, holder)}")))
+        if p.label.startswith("elbow"):
+            out.add(frozenset((p.label, f"link{p.owner}")))
+            parent = morph.nodes[p.owner].parent
+            if parent > 0:
+                out.add(frozenset((p.label, f"link{print_owner(morph, parent)}")))
+    return out
+
+
 def _build(morph, records, step_path):
     """([(label, solid)], frames) with one solid per printed part and servo."""
-    made = {}
     solids = []
-    for p in records:
-        if p.name not in made:                    # one solid per distinct STL
-            made[p.name] = p.make()
-        solids.append((p.label, p.body, p.pos, p.rot, made[p.name]))
+    for p in records:                             # one solid per distinct STL
+        solids.append((p.label, p.body, p.pos, p.rot, solid(morph, p)))
     bodies = {}
     servo = []
     for i, node in morph.nodes.items():
@@ -219,6 +240,7 @@ def report(morph, records=None, servo_step=None, ctrl=None, walk=False,
     records = placements(morph) if records is None else records
     posed = _build(morph, records, servo_step)
     laps = lap_pairs(morph, records)
+    slivers = sliver_pairs(morph, records)
     poses = [spawn_frames(morph)] if frames is None else [frames]
     if walk and frames is None:
         poses += walk_frames(morph, ctrl, payload)
@@ -237,6 +259,8 @@ def report(morph, records=None, servo_step=None, ctrl=None, walk=False,
                     continue
                 volume = _shared(items[a][1], items[b][1], frames[a], frames[b],
                                  frozenset((items[a][0], items[b][0])) in laps)
+                if volume < SLIVER and frozenset((items[a][0], items[b][0])) in slivers:
+                    continue
                 if volume and (items[a][0], items[b][0]) not in seen:
                     seen.add((items[a][0], items[b][0]))
                     clashes.append((items[a][0], items[b][0], volume))

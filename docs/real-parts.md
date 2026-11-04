@@ -1,8 +1,8 @@
 # Real parts
 
 Every simulated robot is built from parts you can buy or print: Feetech
-STS3215 servos at 7.4 V (1.91 N*m stall, 5.45 rad/s, run at 70% of the torque),
-60 g per servo, an ESP32 + 2S LiPo + regulator payload of 0.13 kg in the torso,
+STS3215 servos, 12 V version (C018: 2.94 N*m stall, 4.71 rad/s, run at 70% of the torque),
+60 g per servo, an ESP32 + 3S LiPo + regulator payload of 0.17 kg in the torso,
 printed links of any length from 40 to 200 mm with a width of 12 to 30 mm and a
 thickness of 3 to 10 mm (straight, L or arc), a torso plate of free contour with
 optional spine plates, blade, pad and claw feet with a socket hub, printed elbow plates that carry the modules mounted on

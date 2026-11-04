@@ -52,12 +52,13 @@ def link_name(profile, bend_deg, length, width, thick, axis=None, foot_r=None,
         name += f"_c{tip_axis[0][0]}" + (f"r{tip_axis[1]}" if tip_axis[1] else "")
     if foot_r:
         name += (f"_foot{foot_r}" if isinstance(foot_r, int)
-                 else f"_foot{foot_r[1]}{foot_r[0]}")
+                 else f"_foot{foot_r[1]}{foot_r[0]}" + (f"a{foot_r[2]}" if len(foot_r) > 2 and foot_r[2] else ""))
     if len(elbow) >= 2 and any(e is not None for e in elbow[:2]):
         name += "_e" + "_".join("0" if e is None else "x".join(str(v) for v in e)
                                 for e in elbow[:2])
-    for d, a, r, shape in (elbow[2] if len(elbow) > 2 else ()):
-        name += f"_b{d}a{a}" + (f"{shape[0]}{r}" if r else "")
+    for d, a, r, shape, *roll in (elbow[2] if len(elbow) > 2 else ()):
+        name += f"_b{d}a{a}" + (f"{shape[0]}{r}" if r else "") + (
+            f"x{roll[0]}" if roll and roll[0] else "")
     if len(elbow) > 3 and elbow[3]:
         name += "_k%05d" % (zlib.crc32(repr(elbow[3]).encode()) % 100000)
     return name
@@ -156,7 +157,8 @@ def link_args(morph, i):
             if child.kind == "foot":
                 tip_foot = _mm(child.foot_rad)
                 if child.foot_shape != "sphere":
-                    tip_foot = (tip_foot, child.foot_shape)
+                    tip_foot = (tip_foot, child.foot_shape,
+                                int(round(np.degrees(child.rot))) % 360)
             continue
         side = 1 if slot == 1 else -1
         dist = _mm(morpho.elbow_distance(child))
@@ -169,8 +171,9 @@ def link_args(morph, i):
         elif child.kind == "spring":
             continue         # a flexure has its own plate; the TPU part is not drawn
         elif child.kind == "foot":
-            bars.append((side * dist, angle, _mm(child.foot_rad),
-                         child.foot_shape))
+            bars.append((side * dist, angle, _mm(child.foot_rad), child.foot_shape,
+                         int(round(np.degrees(child.rot))) % 360
+                         if child.foot_shape != "sphere" else 0))
         else:
             bars.append((side * dist, angle, 0, ""))
     return (_mm(node.length), _mm(node.width),
@@ -229,7 +232,7 @@ def _rot_y(deg):
 # as parts._axis_rot.
 CRADLE_FRAME = {"pitch": np.eye(3), "yaw": _rot_x(-90.0),
                 "roll": _rot_x(180.0) @ _rot_y(90.0)}
-MAX_WEDGE_TILT = 25.0    # a steeper roll slides the foot out of the cradle caps
+MAX_WEDGE_TILT = 20.0    # a steeper roll slides the foot out of the cradle caps
 
 
 def cradle_name(axis, angle=0.0, foot="side"):
@@ -325,6 +328,15 @@ def torso_mount(morph, i):
     shift = -drop * np.sin(a) / slide
     return Mount("side", side, tilt * (1.0 if shift >= 0 else -1.0), float(drop),
                  float(shift))
+
+
+def _layout_ranges(morph, layout):
+    """Joint limits of every servo in layout order, as the simulation measures
+    them (builder.joint_ranges); wheels get None."""
+    ranges = builder.joint_ranges(morph)
+    default = lambda a: (-builder.JOINT_RANGE[a.axis], builder.JOINT_RANGE[a.axis])
+    return [ranges.get(a.slot, default(a)) if a.kind == "joint" else None
+            for a in layout]
 
 
 def foot_name(shape, radius):
@@ -485,7 +497,7 @@ def bom_rows(morph):
     (links, wheels, feet, elbows, springs, tails, skids, spikes,
      casters, cradles, wedges) = part_counts(morph)
     torso, splices = _torso_names(morph)
-    rows = [("Feetech STS3215 servo, 7.4 V", n, "bus servo, ID 1..%d" % n)]
+    rows = [("Feetech STS3215 servo, 12 V (C018)", n, "bus servo, ID 1..%d" % n)]
     size = torso_size_mm(morph)
     rows += [(name, 1, f"PLA, {size[0]:.0f} x {size[1]:.0f} mm") for name in torso]
     sizes = Counter((_mm(s.length), _mm(s.width))
@@ -544,8 +556,8 @@ def bom_rows(morph):
                  "PLACEHOLDER, check it against your board before printing"))
     rows.append(("M2 x 6 screw", 8 * n,
                  "four into each tapped face of every servo, through its cradle"))
-    rows += [("2S LiPo battery 7.4 V", 1, "1000 to 1500 mAh"),
-             ("Step-down regulator", 1, "from 7.4 V to the board supply")]
+    rows += [("3S LiPo battery 11.1 V", 1, "1000 to 1500 mAh, feeds the servos directly"),
+             ("Step-down regulator", 1, "from 12.6 V to the board supply")]
     for length, (q, what) in sorted(screws.items()):
         rows.append((f"M3 x {length} screw", q, what))
     rows.append(("M3 nut", sum(q for q, _ in screws.values()),
@@ -783,7 +795,7 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False) -> 
         f.write(xml)
 
     ctl = make_control_file(name, elite.fitness, layout, Controller(elite.ctrl, layout).params,
-                            builder.JOINT_RANGE, signs=servo_signs(morph, layout))
+                            _layout_ranges(morph, layout), signs=servo_signs(morph, layout))
     write_control_file(ctl, os.path.join(out_dir, "control.json"))
 
     rows = bom_rows(morph)

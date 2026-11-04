@@ -36,7 +36,9 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
     """
     Build the control dict. layout items are (slot, kind, axis) in servo order
     (morphology.Actuator), params is controller.Params and signs the mounting
-    sign of every servo (default 1). load_full_scale is the fraction of the
+    sign of every servo (default 1). joint_ranges is either one symmetric limit
+    per axis or one (lo, hi) per servo in layout order (None for a wheel).
+    load_full_scale is the fraction of the
     servo maximum torque that the simulation treats as N = 1.
     """
     servos = []
@@ -49,7 +51,10 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
                            "steer_gain": float(params.steer_gain[i]),
                            "steer_shift": float(params.steer_shift[i])})
         else:
-            lim = float(joint_ranges[axis])
+            if isinstance(joint_ranges, dict):      # one symmetric limit per axis
+                lo, hi = -float(joint_ranges[axis]), float(joint_ranges[axis])
+            else:                                   # one (lo, hi) per servo
+                lo, hi = (float(v) for v in joint_ranges[i])
             servos.append({"id": i + 1, "name": name, "mode": "position",
                            "amp1": float(params.amp1_base[i]),
                            "phase1": float(params.phase1[i]),
@@ -59,7 +64,7 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
                            "sigma": float(params.sigma[i]),
                            "steer_gain": float(params.steer_gain[i]),
                            "steer_shift": float(params.steer_shift[i]),
-                           "sign": sign, "zero": ZERO, "min": -lim, "max": lim})
+                           "sign": sign, "zero": ZERO, "min": lo, "max": hi})
     return {"format": FORMAT, "robot": robot_name, "fitness": float(fitness),
             "control_hz": control_hz, "ramp_time": ramp_time,
             "load_full_scale": float(load_full_scale),

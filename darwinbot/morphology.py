@@ -86,6 +86,9 @@ MAX_DEPTH  = 5      # core is depth 0
 MAX_SEGMENTS = 2    # spine plates per body
 
 LENGTH_RANGE = (0.04, 0.20)               # m, joint / link length
+FOOT_LINK_MIN = 0.07                      # m: a link that ends in a foot cap needs room for its spigot
+CRADLE_LINK_MIN = 0.066                   # m: a link that carries a servo at its tip needs room for
+                                          # the U fork at its root and the child's cradle at its tip
 LINK_WIDTH_RANGE = (0.012, 0.030)         # m, link width
 LINK_THICK_RANGE = (0.003, 0.010)         # m, link thickness
 SPRING_BLADE_RANGE = (0.002, 0.008)       # m, TPU blade thickness of a spring
@@ -97,7 +100,8 @@ SKID_SIZE = (0.06, 0.03, 0.006)           # m, low-friction pad
 SKID_RADIUS = 0.015                       # m, contact radius of a skid
 SPIKE_LENGTH = 0.03                       # m
 SPIKE_RADIUS = 0.005                      # m
-ELBOW_RANGE = (0.025, 0.08)               # m, side slot offset from the link axis
+ELBOW_RANGE = (0.045, 0.08)               # m, side slot offset from the link axis; under 45 mm the
+                                          # child's printed cradle reaches back over the link axis
 WHEEL_RANGE_M = (0.03, 0.06)              # m, wheel radius
 CASTER_RANGE = (0.015, 0.035)             # m, free caster wheel radius
 CASTER_FORK_SIZE = (0.02, 0.02, 0.02)     # m, printed fork box of a caster
@@ -133,13 +137,75 @@ def servo_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
 
 
 ELBOW_BOSS_R = 0.0155               # m, round end of a printed elbow plate (parts.END_BOSS_D / 2)
+
+# Printed parts as parts.py draws them (mm there, m here): the simulation
+# collides these shapes, so a body it accepts is a body whose parts assemble.
+PRINT_BODY_H   = 0.0307             # parts.SERVO_BODY_H: servo body along its output axis
+PRINT_WALL     = 0.0029             # parts.SERVO_CLEARANCE + parts.CRADLE_T: air and wall around the servo
+FORK_ARM_T     = 0.003              # parts.ARM_T: U link arm, one on each horn face
+FORK_ARM_GAP   = 0.0002             # parts.ARM_GAP: air between a cradle cap and an arm
+FORK_HORN_T    = 0.003              # parts.HORN_T
+FORK_ARM_HALF_W = 0.0134            # parts.ARM_W: half width of an arm across the link plane
+FORK_BRIDGE_X  = 0.024              # parts.BRIDGE_X: where the U link crosses the servo front
+FORK_BRIDGE_T  = 0.003              # parts.BRIDGE_T
+STRUT_HALF_W   = 0.004              # parts.STRUT_HW: half width of an elbow strut along the link
+TONGUE_HALF_H  = 0.0045             # parts.TONGUE_Z
+TONGUE_T       = 0.001              # parts.TONGUE_T (0.45 mm) and the 0.1 mm it stands out, thick enough to collide
+TAB_SIZE       = (0.0512, 0.0306)   # m, torso tab under a servo (parts torso_plate)
+PLATE_THICK    = 0.006              # parts.PLATE_T
+
+
+def cradle_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Half extents and centre, in the module frame of a joint about `axis`,
+    of the printed cradle around a servo: its body, the air around it and the
+    wall (caps included). The sleeve is trimmed to a circle in front of the
+    output axis, which this box does not follow by up to a millimetre."""
+    pl, pw = 0.0454, 0.0248
+    half = np.array([pl / 2, pw / 2, PRINT_BODY_H / 2]) + PRINT_WALL
+    if axis == "pitch":
+        return half, SERVO_CENTRE.copy()
+    if axis == "roll":
+        return half[[2, 1, 0]], np.array([0.0, 0.0, -SERVO_AXIS_OFFSET])
+    return half[[0, 2, 1]], SERVO_CENTRE.copy()
+
+
+def fork_boxes(axis: str, width: float, thick: float) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """(centre, half extents) boxes, in the module frame, of the U fork at the
+    root of a joint's link: one arm on each horn face of the servo and the
+    bridge across its front (parts._u_root)."""
+    d = PRINT_BODY_H / 2 + FORK_HORN_T + FORK_ARM_GAP
+    hw = max(FORK_ARM_HALF_W, width / 2 + 0.001)
+    t, bx = FORK_ARM_T, FORK_BRIDGE_X
+    front = bx + FORK_BRIDGE_T
+    out = []
+    if axis == "roll":
+        z1 = bx + t
+        for s in (-1.0, 1.0):
+            out.append((np.array([s * (d + t / 2), 0.0, (z1 - hw) / 2]),
+                        np.array([t / 2, hw, (z1 + hw) / 2])))
+        out.append((np.array([0.0, 0.0, bx + t / 2]), np.array([d + t, hw, t / 2])))
+        return out
+    for s in (-1.0, 1.0):
+        arm_c = np.array([(front - hw) / 2, 0.0, 0.0])
+        arm_h = np.array([(front + hw) / 2, hw, hw])
+        if axis == "pitch":
+            arm_c[2], arm_h[2] = s * (d + t / 2), t / 2
+        else:
+            arm_c[1], arm_h[1] = s * (d + t / 2), t / 2
+        out.append((arm_c, arm_h))
+    bridge_c = np.array([(bx + front) / 2, 0.0, 0.0])
+    if axis == "pitch":
+        out.append((bridge_c, np.array([FORK_BRIDGE_T / 2, thick / 2, d + t])))
+    else:
+        out.append((bridge_c, np.array([FORK_BRIDGE_T / 2, d + t, thick / 2])))
+    return out
 SEGMENT_LENGTH_RANGE = (0.08, 0.22)      # m, spine plate length
 SEGMENT_WIDTH_RANGE = (0.08, 0.22)       # m, spine plate width
 SEGMENT_HEIGHT = 0.03                    # m, spine plate thickness
-ELBOW_OFFSET = (0.04 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
+ELBOW_OFFSET = (0.05 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
 
 # Printability: a part must print on a common bed and survive the servo stall torque.
-SERVO_STALL = 1.91       # N*m, STS3215 stall torque
+SERVO_STALL = 2.94       # N*m, STS3215 (12 V) stall torque
 PLA_STRENGTH = 50e6      # Pa, printed PLA
 STRENGTH_SAFETY = 0.5    # link bending stress must stay below half of PLA
 BED = 0.22               # m, largest part that fits a common print bed
@@ -689,8 +755,71 @@ def _inside(x: float, y: float, poly: List[Tuple[float, float]]) -> bool:
     return inside
 
 
+MAX_MOUNT_TILT = 20.0     # degrees a printed wedge takes up under a rolled cradle
+
+
+def _rx_deg(deg: float) -> np.ndarray:
+    a = np.radians(deg)
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+
+
+def _ry_deg(deg: float) -> np.ndarray:
+    a = np.radians(deg)
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+
+
+# cradle frame (output axis along Z, body behind it along -X) in the module
+# frame of a joint about each axis, as export.CRADLE_FRAME
+_CRADLE_FRAME = {"pitch": np.eye(3), "yaw": _rx_deg(-90.0),
+                 "roll": _rx_deg(180.0) @ _ry_deg(90.0)}
+
+
+def mount_tilt(morph: "Morphology", i: int) -> Optional[float]:
+    """Degrees a torso or segment mount of the servo at i is rolled away from
+    a cradle foot lying flat on the plate, 0 when the output axis stands
+    vertical (the foot then sits behind the body), or None when the module is
+    not a servo bolted to a plate. export.torso_mount turns the same angle
+    into a wedge."""
+    n = morph.nodes[i]
+    axis = "yaw" if n.kind == "wheel" else (n.axis if n.kind in ("joint", "segment") else None)
+    if axis is None or n.parent < 0 or morph.nodes[n.parent].kind not in ("core", "segment"):
+        return None
+    frame = morph.rel_frame(n)[1] @ _CRADLE_FRAME[axis]
+    if abs((frame @ np.array([0.0, 0.0, 1.0]))[2]) > 1.0 - 1e-6:
+        return 0.0
+    tilts = []
+    for s in (1.0, -1.0):
+        u = frame @ np.array([0.0, -s, 0.0])
+        tilts.append(float(np.degrees(np.arccos(np.clip(-u[2], -1.0, 1.0)))))
+    return min(tilts)
+
+
+def _bundle_length(morph: "Morphology", i: int) -> float:
+    """Summed path length of the link `i` and the plain links hung on it (and
+    on those), which print as one piece with it; 0 for a link that is itself
+    printed with its owner."""
+    n = morph.nodes[i]
+    if n.kind == "link" and morph.nodes[n.parent].kind in ("joint", "link"):
+        return 0.0
+    cm = morph.child_map()
+    total, stack = 0.0, [i]
+    while stack:
+        k = stack.pop()
+        total += morph.nodes[k].length
+        stack += [c for c in cm.get(k, {}).values() if morph.nodes[c].kind == "link"]
+    return total
+
+
+# Module kinds whose printed parts do not assemble yet: the repair turns them
+# into their nearest buildable kind and violations rejects them.
+DISABLED_KINDS = ("spring",)
+
+
 def violations(morph: Morphology) -> List[str]:
     """Printability checks: link bending strength, bed footprint, elbow reach,
+    room for a servo cradle at a link tip, no servo on a torso face,
     and room for the electronics inside the torso contour."""
     out: List[str] = []
     poly = morph.torso_polygon()
@@ -701,6 +830,16 @@ def violations(morph: Morphology) -> List[str]:
     if not all(_inside(x, y, poly) for x, y in probes):
         out.append("torso contour does not hold the electronics")
     for i, n in morph.nodes.items():
+        if n.kind in DISABLED_KINDS:
+            out.append(f"#{i} {n.kind}: no printed part assembles yet")
+        if (n.kind in ("joint", "segment", "wheel") and n.parent >= 0
+                and morph.nodes[n.parent].kind == "core" and n.slot in FACE_SLOTS):
+            out.append(f"#{i} {n.kind}: a servo on a torso face passes through the plate")
+        tilt = mount_tilt(morph, i)
+        if tilt is not None and (tilt > MAX_MOUNT_TILT or (
+                tilt >= 0.5 and n.kind != "wheel" and n.axis == "roll")):
+            out.append(f"#{i} {n.kind}: mount rolled {tilt:.0f} degrees, more than a "
+                       f"printed wedge takes up")
         if n.kind == "segment":
             extent = max(n.length, n.width)
             if extent > BED + 1e-9:
@@ -722,6 +861,21 @@ def violations(morph: Morphology) -> List[str]:
         if extent > BED + 1e-9:
             out.append(f"#{i} {n.kind}: {extent * 1000:.0f} mm "
                        f"({n.profile}) does not fit the "
+                       f"{BED * 1000:.0f} mm bed")
+        servo_kids = [c for s, c in morph.child_map().get(i, {}).items() if s == 0
+                      if morph.nodes[c].kind in ("joint", "segment", "wheel")]
+        if servo_kids and n.length < CRADLE_LINK_MIN - 1e-9:
+            out.append(f"#{i} {n.kind}: {n.length * 1000:.0f} mm is too short to "
+                       f"carry a servo cradle (>= {CRADLE_LINK_MIN * 1000:.0f} mm)")
+        foot_kids = [c for s, c in morph.child_map().get(i, {}).items() if s == 0
+                     if morph.nodes[c].kind == "foot"]
+        if foot_kids and n.length < FOOT_LINK_MIN - 1e-9:
+            out.append(f"#{i} {n.kind}: {n.length * 1000:.0f} mm is too short to "
+                       f"hold a foot (>= {FOOT_LINK_MIN * 1000:.0f} mm)")
+        if (n.kind in ("joint", "link") and _bundle_length(morph, i) > n.length + 1e-9
+                and _bundle_length(morph, i) + n.width > BED + 1e-9):
+            out.append(f"#{i} {n.kind}: the links printed in one piece with it span "
+                       f"{(_bundle_length(morph, i) + n.width) * 1000:.0f} mm, more than the "
                        f"{BED * 1000:.0f} mm bed")
         if n.slot in (1, 2) and morph.nodes[n.parent].kind in (
                 "joint", "link", "spring"):
@@ -931,6 +1085,170 @@ def prune(morph: Morphology) -> Morphology:
     return morph
 
 
+def _circular(a: float, b: float) -> float:
+    """Signed difference a - b of two angles, in [-pi, pi)."""
+    return float((a - b + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+def _mount_roll_ok(morph: Morphology, n: Node) -> bool:
+    tilt = mount_tilt(morph, n.id)
+    return tilt is None or not (tilt > MAX_MOUNT_TILT or (
+        tilt >= 0.5 and n.kind != "wheel" and n.axis == "roll"))
+
+
+def _snap_mount_roll(morph: Morphology, n: Node):
+    """Turn the roll of a servo on the torso (or on a segment plate) to the
+    nearest one its printed cradle can be bolted down at: the cradle foot lies
+    flat when the roll is a multiple of 90 degrees, and a wedge takes up to
+    MAX_MOUNT_TILT of tilt on either side (a roll joint takes none). The
+    roll that lays the foot flat has a closed form: it brings the cradle's
+    own -Y (turned about the slot axis) onto the down direction."""
+    if _mount_roll_ok(morph, n):
+        return
+    axis = "yaw" if n.kind == "wheel" else n.axis
+    slot_rot = morph.slot_frame(morph.nodes[n.parent], n.slot, n)[1]
+    w = slot_rot.T @ np.array([0.0, 0.0, -1.0])
+    reach = 1.0 if axis == "roll" else MAX_MOUNT_TILT - 5.0     # degrees off flat to aim for
+    best = None
+    for s in (1.0, -1.0):
+        v = _CRADLE_FRAME[axis] @ np.array([0.0, -s, 0.0])
+        flat = float(np.arctan2(w[2] * v[1] - w[1] * v[2],
+                                w[1] * v[1] + w[2] * v[2]))
+        d = _circular(n.rot, flat)
+        if best is None or abs(d) < abs(best[1]):
+            best = (flat, d)
+    flat, d = best
+    limit = np.radians(0.0 if axis == "roll" else reach)
+    old = n.rot
+    n.rot = float((flat + float(np.clip(d, -limit, limit))) % (2.0 * np.pi))
+    if not _mount_roll_ok(morph, n):
+        n.rot = float(flat % (2.0 * np.pi))
+        if not _mount_roll_ok(morph, n):
+            n.rot = old
+
+
+def _fit_contour(morph: Morphology):
+    """Raise the smallest contour factors until the electronics fit inside."""
+    def holds():
+        poly = morph.torso_polygon()
+        hx, hy = ELECTRONICS_BOX[0] / 2, ELECTRONICS_BOX[1] / 2
+        probes = [(sx * hx, sy * hy) for sx in (-1.0, 1.0) for sy in (-1.0, 1.0)]
+        probes += [(sx * hx, 0.0) for sx in (-1.0, 1.0)]
+        probes += [(0.0, sy * hy) for sy in (-1.0, 1.0)]
+        return all(_inside(x, y, poly) for x, y in probes)
+    floor = min(morph.contour)
+    while not holds() and floor < CONTOUR_RANGE[1]:
+        floor = round(min(floor + 0.05, CONTOUR_RANGE[1]), 6)
+        morph.contour = tuple(max(c, floor) for c in morph.contour)
+
+
+def _fit_link(morph: Morphology, n: Node, servo_tip: bool, foot_tip: bool = False):
+    """Lengths and sections a link must have to be printed: strong enough for
+    the stall torque, inside the bed, long enough for the cradle it carries."""
+    limit = PLA_STRENGTH * STRENGTH_SAFETY
+    need = 6.0 * SERVO_STALL / limit * 1.001           # width * thickness^2, m^3
+    t_range = LINK_THICK_RANGE
+    if n.kind == "spring":
+        n.width = max(n.width, round(float(np.ceil(
+            need / plate_thick(n) ** 2 * 1e6) / 1e6), 6))
+    else:
+        thick = float(np.sqrt(need / n.width))
+        if thick > t_range[1]:
+            n.thick = t_range[1]
+            n.width = max(n.width, round(float(np.ceil(need / n.thick ** 2 * 1e6) / 1e6), 6))
+        elif thick > n.thick:
+            n.thick = round(float(np.ceil(thick * 1e6) / 1e6), 6)
+    if servo_tip:
+        n.length = max(n.length, round(float(np.ceil(CRADLE_LINK_MIN * 1e6) / 1e6), 6))
+    elif foot_tip:
+        n.length = max(n.length, round(float(np.ceil(FOOT_LINK_MIN * 1e6) / 1e6), 6))
+    for _ in range(40):
+        pts = link_path(n)
+        extent = max(max(p[0] for p in pts) - min(p[0] for p in pts),
+                     max(p[1] for p in pts) - min(p[1] for p in pts)) + n.width
+        if extent <= BED + 1e-9 or n.length <= CRADLE_LINK_MIN:
+            break
+        n.length = max(round(n.length * 0.95, 6), LENGTH_RANGE[0])
+
+
+def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
+    """Cut away what does not assemble: while printed parts clash in the spawn
+    pose, the module (with what hangs from it) that is later in the tree or
+    has the higher id among the first clashing pair is dropped. Slow next to
+    fit_rules (it builds the model), so only the generators call it."""
+    from darwinbot import builder
+    for _ in range(tries):
+        try:
+            pairs = builder.spawn_clashes(morph)
+        except Exception:
+            return morph
+        if not pairs:
+            break
+        a, b = pairs[0]
+        cand = [k for k in (a, b) if k > 0 and k in morph.nodes]
+        if not cand:
+            break
+        # prefer a leaf-most, highest-id module
+        k = max(cand, key=lambda i: (morph.depth(i), i))
+        _drop_subtree(morph, k)
+        _ensure_servo(morph)
+        fit_rules(morph)
+    return morph
+
+
+def fit_rules(morph: Morphology) -> Morphology:
+    """Repair in place what `violations` would throw away, changing as little
+    as possible: servos on a torso face become passive, rolls are turned to
+    ones a printed wedge takes up, links get the section, length and cradle
+    room they need, and a contour too small for the electronics grows. A body
+    that already follows the rules is left as it is."""
+    _fit_contour(morph)
+    for i in sorted(morph.nodes):
+        n = morph.nodes[i]
+        if (n.kind in ("joint", "wheel") and n.parent == 0
+                and n.slot in FACE_SLOTS):
+            n.kind = "link" if n.kind == "joint" else "foot"
+            n.axis, n.flip = "pitch", False
+        if n.kind in DISABLED_KINDS:      # no printed part yet: the nearest buildable kind
+            n.kind, n.axis, n.flip = "link", "pitch", False
+    cm = morph.child_map()
+    for i in sorted(morph.nodes):
+        n = morph.nodes[i]
+        if n.kind in ("joint", "segment", "wheel"):
+            _snap_mount_roll(morph, n)
+        if n.kind in ("joint", "link", "spring"):
+            kid = cm.get(i, {}).get(0)
+            _fit_link(morph, n, kid is not None
+                      and morph.nodes[kid].kind in ("joint", "segment", "wheel"),
+                      kid is not None and morph.nodes[kid].kind == "foot")
+    for i in sorted(morph.nodes):         # links printed as one piece must fit the bed
+        if i not in morph.nodes:
+            continue
+        n = morph.nodes[i]
+        bundle = _bundle_length(morph, i) if n.kind in ("joint", "link") else 0.0
+        span = bundle + n.width
+        if bundle > n.length + 1e-9 and span > BED:
+            stack, group = [i], []
+            while stack:
+                k = stack.pop()
+                group.append(k)
+                stack += [c for c in cm.get(k, {}).values() if morph.nodes[c].kind == "link"]
+            scale = (BED - n.width - 1e-4) / (span - n.width)
+            for k in group:
+                m = morph.nodes[k]
+                kid = cm.get(k, {}).get(0)
+                kind = morph.nodes[kid].kind if kid is not None else ""
+                floor = (CRADLE_LINK_MIN if kind in ("joint", "segment", "wheel")
+                         else FOOT_LINK_MIN if kind == "foot" else LENGTH_RANGE[0])
+                m.length = max(round(m.length * scale, 6), round(float(np.ceil(floor * 1e6) / 1e6), 6))
+            if _bundle_length(morph, i) + n.width > BED:      # still too long: cut the plain links off
+                for k in group[1:]:
+                    if k in morph.nodes and morph.nodes[k].kind == "link":
+                        _drop_subtree(morph, k)
+    _ensure_servo(morph)
+    return morph
+
+
 # --------------------------------------------------------------------------
 # Mirroring and templates
 # --------------------------------------------------------------------------
@@ -1012,7 +1330,7 @@ def template(n_pairs: int = 2, wheels: bool = False, yaw: bool = False,
     morph = Morphology(body_length, body_width, {0: Node(0, "core")})
     chain = []                       # (kind, slot on the parent, fields)
     if yaw:
-        chain.append(("joint", 0, dict(axis="yaw", length=0.06)))
+        chain.append(("joint", 0, dict(axis="yaw", length=0.07)))
     chain.append(("joint", 0, dict(axis="pitch", length=thigh, flip=True)))
     chain.append(("joint", 1, dict(axis="pitch", length=shin, flip=True,
                                    offset=ELBOW_OFFSET)))
@@ -1164,7 +1482,7 @@ def _random_tree(rng: np.random.Generator) -> Morphology:
 def random_morphology(rng: np.random.Generator) -> np.ndarray:
     """Half template seeds (mirrored leg pairs), half small random trees."""
     morph = _random_seed(rng) if rng.random() < 0.5 else _random_tree(rng)
-    return encode(prune(morph))
+    return encode(fit_clashes(fit_rules(prune(morph))))
 
 
 BIG_STEP_P = 0.2      # share of parameter steps that are large jumps
@@ -1390,7 +1708,7 @@ def mutate(genes: np.ndarray, rng: np.random.Generator,
         op, _ = MUTATIONS[int(rng.choice(len(MUTATIONS), p=probs / probs.sum()))]
         op(morph, rng)
         prune(morph)
-    return encode(morph)
+    return encode(fit_clashes(fit_rules(morph)))
 
 
 def graft(genes: np.ndarray, donor: np.ndarray,
@@ -1414,7 +1732,7 @@ def graft(genes: np.ndarray, donor: np.ndarray,
         ms = mirror_slot("core", s)
         if ms != s:
             copy_subtree(morph, new, 0, ms, mirror=True)
-    return encode(prune(morph))
+    return encode(fit_clashes(fit_rules(prune(morph))))
 
 
 # --------------------------------------------------------------------------

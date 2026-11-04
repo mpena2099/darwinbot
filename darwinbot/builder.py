@@ -291,11 +291,13 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
         at = export.elbow_trim(export._mm(d), int(round(np.degrees(elbow_angle(child)))),
                                axis, export.servo_roll(morph, child.id, int(side)))[0] / 1000.0
         hz = _strut_height(morph, child)
-        centre = tip + rot @ np.array([0.0, side * (at + d) / 2, 0.0])
+        # the strut stops at the back wall of the cradle it carries
+        end = max(at + 0.002, d - 0.0381)
+        centre = tip + rot @ np.array([0.0, side * (at + end) / 2, 0.0])
         # the strut keeps the mass of the plate it replaces
         mass = LINK_DENSITY * w * (d - near) * plate_thick(parent)
         strut = _box_geom(f"strut{child.id}", centre,
-                          (STRUT_HALF_W, max(1e-4, (d - at) / 2), hz), plastic, rot=rot)
+                          (STRUT_HALF_W, max(1e-4, (end - at) / 2), hz), plastic, rot=rot)
         strut = strut.replace(PART_ONLY, f'mass="{mass:.6f}"')
         tongue_c = tip + rot @ np.array([0.0, side * (at - TONGUE_T / 2), 0.0])
         tongue = _box_geom(f"tongue{child.id}", tongue_c,
@@ -571,9 +573,14 @@ class AssemblyRules:
                 role, node, part = "plate", 0, ("torso",)
             else:
                 node = body_node.get(int(model.geom_bodyid[g]), 0)
-                role, part = "other", ("other", node, int(model.geom_bodyid[g]))
+                role, part = "other", ("other", node)
+                if morph.nodes[node].kind in ("caster", "tail", "skid", "spike"):
+                    role = "free"       # no printed part is drawn for these yet
             self.role[g], self.node[g], self.part[g] = role, node, part
         self.parent = {i: n.parent for i, n in morph.nodes.items()}
+        for g in range(ng):                # a passive bar is printed with the link it hangs on
+            if self.role[g] == "elbow":
+                self.part[g] = ("link", self.parent[self.node[g]])
         self.tip = {i for i, n in morph.nodes.items()
                     if n.slot == 0 and n.parent > 0
                     and morph.nodes[n.parent].kind in ("joint", "link", "spring")}
@@ -590,7 +597,7 @@ class AssemblyRules:
     def allowed(self, a: int, b: int, pos, xpos) -> bool:
         """True when geoms a and b may overlap at `pos` (world); `xpos` maps a
         node id to the world position of its frame."""
-        if self.part[a] == self.part[b]:
+        if self.part[a] == self.part[b] or "free" in (self.role[a], self.role[b]):
             return True
         for (g, h) in ((a, b), (b, a)):
             rg, ng_, rh, nh = self.role[g], self.node[g], self.role[h], self.node[h]
@@ -604,6 +611,8 @@ class AssemblyRules:
                     if (rg in ("strut", "tongue", "elbow") or ng_ in self.tip
                             or ng_ in self.on_plate):
                         return True
+            if rg == "tab" and rh in ("link", "other") and nh == ng_:
+                return True
             if rg in ("link", "other") and rh == "link" and nh == self.parent.get(ng_):
                 if np.linalg.norm(np.asarray(pos) - xpos[ng_]) <= HUB_RADIUS:
                     return True                        # plates lapped at the joint
@@ -753,3 +762,17 @@ def joint_ranges(morph: Morphology) -> dict:
         _RANGES.clear()
     _RANGES[key] = out
     return out
+
+
+def spawn_clashes(morph: Morphology) -> list:
+    """[(node a, node b)] of the modules whose printed parts clash in the
+    spawn pose, worst first (the same test as sim.is_buildable)."""
+    import mujoco
+    xml, _ = build_mjcf(morph, ranges={})
+    model = mujoco.MjModel.from_xml_string(xml)
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    rules = AssemblyRules(morph, model)
+    hits = sorted(rules.clashes(model, data, fixed=True), key=lambda h: -h[2])
+    return [(rules.node[a], rules.node[b]) for a, b, _ in hits]

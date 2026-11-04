@@ -86,6 +86,7 @@ MAX_DEPTH  = 5      # core is depth 0
 MAX_SEGMENTS = 2    # spine plates per body
 
 LENGTH_RANGE = (0.04, 0.20)               # m, joint / link length
+FOOT_LINK_MIN = 0.07                      # m: a link that ends in a foot cap needs room for its spigot
 CRADLE_LINK_MIN = 0.066                   # m: a link that carries a servo at its tip needs room for
                                           # the U fork at its root and the child's cradle at its tip
 LINK_WIDTH_RANGE = (0.012, 0.030)         # m, link width
@@ -754,7 +755,7 @@ def _inside(x: float, y: float, poly: List[Tuple[float, float]]) -> bool:
     return inside
 
 
-MAX_MOUNT_TILT = 25.0     # degrees a printed wedge takes up under a rolled cradle
+MAX_MOUNT_TILT = 20.0     # degrees a printed wedge takes up under a rolled cradle
 
 
 def _rx_deg(deg: float) -> np.ndarray:
@@ -793,6 +794,22 @@ def mount_tilt(morph: "Morphology", i: int) -> Optional[float]:
         u = frame @ np.array([0.0, -s, 0.0])
         tilts.append(float(np.degrees(np.arccos(np.clip(-u[2], -1.0, 1.0)))))
     return min(tilts)
+
+
+def _bundle_length(morph: "Morphology", i: int) -> float:
+    """Summed path length of the link `i` and the plain links hung on it (and
+    on those), which print as one piece with it; 0 for a link that is itself
+    printed with its owner."""
+    n = morph.nodes[i]
+    if n.kind == "link" and morph.nodes[n.parent].kind in ("joint", "link"):
+        return 0.0
+    cm = morph.child_map()
+    total, stack = 0.0, [i]
+    while stack:
+        k = stack.pop()
+        total += morph.nodes[k].length
+        stack += [c for c in cm.get(k, {}).values() if morph.nodes[c].kind == "link"]
+    return total
 
 
 def violations(morph: Morphology) -> List[str]:
@@ -843,6 +860,16 @@ def violations(morph: Morphology) -> List[str]:
         if servo_kids and n.length < CRADLE_LINK_MIN - 1e-9:
             out.append(f"#{i} {n.kind}: {n.length * 1000:.0f} mm is too short to "
                        f"carry a servo cradle (>= {CRADLE_LINK_MIN * 1000:.0f} mm)")
+        foot_kids = [c for s, c in morph.child_map().get(i, {}).items() if s == 0
+                     if morph.nodes[c].kind == "foot"]
+        if foot_kids and n.length < FOOT_LINK_MIN - 1e-9:
+            out.append(f"#{i} {n.kind}: {n.length * 1000:.0f} mm is too short to "
+                       f"hold a foot (>= {FOOT_LINK_MIN * 1000:.0f} mm)")
+        if (n.kind in ("joint", "link") and _bundle_length(morph, i) > n.length + 1e-9
+                and _bundle_length(morph, i) + n.width > BED + 1e-9):
+            out.append(f"#{i} {n.kind}: the links printed in one piece with it span "
+                       f"{(_bundle_length(morph, i) + n.width) * 1000:.0f} mm, more than the "
+                       f"{BED * 1000:.0f} mm bed")
         if n.slot in (1, 2) and morph.nodes[n.parent].kind in (
                 "joint", "link", "spring"):
             parent_width = morph.nodes[n.parent].width
@@ -1108,24 +1135,26 @@ def _fit_contour(morph: Morphology):
         morph.contour = tuple(max(c, floor) for c in morph.contour)
 
 
-def _fit_link(morph: Morphology, n: Node, servo_tip: bool):
+def _fit_link(morph: Morphology, n: Node, servo_tip: bool, foot_tip: bool = False):
     """Lengths and sections a link must have to be printed: strong enough for
     the stall torque, inside the bed, long enough for the cradle it carries."""
     limit = PLA_STRENGTH * STRENGTH_SAFETY
     need = 6.0 * SERVO_STALL / limit * 1.001           # width * thickness^2, m^3
     t_range = LINK_THICK_RANGE
     if n.kind == "spring":
-        n.width = max(n.width, float(np.ceil(
-            need / plate_thick(n) ** 2 * 1e6) / 1e6))
+        n.width = max(n.width, round(float(np.ceil(
+            need / plate_thick(n) ** 2 * 1e6) / 1e6), 6))
     else:
         thick = float(np.sqrt(need / n.width))
         if thick > t_range[1]:
             n.thick = t_range[1]
-            n.width = max(n.width, float(np.ceil(need / n.thick ** 2 * 1e6) / 1e6))
+            n.width = max(n.width, round(float(np.ceil(need / n.thick ** 2 * 1e6) / 1e6), 6))
         elif thick > n.thick:
-            n.thick = float(np.ceil(thick * 1e6) / 1e6)
+            n.thick = round(float(np.ceil(thick * 1e6) / 1e6), 6)
     if servo_tip:
-        n.length = max(n.length, float(np.ceil(CRADLE_LINK_MIN * 1e6) / 1e6))
+        n.length = max(n.length, round(float(np.ceil(CRADLE_LINK_MIN * 1e6) / 1e6), 6))
+    elif foot_tip:
+        n.length = max(n.length, round(float(np.ceil(FOOT_LINK_MIN * 1e6) / 1e6), 6))
     for _ in range(40):
         pts = link_path(n)
         extent = max(max(p[0] for p in pts) - min(p[0] for p in pts),
@@ -1133,6 +1162,31 @@ def _fit_link(morph: Morphology, n: Node, servo_tip: bool):
         if extent <= BED + 1e-9 or n.length <= CRADLE_LINK_MIN:
             break
         n.length = max(round(n.length * 0.95, 6), LENGTH_RANGE[0])
+
+
+def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
+    """Cut away what does not assemble: while printed parts clash in the spawn
+    pose, the module (with what hangs from it) that is later in the tree or
+    has the higher id among the first clashing pair is dropped. Slow next to
+    fit_rules (it builds the model), so only the generators call it."""
+    from darwinbot import builder
+    for _ in range(tries):
+        try:
+            pairs = builder.spawn_clashes(morph)
+        except Exception:
+            return morph
+        if not pairs:
+            break
+        a, b = pairs[0]
+        cand = [k for k in (a, b) if k > 0 and k in morph.nodes]
+        if not cand:
+            break
+        # prefer a leaf-most, highest-id module
+        k = max(cand, key=lambda i: (morph.depth(i), i))
+        _drop_subtree(morph, k)
+        _ensure_servo(morph)
+        fit_rules(morph)
+    return morph
 
 
 def fit_rules(morph: Morphology) -> Morphology:
@@ -1147,6 +1201,7 @@ def fit_rules(morph: Morphology) -> Morphology:
         if (n.kind in ("joint", "wheel") and n.parent == 0
                 and n.slot in FACE_SLOTS):
             n.kind = "link" if n.kind == "joint" else "foot"
+            n.axis, n.flip = "pitch", False
     cm = morph.child_map()
     for i in sorted(morph.nodes):
         n = morph.nodes[i]
@@ -1155,7 +1210,32 @@ def fit_rules(morph: Morphology) -> Morphology:
         if n.kind in ("joint", "link", "spring"):
             kid = cm.get(i, {}).get(0)
             _fit_link(morph, n, kid is not None
-                      and morph.nodes[kid].kind in ("joint", "segment", "wheel"))
+                      and morph.nodes[kid].kind in ("joint", "segment", "wheel"),
+                      kid is not None and morph.nodes[kid].kind == "foot")
+    for i in sorted(morph.nodes):         # links printed as one piece must fit the bed
+        if i not in morph.nodes:
+            continue
+        n = morph.nodes[i]
+        bundle = _bundle_length(morph, i) if n.kind in ("joint", "link") else 0.0
+        span = bundle + n.width
+        if bundle > n.length + 1e-9 and span > BED:
+            stack, group = [i], []
+            while stack:
+                k = stack.pop()
+                group.append(k)
+                stack += [c for c in cm.get(k, {}).values() if morph.nodes[c].kind == "link"]
+            scale = (BED - n.width - 1e-4) / (span - n.width)
+            for k in group:
+                m = morph.nodes[k]
+                kid = cm.get(k, {}).get(0)
+                kind = morph.nodes[kid].kind if kid is not None else ""
+                floor = (CRADLE_LINK_MIN if kind in ("joint", "segment", "wheel")
+                         else FOOT_LINK_MIN if kind == "foot" else LENGTH_RANGE[0])
+                m.length = max(round(m.length * scale, 6), round(float(np.ceil(floor * 1e6) / 1e6), 6))
+            if _bundle_length(morph, i) + n.width > BED:      # still too long: cut the plain links off
+                for k in group[1:]:
+                    if k in morph.nodes and morph.nodes[k].kind == "link":
+                        _drop_subtree(morph, k)
     _ensure_servo(morph)
     return morph
 
@@ -1393,7 +1473,7 @@ def _random_tree(rng: np.random.Generator) -> Morphology:
 def random_morphology(rng: np.random.Generator) -> np.ndarray:
     """Half template seeds (mirrored leg pairs), half small random trees."""
     morph = _random_seed(rng) if rng.random() < 0.5 else _random_tree(rng)
-    return encode(fit_rules(prune(morph)))
+    return encode(fit_clashes(fit_rules(prune(morph))))
 
 
 BIG_STEP_P = 0.2      # share of parameter steps that are large jumps
@@ -1619,7 +1699,7 @@ def mutate(genes: np.ndarray, rng: np.random.Generator,
         op, _ = MUTATIONS[int(rng.choice(len(MUTATIONS), p=probs / probs.sum()))]
         op(morph, rng)
         prune(morph)
-    return encode(fit_rules(morph))
+    return encode(fit_clashes(fit_rules(morph)))
 
 
 def graft(genes: np.ndarray, donor: np.ndarray,
@@ -1643,7 +1723,7 @@ def graft(genes: np.ndarray, donor: np.ndarray,
         ms = mirror_slot("core", s)
         if ms != s:
             copy_subtree(morph, new, 0, ms, mirror=True)
-    return encode(fit_rules(prune(morph)))
+    return encode(fit_clashes(fit_rules(prune(morph))))
 
 
 # --------------------------------------------------------------------------

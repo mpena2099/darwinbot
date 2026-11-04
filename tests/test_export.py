@@ -330,10 +330,10 @@ def test_wedge_only_for_an_edge_roll_off_a_right_angle():
     plain = _rolled_hips(90.0)
     seats = [torso_mount(plain, i) for i, n in plain.nodes.items() if n.parent == 0]
     assert all(m.kind == "side" and m.angle == 0.0 for m in seats)
-    rolled = _rolled_hips(70.0)
+    rolled = _rolled_hips(75.0)
     seats = [torso_mount(rolled, i) for i, n in rolled.nodes.items()
              if n.parent == 0]
-    assert all(m.kind == "side" and 15.0 < abs(m.angle) < 25.0 and m.drop > 0
+    assert all(m.kind == "side" and 10.0 < abs(m.angle) < 20.0 and m.drop > 0
                and m.shift for m in seats)
     rows = {item: q for item, q, _ in bom_rows(rolled)}
     assert sum(q for k, q in rows.items() if k.startswith("wedge_")) == 4
@@ -367,7 +367,7 @@ def test_vertical_axis_hips_bolt_down_behind_the_servo(tmp_path):
 def test_rolled_mount_exports_a_wedge_and_a_shorter_cradle(tmp_path):
     pytest.importorskip("build123d")
     out = tmp_path / "robot"
-    export_robot(_elite(_rolled_hips(70.0)), out, "rolled")
+    export_robot(_elite(_rolled_hips(75.0)), out, "rolled")
     stls = set(os.listdir(out / "parts"))
     assert any(s.startswith("wedge_") for s in stls)
     assert any(s.startswith("cradle_pitch_w") for s in stls)

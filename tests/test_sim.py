@@ -185,7 +185,9 @@ def test_side_modules_hang_from_an_elbow_plate():
 
     assert side and ep.buildable
     for i in side:
-        g = ep.model.geom(f"elbow{i}")
+        # a servo child hangs on a strut, anything else on a bar
+        name = f"strut{i}" if morph.nodes[i].kind in ("joint", "wheel") else f"elbow{i}"
+        g = ep.model.geom(name)
         assert g.bodyid[0] == ep.model.body(f"n{morph.nodes[i].parent}").id
 
 
@@ -382,7 +384,7 @@ def test_skid_and_spike_friction_beats_the_terrain():
         morph.nodes[i] = mo.Node(i, kind, 0, 0 if kind == "skid" else 1, 0.0)
     ep = Episode(morph, te.flat(), seconds=1.0)
     floor = max(ep.model.geom_priority[g] for g in range(ep.model.ngeom)
-                if ep.model.geom_contype[g] != 2)
+                if ep.model.geom_contype[g] == 1)
     for name in ("skid", "spike"):
         g = next(g for g in range(ep.model.ngeom) if (ep.model.geom(g).name or "").startswith(name))
         assert ep.model.geom_priority[g] > floor

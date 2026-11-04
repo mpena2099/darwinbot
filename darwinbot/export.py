@@ -229,7 +229,7 @@ def _rot_y(deg):
 # as parts._axis_rot.
 CRADLE_FRAME = {"pitch": np.eye(3), "yaw": _rot_x(-90.0),
                 "roll": _rot_x(180.0) @ _rot_y(90.0)}
-MAX_WEDGE_TILT = 25.0    # a steeper roll slides the foot out of the cradle caps
+MAX_WEDGE_TILT = 20.0    # a steeper roll slides the foot out of the cradle caps
 
 
 def cradle_name(axis, angle=0.0, foot="side"):
@@ -331,7 +331,9 @@ def _layout_ranges(morph, layout):
     """Joint limits of every servo in layout order, as the simulation measures
     them (builder.joint_ranges); wheels get None."""
     ranges = builder.joint_ranges(morph)
-    return [ranges.get(a.slot) if a.kind == "joint" else None for a in layout]
+    default = lambda a: (-builder.JOINT_RANGE[a.axis], builder.JOINT_RANGE[a.axis])
+    return [ranges.get(a.slot, default(a)) if a.kind == "joint" else None
+            for a in layout]
 
 
 def foot_name(shape, radius):

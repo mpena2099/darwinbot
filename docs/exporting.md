@@ -30,12 +30,12 @@ and joins the plate beyond the servo, out of the circle the cradle fills, so the
 link turns the whole joint range.
 
 The foot goes down to the torso plate on the side that points down. When the slot
-is rolled by an angle that is not a multiple of 90 degrees (up to 25), the foot
+is rolled by an angle that is not a multiple of 90 degrees (up to 20), the foot
 is tilted and slid along the axis, and a printed `wedge_{deg}.stl` between the tab
 and the foot takes up the tilt; face mounts and segment plates never get one. A
 servo whose output axis stands vertical bolts down behind itself (`_back`). A face
 mount, a roll joint whose body would stand through the plate, or a roll steeper
-than 25 degrees gets a cradle without a foot (`_free`) that you have to hold with
+than 20 degrees gets a cradle without a foot (`_free`) that you have to hold with
 a bracket of your own.
 
 Parts that are rigid with a link and overlap it are printed as one piece with it:
@@ -53,7 +53,9 @@ modules where the printed parts put them.
 its simulation frame and reports each pair of printed parts and servo bodies that
 overlap, at the spawn pose and at four poses of a straight walk (0.5, 1.5, 2.5 and
 3.5 s). Only the screwed laps (0.5 mm or less: a cradle on its servo, an elbow
-tongue on its link, a wedge on its tab) are allowed.
+tongue on its link, a wedge on its tab) are allowed. The simulation collides the
+same shapes (cradle, fork, bosses, elbow strut, torso plate and tabs), so a body
+it accepts is meant to pass this check.
 
 `python tools/parts_sheet.py exports/<type>` draws every STL of the export on
 one image (`exports/<type>/parts.png`), with its bounding box in mm, to check

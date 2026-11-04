@@ -122,3 +122,34 @@ def test_rotated_horn_pattern_is_flagged():
     records[k] = records[k]._replace(rot=records[k].rot @ turn)
     _, horns = ca.report(morph, records=records)
     assert dict(horns)[records[k].label] > ca.MAX_GAP
+
+
+def _evolved_body(seed):
+    """A body made the way evolution makes them: a random seed and mutations."""
+    rng = np.random.default_rng(seed)
+    genes = mo.random_morphology(rng)
+    for _ in range(int(rng.integers(0, 25))):
+        genes = mo.mutate(genes, rng)
+    return mo.decode(genes)
+
+
+def test_bodies_the_generator_makes_are_accepted_and_assemble():
+    """Most of what random_morphology and mutate make is buildable, and of the
+    bodies without a spring (whose printed plates are not drawn to stack yet)
+    most have no printed clash at the spawn pose."""
+    from darwinbot.sim import Episode
+    from darwinbot.terrain import get_terrains
+    flat = get_terrains("flat")[0]
+    accepted, clean, checked = 0, 0, 0
+    for seed in range(14):
+        body = _evolved_body(seed)
+        if not Episode(body, flat, seconds=0.1).buildable:
+            continue
+        accepted += 1
+        if any(n.kind == "spring" for n in body.nodes.values()):
+            continue
+        checked += 1
+        clashes, _ = ca.report(body)
+        clean += not clashes
+    assert accepted >= 10
+    assert checked and clean >= 0.6 * checked

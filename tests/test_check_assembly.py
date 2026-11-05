@@ -227,3 +227,13 @@ def test_rolled_rigid_link_is_fused_not_dropped():
                        elbow=(None, None, (), (((94.7, 0.0, 0.0), rot, child),)))
     assert solid.bounding_box().max.X > 200
     assert len(solid.solids()) == 1
+
+
+def test_riser_under_a_face_foot_clears_the_assembly_check():
+    morph = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    morph.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0)
+    morph.nodes[2] = mo.Node(2, "foot", 0, 8, 0.0)
+    morph.nodes[2].foot_shape = "pad"
+    assert any(p.label == "riser2" for p in assembly.placements(morph))
+    clashes, _ = ca.report(morph)
+    assert clashes == []

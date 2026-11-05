@@ -621,6 +621,33 @@ def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
     return part
 
 
+RISER_FLANGE_T = 3.0     # base flange of a riser post
+RISER_FLANGE_D = 28.0
+RISER_OD = 20.0
+RISER_CAP_T = 4.0        # solid top under the spigot
+RISER_SPIGOT_L = 8.2     # into the foot socket, 0.8 mm short of its floor
+
+
+def riser(height_mm: float) -> Part:
+    """Post from the torso plate to a module on a core face slot. Z up from
+    the plate face: a flange screwed through the face mount (the common M3
+    pattern), a hollow column, and a spigot that goes into the foot socket at
+    the top, `height_mm` from the plate."""
+    h = float(height_mm)
+    if h < 1.0:
+        raise ValueError("riser too short")
+    part = Cylinder(RISER_FLANGE_D / 2, min(RISER_FLANGE_T, h),
+                    align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part += Cylinder(RISER_OD / 2, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    if h - RISER_CAP_T > RISER_FLANGE_T + 2.0:     # a short post stays solid
+        part -= Cylinder(RISER_OD / 2 - 3.0, h - RISER_CAP_T,
+                         align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part += Pos(0, 0, h - min(1.0, h)) * Cylinder(
+        SPIGOT_R, RISER_SPIGOT_L + min(1.0, h), align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= _mount_holes(RISER_FLANGE_T)
+    return part
+
+
 def tail_bar(length_mm: float) -> Part:
     """PLA bar along +X with an M3 hole near the tip for the counterweight."""
     if length_mm < TAIL_W or length_mm > BED_MM:

@@ -430,3 +430,44 @@ def test_mount_rule_matches_the_exported_cradles():
             rule = t > mo.MAX_MOUNT_TILT or (
                 t >= 0.5 and node.kind != "wheel" and node.axis == "roll")
             assert rule == (mount.kind == "free")
+
+
+@pytest.mark.parametrize("slot,shape", [(8, "pad"), (8, "sphere"), (9, "blade"), (9, "claw")])
+def test_foot_on_a_face_slot_gets_a_riser_that_reaches_it(tmp_path, slot, shape):
+    from darwinbot import builder, export
+    mujoco = pytest.importorskip("mujoco")
+    pytest.importorskip("build123d")
+    m = mo.Morphology(0.30, 0.20, {0: mo.Node(0, "core")})
+    m.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0)
+    m.nodes[2] = mo.Node(2, "foot", 0, slot, 0.0)
+    m.nodes[2].foot_shape = shape
+    r = export.riser(m, 2)
+    assert r is not None and r.side == (1 if slot < 10 else -1)
+    out = tmp_path / "robot"
+    export_robot(_elite(m), out, "riser-robot")
+    assert f"riser_{r.height}.stl" in os.listdir(out / "parts")
+    assert f"riser_{r.height}.stl" in (out / "bom.csv").read_text()
+    assert f"riser_{r.height}.stl" in (out / "assembly.md").read_text()
+    # the post reaches the back face of the foot as the simulation has it
+    xml, _ = builder.build_mjcf(m)
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    b = model.body("n2").id
+    axis = data.xmat[b].reshape(3, 3)[:, 0]          # module X, away from the plate
+    hub = model.geom("hub2").id
+    ends = [data.geom_xpos[hub] + k * data.geom_xmat[hub].reshape(3, 3)[:, 2]
+            * model.geom_size[hub][1] for k in (-1, 1)]
+    back = min(ends, key=lambda e: e @ axis)         # the simulated back face
+    torso_z = data.xpos[model.body("torso").id][2]
+    base_z = (back[2] - torso_z) * 1000
+    face = -export.plate_drop(m) if r.side > 0 else -(export.plate_drop(m) + 6.0)
+    assert abs((base_z - face) * r.side - r.height) <= 2.0
+    # and the printed foot's real back face is that far from its origin
+    from darwinbot import parts
+    foot = parts.foot(export._mm(m.nodes[2].foot_rad), shape)
+    box = foot.bounding_box()
+    back_mesh = box.max.Z if shape == "sphere" else -box.min.X
+    assert abs(back_mesh - export.foot_back_mm(m.nodes[2])) <= 0.5
+    post = parts.riser(r.height).bounding_box()
+    assert abs(post.min.Z) < 1e-6 and post.max.Z >= r.height + 8

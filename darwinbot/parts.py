@@ -14,6 +14,7 @@ Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 
 import math
 
+import numpy as np
 from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Location,
                        Locations, gp_Trsf,
                        Part, Polygon, Pos, Rot, Sphere, SlotOverall, extrude,
@@ -392,8 +393,13 @@ def link(length_mm: float, width_mm: float = LINK_W,
     for pos, rot, args in (elbow[3] if len(elbow) > 3 else ()):
         # a plain link hung on this one is rigid with it and overlaps its end:
         # printed as one piece, placed where the module tree puts it
+        # the nine numbers are rounded to 4 digits: made orthonormal again, as
+        # OpenCascade takes a slightly scaled turn for a scaled shape and its
+        # fuse then silently drops the child link
+        u, _, vt = np.linalg.svd(np.reshape(rot, (3, 3)))
+        r = u @ vt
         trsf = gp_Trsf()
-        trsf.SetValues(*rot[0:3], pos[0], *rot[3:6], pos[1], *rot[6:9], pos[2])
+        trsf.SetValues(*r[0], pos[0], *r[1], pos[1], *r[2], pos[2])
         child = link(*args[:5], axis=args[5], foot_r=args[6], tip_axis=args[7],
                      elbow=args[8])
         part += child.moved(Location(trsf))

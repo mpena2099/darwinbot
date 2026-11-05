@@ -153,3 +153,77 @@ def test_bodies_the_generator_makes_are_accepted_and_assemble():
         clean += not clashes
     assert accepted >= 10
     assert checked and clean >= 0.6 * checked
+
+
+def _random_bodies(seeds=range(12)):
+    out = []
+    for s in seeds:
+        morph = mo.decode(mo.random_morphology(np.random.default_rng(s)))
+        if any(n.kind in ("foot", "link") for n in morph.nodes.values()):
+            out.append(pytest.param(morph, id=f"seed{s}"))
+    return out
+
+
+def _sim_world(morph):
+    import mujoco
+    from darwinbot import builder
+    xml, _ = builder.build_mjcf(morph)
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+@pytest.mark.parametrize("morph", _random_bodies())
+def test_foot_placements_sit_at_their_simulated_foot(morph):
+    model, data = _sim_world(morph)
+    feet = [p for p in assembly.placements(morph) if p.label.startswith("foot")]
+    for p in feet:
+        b = model.body(p.body).id
+        world = data.xpos[b] + data.xmat[b].reshape(3, 3) @ (np.array(p.pos) / 1000)
+        # the sim geom the printed foot stands for: the cap sphere of a free link
+        # end, or the foot module's own geoms (the body origin)
+        node = morph.nodes[p.owner]
+        if node.kind == "foot":
+            expect = data.xpos[b]
+        else:
+            expect = data.geom_xpos[model.geom(f"cap{p.owner}").id]
+        assert np.linalg.norm(world - expect) < 0.002, p.label
+
+
+@pytest.mark.parametrize("morph", _random_bodies())
+def test_a_printed_link_holds_the_links_rigid_with_it(morph):
+    """A plain link hung on another prints as one piece with it: the solid must
+    reach the body origin of each such link and of the foot at its end."""
+    model, data = _sim_world(morph)
+    for p in assembly.placements(morph):
+        if not p.label.startswith("link"):
+            continue
+        owner = p.owner
+        b = model.body(p.body).id
+        inv = data.xmat[b].reshape(3, 3).T
+        solid = assembly.solid(morph, p)
+        box = solid.bounding_box()
+        for i, n in morph.nodes.items():
+            if i == owner or export_owner(morph, i) != owner:
+                continue
+            local = inv @ (data.xpos[model.body(f"n{i}").id] - data.xpos[b]) * 1000
+            near = [s for s in solid.solids()
+                    if s.bounding_box().min.X - 1 <= local[0] <= s.bounding_box().max.X + 1]
+            assert near and box.min.X - 1 <= local[0] <= box.max.X + 1, p.label
+
+
+def export_owner(morph, i):
+    from darwinbot import export
+    return export.print_owner(morph, i)
+
+
+def test_rolled_rigid_link_is_fused_not_dropped():
+    from darwinbot import parts
+    rot = (1.0, 0.0, 0.0, 0.0, -0.7795, 0.6264, 0.0, -0.6264, -0.7795)
+    child = (105, 20, 6, "straight", 0, None, None, None, (None, None, (), ()))
+    solid = parts.link(95, 20, 6, "straight", 0, axis="pitch", foot_r=None,
+                       tip_axis=None,
+                       elbow=(None, None, (), (((94.7, 0.0, 0.0), rot, child),)))
+    assert solid.bounding_box().max.X > 200
+    assert len(solid.solids()) == 1

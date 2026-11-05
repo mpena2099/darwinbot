@@ -19,6 +19,7 @@ import mujoco
 import numpy as np
 from numba import njit
 
+from darwinbot import ablate
 from darwinbot.builder import AssemblyRules, build_mjcf
 from darwinbot.controller import CONTROL_DT, Controller, advance_phases
 from darwinbot.morphology import Morphology, violations
@@ -126,6 +127,18 @@ def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
     return duty, height, share
 
 
+_PRINTED_ONLY = ("cradle", "fork", "strut", "tongue", "elbow", "tab", "plate")
+
+
+def _servo_clashes(morph, model, data) -> list:
+    """Ablation `assembly`: only overlaps that involve a servo body and no
+    printed-only part (cradle, fork, strut, tongue, elbow, tab, plate) count."""
+    rules = AssemblyRules(morph, model)
+    return [c for c in rules.clashes(model, data, fixed=True)
+            if "servo" in (rules.role[c[0]], rules.role[c[1]])
+            and not {rules.role[c[0]], rules.role[c[1]]} & set(_PRINTED_ONLY)]
+
+
 def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
     """True when the printed parts of the body assemble in the spawn pose: no
     two robot geoms overlap except where the design laps them (a servo in its
@@ -138,6 +151,8 @@ def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
     model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     try:
         mujoco.mj_forward(model, data)
+        if ablate.active("assembly"):
+            return not _servo_clashes(morph, model, data)
         return not AssemblyRules(morph, model).clashes(model, data, fixed=True, first=True)
     finally:
         model.opt.disableflags = flags

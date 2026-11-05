@@ -19,7 +19,7 @@ import os
 
 import argparse
 
-from darwinbot import evolve
+from darwinbot import ablate, evolve
 from darwinbot.fitness import TASKS
 from darwinbot.morphology import decode, summary
 
@@ -70,6 +70,10 @@ def main():
     p.add_argument("--preset", default=None,
                    help="comma list of ready tasks run in sequence: "
                         + ", ".join(PRESETS) + " (each in checkpoints/<preset>)")
+    p.add_argument("--ablate", action="append", default=[], metavar="NAME",
+                   choices=ablate.NAMES,
+                   help="experiment: switch one realism rule off, repeatable ("
+                        + ", ".join(ablate.NAMES) + "); stored in the archive, CPU only")
     a = p.parse_args()
 
     if a.device == "gpu":
@@ -88,11 +92,13 @@ def main():
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
-                  parent_selection=a.parent_selection)
+                  parent_selection=a.parent_selection, ablations=tuple(a.ablate))
+    forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:
         report(evolve.run(terrains=a.terrains, out_dir=a.out, resume=a.resume,
-                          task=a.task, payload=a.payload, **common))
+                          task="forward" if forward else a.task,
+                          payload=a.payload, **common))
         return
 
     names = [n.strip() for n in a.preset.split(",") if n.strip()]
@@ -105,7 +111,10 @@ def main():
         resume = path if os.path.exists(path) else None
         print(f"\n=== preset {name}: {PRESETS[name]} -> {out}"
               f"{' (resuming)' if resume else ''}")
-        archive = evolve.run(out_dir=out, resume=resume, **PRESETS[name], **common)
+        spec = dict(PRESETS[name])
+        if forward:
+            spec["task"] = "forward"
+        archive = evolve.run(out_dir=out, resume=resume, **spec, **common)
         report(archive)
         if getattr(archive, "interrupted", False):
             print("Ctrl+C: the remaining presets were not run")

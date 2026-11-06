@@ -4,6 +4,9 @@
 
 [![tests](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml/badge.svg)](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](pyproject.toml)
+[![MuJoCo](https://img.shields.io/badge/sim-MuJoCo-0b6e99.svg)](https://mujoco.org)
+[![Discussions](https://img.shields.io/badge/chat-Discussions-555.svg)](https://github.com/mpena2099/darwinbot/discussions)
 
 Quality-diversity evolution of robot bodies and locomotion controllers, built
 from real parts so the result can be printed and assembled.

@@ -1,5 +1,33 @@
 # Roadmap
 
+## Directions
+
+Where the project could go beyond the items below, in the order that makes
+sense: the first two need a built robot and come first; the other three build
+on them.
+
+1. **Close the loop with reality**: build a robot, measure how it really
+   walks (friction, gear play, part masses, speed), and feed the difference
+   back into the simulator, so every robot built makes the next ones more
+   faithful. Done with cheap home-built robots, this is a research
+   contribution in itself.
+2. **Adapt on the real robot**: the built robot tunes its own gait in a few
+   minutes of guided trials, covering what the simulator got wrong and even a
+   broken leg (see "Adapting on the real robot with Bayesian optimisation"
+   under Later).
+3. **Evolve from the parts you have**: the user lists a parts inventory (eight
+   servos, two wheels, a spool of PLA) and evolution only uses what is there;
+   the same kit can be taken apart and rebuilt into another robot for another
+   task.
+4. **A robot compiler for a task**: the user states the job ("carry 300 g over
+   gravel, at most this many servos") and gets a printable robot back: parts,
+   bill of materials, assembly guide and firmware, without running a training
+   by hand.
+5. **A community archive**: people who build a robot share photos, video and
+   measurements; the measurements feed direction 1 with data from many robots
+   and the project becomes a gallery of real builds (GitHub Discussions, and
+   the Hugging Face idea under Later).
+
 ## Next
 
 - **Polish the controllers after training**: a controller search ten times

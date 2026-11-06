@@ -1,0 +1,9 @@
+.git
+venv*
+checkpoints
+exports
+site
+.scratch
+*.egg-info
+*.mp4
+__pycache__

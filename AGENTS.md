@@ -4,7 +4,7 @@ Guidance for coding agents (and people) working on this repository.
 
 ## What it is
 
-Evolution of buildable robots: MAP-Elites (pyribs, a CVT archive by behaviour and cost) over bodies that are trees of modules, CMA-ES over a CPG with two harmonics and load feedback (Tegotae) for each body, simulated in MuJoCo. Bodies use real parts (Feetech STS3215 7.4 V servos, printed links, ESP32 + LiPo) and any robot in the archive can be exported as STLs, a bill of materials, an assembly guide and a control JSON. A personal hobby and portfolio project. There is no navigation yet. The firmware core exists (portable C++ in `firmware/core`, with a parity test against the Python); only the ESP32 layer is missing, waiting for hardware.
+Evolution of buildable robots: MAP-Elites (pyribs, a CVT archive by behaviour and cost) over bodies that are trees of modules, CMA-ES over a CPG with two harmonics and load feedback (Tegotae) for each body, simulated in MuJoCo. Bodies use real parts (Feetech STS3215 12 V servos, printed links, ESP32 + 3S LiPo) and any robot in the archive can be exported as STLs, a bill of materials, an assembly guide and a control JSON. A personal hobby and portfolio project. There is no navigation yet. The firmware core exists (portable C++ in `firmware/core`, with a parity test against the Python); only the ESP32 layer is missing, waiting for hardware.
 
 Code, comments, README, the documentation site and this file are in English. `docs/hardware-dados.md` and `docs/formato-controle.md` are in Portuguese. The beginner guide exists in both languages (`docs/guia-evolucao.md` and `docs/evolution-guide.md`): change one, change the other. Guide figures: `tools/make_guide_figures.py`.
 

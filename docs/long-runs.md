@@ -100,3 +100,30 @@ Archives from any runs of the same setup can also be merged by hand:
 ```bash
 python experiments/merge_archives.py run1/archive.pkl run2/archive.pkl --out merged.pkl
 ```
+
+## From an archive to a showcase
+
+Training tunes each controller only long enough to judge its body, so the
+robots picked for a showcase go through four more steps:
+
+```bash
+python experiments/polish.py --archive merged.pkl --types 13servos-mid-trot,6servos-low-trot --out polished.pkl --workers 8
+python experiments/prune.py --archive polished.pkl --types 13servos-mid-trot --out pruned.pkl
+python experiments/validate.py --archive pruned.pkl --type 13servos-mid-trot
+python tools/check_assembly.py --archive pruned.pkl --type 13servos-mid-trot
+```
+
+- `polish.py` runs a longer CMA-ES (1200 evaluations, up to three times more
+  for bodies with many joints) from each robot's own controller, on the same
+  terrains, variants and task. With as many robots as workers, each worker
+  polishes one robot; with fewer robots, they go one at a time and each
+  generation is scored on all the workers, which gives the same result
+  sooner. A 16-servo robot takes about 3.5 hours on one core.
+- `prune.py` removes, one at a time, each part whose removal does not lower
+  the score, with a short controller search after each cut. A pruned robot
+  can change its name (a 7-servo trotter became a 6-servo one).
+- `validate.py` passes a robot that loses less than 30% under varied physics.
+- `check_assembly.py` builds the printed parts and reports clashes.
+
+Pruning reruns the score with fresh terrains and variants, so its number is
+the one to report.

@@ -38,7 +38,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate
+from darwinbot import ablate, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import TASKS
@@ -156,6 +156,7 @@ class Archive:
     task:     str = "forward"  # fitness.TASKS: how episodes are scored
     payload:  float = 0.0      # extra torso mass in kg
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
+    rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -282,6 +283,7 @@ class Archive:
         self.__dict__.setdefault("task", "forward")   # nor tasks
         self.__dict__.setdefault("payload", 0.0)      # nor payload
         self.__dict__.setdefault("ablate", ())        # nor ablations
+        self.__dict__.setdefault("rules", ())         # nor optional score rules
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
@@ -296,7 +298,7 @@ class Archive:
                 "qd_score": float(sum(f + 5.0 for f in fits))}
 
 
-MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate")
+MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate", "rules")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -362,11 +364,12 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=()):
+def _init_worker(ablations=(), score_rules=()):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations."""
+    carry the run's ablations and optional score rules."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
+    rules.set_active(score_rules)
 
 
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
@@ -415,6 +418,7 @@ def run(
     task: str = "forward",
     payload: float = 0.0,
     ablations: tuple = (),
+    score_rules: tuple = (),
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -439,8 +443,10 @@ def run(
     else:
         archive = Archive(terrains=terrains, seconds=episode_seconds,
                           variants=variants, task=task, payload=payload,
-                          ablate=ablate.normalise(ablations))
+                          ablate=ablate.normalise(ablations),
+                          rules=rules.normalise(score_rules))
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
+    rules.set_active(archive.rules)             # and its score rules
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
@@ -477,8 +483,9 @@ def run(
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
           f"batches={n_batches} batch_size={batch_size} "
           f"task={archive.task} payload={archive.payload} kg"
-          + (f" ablate={list(archive.ablate)}" if archive.ablate else ""))
-    pool = None if device == "gpu" else multiprocessing.Pool(workers, _init_worker, (archive.ablate,))
+          + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
+          + (f" rules={list(archive.rules)}" if archive.rules else ""))
+    pool = None if device == "gpu" else multiprocessing.Pool(workers, _init_worker, (archive.ablate, archive.rules))
     path = os.path.join(out_dir, "archive.pkl")
     code = code_version()
     print(f"[darwinbot] code {code}")

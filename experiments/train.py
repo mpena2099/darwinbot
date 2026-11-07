@@ -19,7 +19,7 @@ import os
 
 import argparse
 
-from darwinbot import ablate, evolve
+from darwinbot import ablate, evolve, rules
 from darwinbot.fitness import TASKS
 from darwinbot.morphology import decode, summary
 
@@ -74,7 +74,15 @@ def main():
                    choices=ablate.NAMES,
                    help="experiment: switch one realism rule off, repeatable ("
                         + ", ".join(ablate.NAMES) + "); stored in the archive, CPU only")
+    p.add_argument("--rules", default="", metavar="A,B",
+                   help="experiment: optional score rules to switch on, comma list ("
+                        + ", ".join(rules.NAMES) + "); stored in the archive")
     a = p.parse_args()
+    a.rules = tuple(n for n in a.rules.split(",") if n)
+    try:
+        rules.normalise(a.rules)
+    except ValueError as e:
+        raise SystemExit(str(e))
 
     if a.device == "gpu":
         try:
@@ -92,7 +100,7 @@ def main():
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
-                  parent_selection=a.parent_selection, ablations=tuple(a.ablate))
+                  parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

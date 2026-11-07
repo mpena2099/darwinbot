@@ -47,6 +47,21 @@ python experiments/replay.py --archive checkpoints/turn/archive.pkl --list
 
 Ctrl+C saves the preset being trained and skips the rest.
 
+## Optional score rules
+
+`train.py --rules a,b` switches on score rules that are off by default; they are
+stored in the archive (`replay.py` reads them back), so a short run with one rule
+can be compared against the current score. Their metrics are always measured,
+in `sim.py` and `sim_gpu.py`.
+
+| Rule | Effect |
+|---|---|
+| `worse_turn` | steer: `0.5 * straight + 0.5 * min(left, right)` |
+| `turn_forward` | steer: a turn earns nothing when the torso ended behind the spawn (`dx <= 0`) |
+| `tilt` | every episode: `- 0.2 * tilt`, the mean torso tilt in radians |
+| `slip` | every episode: `- 0.2 * slip`, the summed horizontal speed (m/s) of non-wheel terminals that touched the ground on two consecutive control ticks, averaged over ticks |
+| `servo_ground` | every episode: `- 0.1 * servo_ground`, the share of control ticks a servo housing touches the ground |
+
 ## Fitness
 
 Per episode, from `darwinbot/fitness.py`:

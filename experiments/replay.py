@@ -16,7 +16,7 @@ import time
 
 import mujoco
 
-from darwinbot import ablate
+from darwinbot import ablate, rules
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
@@ -151,6 +151,7 @@ def main():
 
     archive, elite = load(a.archive, a.cell)
     ablate.set_active(archive.ablate)      # the robot was trained with these rules off
+    rules.set_active(archive.rules)
     morph = morpho.decode(elite.morph)
     print(morpho.summary(morph))
     print(f"fitness {elite.fitness:.3f}  (task {archive.task}, payload {archive.payload:g} kg)")

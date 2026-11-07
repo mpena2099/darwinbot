@@ -31,7 +31,7 @@ on them.
 ## Next
 
 - **The next run from scratch**, which bumps `BODY_MODEL`, brings together
-  three changes; each gets a short run against the current rules, alone and
+  several changes; each gets a short run against the current rules, alone and
   together, before the run starts:
   - **Wheels up to 100 mm radius** (60 mm before). A servo turning a wheel
     directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
@@ -50,7 +50,14 @@ on them.
     the full set, each filmed on its own terrain
     (`tools/make_readme_figures.py` needs a terrain per robot), so the GIF
     shows how the ground shapes the body.
-
+  - **Five score rules, implemented behind `--rules`** and off by default:
+    `worse_turn` (the worse of the two turns, not the mean), `turn_forward`
+    (a turn earns nothing if the torso ended behind the spawn), `tilt`
+    (penalty on mean torso tilt), `slip` (penalty on the speed of feet
+    sliding while in contact) and `servo_ground` (penalty on the share of
+    time a servo housing touches the ground). Each enters the run only if its
+    own short run, over three seeds, passes against the current score
+    without shrinking the archive's variety.
 - **Assemble every export virtually, then build one**: no robot has been
   assembled yet, even on screen. A script that places every exported part and
   a servo model in the spawn pose would check that holes and screws line up,
@@ -78,33 +85,12 @@ on them.
   the body is worse (Cheney et al., 2018). A grace period, or a larger budget
   after a big body mutation, lets an innovation live long enough to show what
   it can do.
-- **Score the worse of the two turns**: the `steer` task averages the left and
-  right turns, so a robot that only turns one way, such as a one-servo wheel
-  dragging itself in circles, still earns half the turn credit. Counting the
-  worse turn instead rewards only robots that obey both commands. To be
-  measured with a short run against the current rule.
-  A first single-seed short run was mixed: straighter robots and more legged
-  gaits, but the top ten turned both ways less well than under the current
-  rule. Needs three seeds before a decision.
-- **Turn forwards, not backwards**: a turn earns its heading change up to the
-  distance the torso travelled, in any direction, so a curve driven in reverse
-  still scores. In the 92-cell archive of the long3 run, 14 of the 114 turning
-  episodes that earned credit drove the curve in reverse, and only 1 of the 18
-  among the ten best robots. Counting only forward progress in a turn would
-  close the gap; one short run against the current rule measures what it costs.
 - **Servo count back as an archive axis**: nothing in the score or the
   archive favours a simpler body, and the best robots use 13 to 16 servos, the
   most expensive to build. With the servo count as an axis next to the number
   of legs, simple robots get cells of their own instead of competing with the
   big ones; the score inside each cell stays the same. It changes the archive
   cells, so it needs a new run.
-- **Torso tilt**: only a full fall costs score today, so a robot that runs
-  tilted, close to tipping over, loses nothing. A term for the torso's mean
-  tilt, or distance multiplied by a stability factor as in some quadruped
-  studies, would favour bodies that carry themselves upright.
-- **Feet that slip**: a foot sliding while it bears weight leans on the
-  simulator's friction model and tends to fail on a real floor. Legged robot
-  training commonly subtracts the horizontal speed of feet in contact.
 - **Collapsing forward**: falling forward is a classic exploit (Karl Sims'
   creatures learned to topple instead of walk). The fall penalty only catches
   a torso tilted past 60 degrees, so a robot that drops from 23 to 12 cm
@@ -112,12 +98,6 @@ on them.
   in that one drop, then crawls at 1 cm/s. Scoring the progress of the second
   half of the episode, twice, keeps a steady gait's score and removes most of
   the drop.
-- **Servo bodies touching the ground**: some robots lean on a knee, the servo
-  housing, instead of the foot. That is not wrong in itself (gorillas walk on
-  their knuckles), so it should not be banned; but the housing was not made to
-  drag on the floor and its simulated friction is a guess. Give servo housings
-  a measured friction and a wear cost, or let the export add a printed cap
-  where a robot uses them, so the choice stays evolution's and stays honest.
 - **Adversarial terrains**: instead of drawing rough and rubble terrains at
   random, keep the terrains and physics variants where the current elites fail
   most and score everyone on them too, the way Hillis evolved hard test cases

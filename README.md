@@ -3,12 +3,16 @@
 **Evolving robots designed to be built.**
 
 [![tests](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml/badge.svg)](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml)
+[![Docs](https://img.shields.io/badge/docs-online-2e7d32.svg)](https://mpena2099.github.io/darwinbot/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](pyproject.toml)
+[![MuJoCo](https://img.shields.io/badge/sim-MuJoCo-0b6e99.svg)](https://mujoco.org)
+[![Discussions](https://img.shields.io/badge/chat-Discussions-555.svg)](https://github.com/mpena2099/darwinbot/discussions)
 
 Quality-diversity evolution of robot bodies and locomotion controllers, built
 from real parts so the result can be printed and assembled.
 
-![Four evolved robots moving: two rollers, a trotter and a walker](docs/img/gait.gif)
+![Four evolved robots moving: two trotters, a roller and a belly crawler](docs/img/gait.gif)
 
 Every robot is a tree of real modules (Karl Sims and Revolve2 style) driven by
 Feetech STS3215 servos. Bodies are evolved with a MAP-Elites archive laid out by
@@ -44,6 +48,14 @@ python -m venv venv && source venv/bin/activate && pip install -e .   # install
 python experiments/train.py                                           # evolve
 python experiments/replay.py --list                                   # see the robot types, then:
 python experiments/replay.py --type 8servos-mid-trot                  # watch one
+```
+
+To watch the showcase robots without training, download their archive from
+the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
+
+```bash
+curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.pkl
+python experiments/replay.py --archive showcase.pkl --type 13servos-mid-trot --speed 0.5
 ```
 
 ## Documentation

@@ -153,6 +153,13 @@ def placements(morph) -> list:
         (0, 0, -(plate_drop + parts.PLATE_T)), IDENTITY, "torso_plate",
         lambda: parts.torso_plate(export.torso_polygon_mm(morph),
                                   export.mount_positions_mm(morph)), PLA))
+    for i in morph.nodes:
+        if r := export.riser(morph, i):
+            top = -plate_drop if r.side > 0 else -(plate_drop + parts.PLATE_T)
+            out.append(Placement(
+                f"riser{i}", i, "torso", (r.x, r.y, top),
+                rz(r.yaw) @ (IDENTITY if r.side > 0 else rx(180)),
+                f"riser_{r.height}", lambda h=r.height: parts.riser(h), PLA))
     for i, node in morph.nodes.items():
         body = f"n{i}"
         parent_body = "torso" if node.parent == 0 else f"n{node.parent}"

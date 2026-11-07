@@ -1,17 +1,55 @@
 # Roadmap
 
+## Directions
+
+Where the project could go beyond the items below, in the order that makes
+sense: the first two need a built robot and come first; the other three build
+on them.
+
+1. **Close the loop with reality**: build a robot, measure how it really
+   walks (friction, gear play, part masses, speed), and feed the difference
+   back into the simulator, so every robot built makes the next ones more
+   faithful. Done with cheap home-built robots, this is a research
+   contribution in itself.
+2. **Adapt on the real robot**: the built robot tunes its own gait in a few
+   minutes of guided trials, covering what the simulator got wrong and even a
+   broken leg (see "Adapting on the real robot with Bayesian optimisation"
+   under Later).
+3. **Evolve from the parts you have**: the user lists a parts inventory (eight
+   servos, two wheels, a spool of PLA) and evolution only uses what is there;
+   the same kit can be taken apart and rebuilt into another robot for another
+   task.
+4. **A robot compiler for a task**: the user states the job ("carry 300 g over
+   gravel, at most this many servos") and gets a printable robot back: parts,
+   bill of materials, assembly guide and firmware, without running a training
+   by hand.
+5. **A community archive**: people who build a robot share photos, video and
+   measurements; the measurements feed direction 1 with data from many robots
+   and the project becomes a gallery of real builds (GitHub Discussions, and
+   the Hugging Face idea under Later).
+
 ## Next
 
-- **Polish the controllers after training**: a controller search ten times
-  longer (3600 evaluations from the elite's own controller) raised the same
-  bodies by 45 to 75% (walker 0.17 to 0.30, trotter 0.29 to 0.43, roller 0.60
-  to 0.86), so elites enter the archive far from what their body allows.
-  Spending that search inside training does not pay: with a quarter of the
-  children keeping their parent's body and searching three times longer, two
-  short runs filled 37 and 42 cells against 44 and 51, for similar best scores.
-  The search belongs after training, on the robots picked for the showcase;
-  `experiments/polish.py` runs that pass from each chosen elite's own
-  controller and writes the polished robots to a new archive.
+- **The next run from scratch**, which bumps `BODY_MODEL`, brings together
+  three changes; each gets a short run against the current rules, alone and
+  together, before the run starts:
+  - **Wheels up to 100 mm radius** (60 mm before). A servo turning a wheel
+    directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
+    reach 0.35 to 0.4 m/s, so the long-run wheeled robots used their wheels
+    as feet: in the best of them the wheels turned for only 16 to 66% of the
+    distance. A 100 mm printed wheel reaches about 0.47 m/s.
+  - **Joint ranges from each joint alone**: a joint stops only before the
+    clashes it causes moving by itself; clashes that need several joints at
+    once are left to MuJoCo's collisions between the robot's parts. With all
+    ranges off, short ablation runs trotted at 0.16 instead of below zero and
+    jittered at 2 instead of 6 to 7 reversals per second.
+  - **Progress from the second half of the episode**, scored twice (see the
+    fall item below).
+  - **A showcase GIF of four environments**: the best robot trained on flat
+    ground only, on flat ground and steps, on flat ground and rubble, and on
+    the full set, each filmed on its own terrain
+    (`tools/make_readme_figures.py` needs a terrain per robot), so the GIF
+    shows how the ground shapes the body.
 
 - **Assemble every export virtually, then build one**: no robot has been
   assembled yet, even on screen. A script that places every exported part and
@@ -67,10 +105,13 @@
 - **Feet that slip**: a foot sliding while it bears weight leans on the
   simulator's friction model and tends to fail on a real floor. Legged robot
   training commonly subtracts the horizontal speed of feet in contact.
-- **A minimum distance before a fall**: falling forward is a classic exploit
-  (Karl Sims' creatures learned to topple instead of walk). None of today's
-  top robots fall, but scoring zero for a fall before a minimum distance
-  closes the door cheaply.
+- **Collapsing forward**: falling forward is a classic exploit (Karl Sims'
+  creatures learned to topple instead of walk). The fall penalty only catches
+  a torso tilted past 60 degrees, so a robot that drops from 23 to 12 cm
+  without tipping keeps the distance: 6servos-low-walk gains 16 of its 28 cm
+  in that one drop, then crawls at 1 cm/s. Scoring the progress of the second
+  half of the episode, twice, keeps a steady gait's score and removes most of
+  the drop.
 - **Servo bodies touching the ground**: some robots lean on a knee, the servo
   housing, instead of the foot. That is not wrong in itself (gorillas walk on
   their knuckles), so it should not be banned; but the housing was not made to
@@ -102,6 +143,10 @@
 
 ## Later
 
+- **Archives and exports on Hugging Face** (an idea for after the repository
+  opens): publish the showcase archives and the export packages (STLs, bill
+  of materials, assembly guide, control file) as a Hugging Face dataset, and
+  perhaps a Space that shows the robots walking in the browser.
 - **Migration between islands** (an open idea, not a plan): islands train
   apart and only meet when their archives are merged for the showcase. Merging
   them now and then and letting each resume from the merged archive, with its
@@ -166,11 +211,6 @@
   making the firmware run any evolved program safely (bounded size and time,
   no division by zero or runaway values) and testing parity with the Python
   for arbitrary programs rather than one formula.
-- **Wider wheel sizes**: wheel radius is limited to 30 to 60 mm, a
-  conservative choice rather than a physical limit. Opening it to about 25 to
-  100 mm would leave only the real checks: the wheel fits the print bed, the
-  servo body clears the ground, and the torque is enough, which the simulation
-  already tests. Large wheels could roll over rocks that stop today's ones.
 - **Coupled oscillators**: each joint's oscillator also feels its neighbours'
   phases, the way the spinal circuits of each leg synchronise a gait, instead
   of coordinating only through the body and the phase genes. Control only, no

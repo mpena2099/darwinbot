@@ -23,7 +23,7 @@ is the stable slot id of the node. A block is
 | `type` | joint, link, spring, wheel, foot, tail, skid, spike, caster or segment |
 | `axis` | joint turns about pitch, yaw or roll; for a foot, the shape (sphere, blade, pad or claw) |
 | `length` | link length 40 - 200 mm (tail: bar length) |
-| `wheel` | wheel or caster radius (wheel 30 - 60 mm, caster 15 - 35 mm), or foot radius 8 - 30 mm; for a tail, the counterweight 0 - 100 g |
+| `wheel` | wheel or caster radius (wheel 30 - 100 mm, caster 15 - 35 mm), or foot radius 8 - 30 mm; for a tail, the counterweight 0 - 100 g |
 | `flip` | joint axis reversed (how a mirrored copy keeps the same signal) |
 | `width` | link section width 12 - 30 mm |
 | `thick` | link section thickness 3 - 10 mm; for a spring, the TPU blade 2 - 8 mm |

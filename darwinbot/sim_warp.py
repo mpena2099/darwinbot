@@ -117,6 +117,7 @@ def _book_keep(
     x0: wp.array(dtype=float),
     y0: wp.array(dtype=float),
     done: wp.array(dtype=int),
+    mid: int,
     dx: wp.array(dtype=float),
     dy: wp.array(dtype=float),
     energy: wp.array(dtype=float),
@@ -125,6 +126,9 @@ def _book_keep(
     prev: wp.array(dtype=float),
     fell: wp.array(dtype=int),
     unstable: wp.array(dtype=int),
+    step: wp.array(dtype=int),
+    x_mid: wp.array(dtype=float),
+    reached: wp.array(dtype=int),
 ):
     """Work, heading, displacement and the end checks of one step, as in
     sim.Episode.run: unstable wins over fell, and a done world is frozen."""
@@ -155,6 +159,11 @@ def _book_keep(
     elif rot[2, 2] < UPRIGHT_MIN:
         fell[w] = 1
         done[w] = 1
+    # Half-way mark, as in Episode.run: only if the episode is still running.
+    step[w] = step[w] + 1
+    if step[w] == mid and done[w] == 0:
+        x_mid[w] = dx[w]
+        reached[w] = 1
 
 
 @wp.kernel
@@ -287,6 +296,7 @@ class WarpBatchEpisode:
              "omega": zeros(n), "x0": zeros(n), "y0": zeros(n),
              "prev": zeros(n), "dx": zeros(n), "dy": zeros(n),
              "energy": zeros(n), "duration": zeros(n), "yaw": zeros(n),
+             "step": zeros(n, wp.int32), "x_mid": zeros(n), "reached": zeros(n, wp.int32),
              "zsum": zeros(n), "upsum": zeros(n), "ticks": zeros(n, wp.int32),
              "done": zeros(n, wp.int32), "fell": zeros(n, wp.int32),
              "unstable": zeros(n, wp.int32), "touch": zeros((n, self.n_tips)), "hit": zeros((n, self.n_tips)),
@@ -328,9 +338,10 @@ class WarpBatchEpisode:
             wp.launch(_book_keep, dim=d.nworld, device=dev, inputs=[
                 d.time, d.xpos, d.xmat, d.actuator_force, d.actuator_velocity,
                 d.qacc, d.qvel, self.torso, self.nu, self.nv, self.dt,
-                b["x0"], b["y0"], b["done"]],
+                b["x0"], b["y0"], b["done"], self.n_steps // 2],
                 outputs=[b["dx"], b["dy"], b["energy"], b["duration"],
-                         b["yaw"], b["prev"], b["fell"], b["unstable"]])
+                         b["yaw"], b["prev"], b["fell"], b["unstable"],
+                         b["step"], b["x_mid"], b["reached"]])
         if not sample:
             return
         wp.launch(_sample, dim=d.nworld, device=dev, inputs=[
@@ -421,7 +432,7 @@ class WarpBatchEpisode:
         """Copies back and builds Metrics as sim.Episode.run does."""
         out = {k: b[k].numpy() for k in ("dx", "dy", "energy", "duration", "yaw",
                                          "fell", "unstable", "zsum", "upsum", "ticks",
-                                         "touch")}
+                                         "touch", "x_mid", "reached")}
         out["touch"] = out["touch"].astype(float)
         # A world that ran out of contact or constraint room was simulated wrong.
         out["unstable"] = out["unstable"] | (b["d"].overflow.numpy() != 0)
@@ -435,6 +446,9 @@ class WarpBatchEpisode:
             keep = 0.0 if unstable else 1.0
             res.append(Metrics(
                 dx=float(out["dx"][i]) * keep, dy=float(out["dy"][i]) * keep,
+                # Same as Episode.run: 2 * (x_end - x_mid) once half-way was reached.
+                progress=(float(out["dx"][i]) if not out["reached"][i]
+                          else 2.0 * float(out["dx"][i] - out["x_mid"][i])) * keep,
                 energy=float(out["energy"][i]), fell=bool(out["fell"][i]),
                 unstable=unstable, duration=float(out["duration"][i]),
                 mass=self.mass, duty=duty, height=height, wheel_share=share,

@@ -3,7 +3,14 @@ fitness.py
 ----------
 Episode metrics -> scalar score, and the multi-terrain aggregate.
 
-score = up(dx) - LATERAL_W * |dy| - HEADING_W * |yaw| - ENERGY_W * energy / (m g) - FALL_PENALTY * fell
+score = up(progress) - LATERAL_W * |dy| - HEADING_W * |yaw| - ENERGY_W * energy / (m g) - FALL_PENALTY * fell
+
+progress counts only the second half of the episode, scaled by 2:
+2 * (x_end - x_mid) along the heading axis (Metrics.progress). A steady gait
+keeps its distance, while a one-time drop of the torso early on is mostly
+ignored. If the episode ends before the half-way step (a fall), the distance
+covered so far counts. dy, yaw, energy, the upright factor and the fall
+penalty use the whole episode.
 
 up(v) is the progress v times the mean cosine of the torso tilt over the
 episode when v is positive: a robot that leans 45 degrees keeps 71% of its
@@ -38,6 +45,8 @@ score = 0.5 * straight + 0.25 * (left + right)
 
 A body that only walks straight, or only spins one way, falls behind one that
 does both.
+
+The turn credit and the turn task's drift use the whole episode (hypot(dx, dy)).
 
 A fall ends the episode but keeps the distance covered so far, so a robot
 that runs 2 m and then tips over still beats one that never moves. The
@@ -78,7 +87,7 @@ def score(m: Metrics, task: str = "forward") -> float:
     if task == "turn":
         s = up(abs(m.yaw), m) - TURN_DRIFT_W * math.hypot(m.dx, m.dy) - cost
     else:
-        s = up(m.dx, m) - LATERAL_W * abs(m.dy) - HEADING_W * abs(m.yaw) - cost
+        s = up(m.progress, m) - LATERAL_W * abs(m.dy) - HEADING_W * abs(m.yaw) - cost
     if m.fell:
         s -= FALL_PENALTY
     return float(s)

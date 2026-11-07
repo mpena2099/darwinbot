@@ -27,21 +27,39 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from darwinbot import morphology as morpho   # noqa: E402
 from darwinbot.evolve import Archive, cell_of, scaled_budget, type_name   # noqa: E402
-from darwinbot.inner import optimise_controller   # noqa: E402
+from darwinbot.inner import cpu_evaluator, optimise_controller   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
 from replay import open_archive   # noqa: E402
 
 GAITS = ("crawl", "walk", "trot", "belly", "roll")
 
 
-def polish_elite(job):
+_score = None   # a population worker's cpu_evaluator
+
+
+def _init_population_worker(args):
+    global _score
+    _score = cpu_evaluator(*args)[1]
+
+
+def _score_one(ctrl):
+    return _score(ctrl)
+
+
+def polish_elite(job, workers=1):
+    """Polish one robot; workers > 1 scores each CMA-ES generation on a pool."""
     cell, elite, a, budget, sigma, seed = job
     m = morpho.decode(elite.morph)
+    terrains = get_terrains(a.terrains, seed=seed)
     start = time.time()
-    r = optimise_controller(m, get_terrains(a.terrains, seed=seed), x0=elite.ctrl,
-                            budget=scaled_budget(budget, m), sigma0=sigma, seed=seed,
-                            seconds=a.seconds, variants=a.variants, task=a.task,
-                            payload=a.payload)
+    kw = dict(x0=elite.ctrl, budget=scaled_budget(budget, m), sigma0=sigma, seed=seed,
+              seconds=a.seconds, variants=a.variants, task=a.task, payload=a.payload)
+    if workers > 1:
+        init = (m, terrains, a.seconds, a.payload, a.variants, seed, a.task)
+        with Pool(workers, _init_population_worker, (init,)) as pool:
+            r = optimise_controller(m, terrains, map_many=lambda cs: pool.map(_score_one, cs), **kw)
+    else:
+        r = optimise_controller(m, terrains, **kw)
     minutes = (time.time() - start) / 60
     if r.fitness >= elite.fitness:
         e = dataclasses.replace(elite, ctrl=r.ctrl, fitness=r.fitness,
@@ -98,7 +116,10 @@ def main():
     a: Archive = open_archive(args.archive)
     cells = picks(a, args.types.split(",") if args.types else None, gaits)
     jobs = [(c, a.cells[c], a, args.budget, args.sigma, args.seed) for c in cells]
-    if args.workers > 1:
+    if args.workers > 1 and len(jobs) < args.workers:
+        # fewer robots than workers: one robot at a time, its generations in parallel
+        results = [polish_elite(job, args.workers) for job in jobs]
+    elif args.workers > 1:
         with Pool(args.workers) as pool:
             results = pool.map(polish_elite, jobs)
     else:

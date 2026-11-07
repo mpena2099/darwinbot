@@ -464,6 +464,55 @@ def part_counts(morph):
             casters, cradles, wedges)
 
 
+FOOT_R, FOOT_MIN_R, HUB_LEN = 9.0, 8.6, 12.0    # parts.FOOT_R, FOOT_MIN_R, hub length
+RISER_FLANGE_T = 3.0                             # parts.RISER_FLANGE_T
+MIN_RISER = 1.0
+
+
+def foot_back_mm(node):
+    """How far the printed foot reaches back along its own X from the module
+    origin, in mm: the stem of a sphere foot, the hub behind a blade, pad or
+    claw. Equal to the bounding box of parts.foot."""
+    r = max(_mm(node.foot_rad), FOOT_MIN_R)
+    return {"sphere": 10.0 * r / FOOT_R, "blade": r + HUB_LEN,
+            "pad": r / 6 + HUB_LEN, "claw": HUB_LEN}[node.foot_shape]
+
+
+class Riser(NamedTuple):
+    """Printed post under a passive module on a core face slot."""
+    height: int      # mm from the plate face to the module's back face
+    side:   int      # +1 on top of the plate, -1 under it
+    x:      float    # mm on the plate
+    y:      float
+    yaw:    float    # degrees, as the plate's mount pattern
+
+
+def riser(morph, i):
+    """The Riser under node i, or None. A foot on a face slot of the core has nothing between it and the plate: the simulation welds it
+    to the torso volume, the printed robot needs a post from the plate to it."""
+    n = morph.nodes[i]
+    if i == 0 or n.parent != 0 or n.slot not in morpho.FACE_SLOTS \
+            or n.kind != "foot":
+        return None
+    off, rot = morph.slot_frame(morph.nodes[0], n.slot, n)
+    u = rot[:, 0]
+    side = 1 if n.slot in (8, 9) else -1
+    if u[2] * side <= 0.5:
+        return None
+    base = float(off[2]) * 1000.0 - u[2] * foot_back_mm(n)
+    face = -plate_drop(morph) if side > 0 else -(plate_drop(morph) + PLATE_T)
+    height = int(np.floor((base - face) * side))     # never into the foot hub
+    if height < MIN_RISER:
+        return None
+    yaw = float(np.degrees(np.arctan2(-rot[0, 1], rot[1, 1])))
+    return Riser(height, side, float(off[0]) * 1000, float(off[1]) * 1000, yaw)
+
+
+def risers(morph):
+    """{height mm: count} of the printed posts of a robot."""
+    return Counter(r.height for i in morph.nodes if (r := riser(morph, i)))
+
+
 def torso_polygon_mm(morph):
     """Torso contour vertices in mm, for the printable plate."""
     return [(x * 1000, y * 1000) for x, y in morph.torso_polygon()]
@@ -526,6 +575,9 @@ def bom_rows(morph):
                      "PLA, one per side module"))
     for (shape, radius), q in sorted(feet.items()):
         rows.append((f"{foot_name(shape, radius)}.stl", q, "TPU"))
+    for height, q in sorted(risers(morph).items()):
+        rows.append((f"riser_{height}.stl", q,
+                     "PLA, post from the torso plate to a module on a face slot"))
     for r, q in sorted(wheels.items()):
         rows.append((f"wheel_{r}.stl", q, "PLA"))
         rows.append((f"Rubber O-ring tyre, wheel_{r}", q, f"fits rim of radius {r} mm"))
@@ -583,6 +635,8 @@ def screw_counts(morph, elbows, springs, splices):
             wedge = WEDGE_T + np.tan(np.radians(abs(mount.angle))) * WEDGE_W
             add(PLATE_T + FLOOR_T + (wedge if mount.angle else 0.0), 4,
                 "cradle on torso")
+    for q in risers(morph).values():
+        add(PLATE_T + RISER_FLANGE_T, 4 * q, "riser on torso")
     for (dist, angle, width, thick, axis), q in elbows.items():
         add(2 * thick + TONGUE_T, 4 * q, "elbow on link")
     for (width, blade), q in springs.items():
@@ -680,6 +734,14 @@ def _write_assembly(morph, ctl, layout, out_dir):
             part = "printed in the link tip"
         lines.append(f"| {s['id']} | {act.slot} | {parent_chain(morph, act.slot)} | "
                      f"{act.axis} | {link} | {s['sign']} | {part} |")
+    posts = [(i, r) for i in morph.nodes if (r := riser(morph, i))]
+    if posts:
+        lines += ["", "## Risers", "",
+                  "| Node slot | Position | Part |", "|---|---|---|"]
+        for i, r in posts:
+            lines.append(f"| {i} | {parent_chain(morph, i)} | riser_{r.height}.stl, "
+                         f"{'on top of' if r.side > 0 else 'under'} the torso plate, "
+                         "four M3 screws through the face mount |")
     lines += ["",
               "## Mount orientation", "",
               "Each joint turns about one axis of its own module: pitch about the module's",
@@ -768,6 +830,8 @@ def _write_stls(morph, out_dir):
         out(f"{elbow_name(dist, angle, width, thick, axis)}.stl",
             parts.elbow_plate(dist, angle, width, thick, axis=axis,
                               trim=elbow_trim(dist, angle, *axis)[0]))
+    for height in sorted(risers(morph)):
+        out(f"riser_{height}.stl", parts.riser(height))
     for shape, radius in sorted(feet):
         out(f"{foot_name(shape, radius)}.stl", parts.foot(radius, shape))
     for r in sorted(wheels):

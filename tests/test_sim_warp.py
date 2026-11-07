@@ -35,6 +35,7 @@ def _check(got, ref):
     """The tolerances of test_short_parity, world by world."""
     for i, (g, r) in enumerate(zip(got, ref)):
         assert abs(g.dx - r.dx) <= 0.01 + 0.05 * abs(r.dx), (i, g.dx, r.dx)
+        assert abs(g.progress - r.progress) <= 0.02 + 0.05 * abs(r.progress), (i, g.progress, r.progress)
         assert abs(g.dy - r.dy) <= 0.01 + 0.05 * abs(r.dy), (i, g.dy, r.dy)
         assert abs(g.yaw - r.yaw) <= 0.05, (i, g.yaw, r.yaw)
         assert g.fell == r.fell, (i, g.fell, r.fell)

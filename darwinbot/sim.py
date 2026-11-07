@@ -12,6 +12,7 @@ at spawn (overlapping legs) is not buildable and is never simulated.
 """
 
 import math
+from typing import Optional
 from collections import deque
 from dataclasses import dataclass
 
@@ -19,6 +20,7 @@ import mujoco
 import numpy as np
 from numba import njit
 
+from darwinbot import ablate
 from darwinbot.builder import AssemblyRules, build_mjcf
 from darwinbot.controller import CONTROL_DT, Controller, advance_phases
 from darwinbot.morphology import Morphology, violations
@@ -51,6 +53,15 @@ class Metrics:
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
     yaw:      float = 0.0   # net change of the torso heading (rad, unwrapped)
     upright:  float = 1.0   # mean cosine of the torso tilt over the control ticks
+    progress: Optional[float] = None   # forward progress the score counts (m), see below
+
+    def __post_init__(self):
+        # progress = 2 * (x_end - x_mid): only the second half of the episode
+        # counts, so a one-time drop of the torso is mostly ignored and a steady
+        # gait keeps its dx. An episode that ended before the half-way step
+        # (a fall) counts the distance covered so far, which is dx.
+        if self.progress is None:
+            self.progress = self.dx
 
 
 def cost_of_transport(m: "Metrics", task: str = "forward") -> float:
@@ -126,6 +137,18 @@ def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
     return duty, height, share
 
 
+_PRINTED_ONLY = ("cradle", "fork", "strut", "tongue", "elbow", "tab", "plate")
+
+
+def _servo_clashes(morph, model, data) -> list:
+    """Ablation `assembly`: only overlaps that involve a servo body and no
+    printed-only part (cradle, fork, strut, tongue, elbow, tab, plate) count."""
+    rules = AssemblyRules(morph, model)
+    return [c for c in rules.clashes(model, data, fixed=True)
+            if "servo" in (rules.role[c[0]], rules.role[c[1]])
+            and not {rules.role[c[0]], rules.role[c[1]]} & set(_PRINTED_ONLY)]
+
+
 def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
     """True when the printed parts of the body assemble in the spawn pose: no
     two robot geoms overlap except where the design laps them (a servo in its
@@ -138,6 +161,8 @@ def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
     model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     try:
         mujoco.mj_forward(model, data)
+        if ablate.active("assembly"):
+            return not _servo_clashes(morph, model, data)
         return not AssemblyRules(morph, model).clashes(model, data, fixed=True, first=True)
     finally:
         model.opt.disableflags = flags
@@ -241,6 +266,7 @@ class Episode:
         step = mujoco.mj_step
         theta, omega, sigma = controller.theta, controller.omega, controller.params.sigma
         energy = 0.0
+        mid, x_mid = self.n_steps // 2, None
         yaw, prev = 0.0, math.atan2(xmat[3], xmat[0])
         fell = unstable = False
         t_prev = 0.0
@@ -270,6 +296,8 @@ class Episode:
             if xmat[8] < UPRIGHT_MIN:
                 fell = True
                 break
+            if n == mid:
+                x_mid = float(xpos[0])
             if n % hold == 0:          # behaviour sampled once per control tick
                 touch += self._touching()
                 zsum += float(xpos[2])
@@ -281,6 +309,8 @@ class Episode:
         return Metrics(
             dx=float(x - x0) if not unstable else 0.0,
             dy=float(y - y0) if not unstable else 0.0,
+            progress=(0.0 if unstable else
+                      float(x - x0) if x_mid is None else 2.0 * float(x - x_mid)),
             energy=energy, fell=fell, unstable=unstable,
             duration=float(d.time), mass=self.mass,
             duty=duty, height=height, wheel_share=share,

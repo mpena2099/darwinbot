@@ -28,11 +28,11 @@ geoms already touch at spawn is not buildable (see sim.is_buildable).
 """
 
 import re
-import zlib
 from typing import Tuple
 
 import numpy as np
 
+from darwinbot import ablate
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
@@ -81,6 +81,10 @@ SPIKE_FACTOR = 1.5
 PLASTIC_FACTOR = 0.35
 
 
+def plastic_factor() -> float:
+    return 1.0 if ablate.active("friction") else PLASTIC_FACTOR
+
+
 def _special_geom(factor: float, terrain_friction: float) -> str:
     return (f'contype="2" conaffinity="3" priority="2" '
             f'friction="{factor * terrain_friction:.4f} 0.02 0.001"')
@@ -108,7 +112,7 @@ TORSO_VOLUME = 'contype="4" conaffinity="1" group="1"'
 
 def _torso_volume(friction: float) -> str:
     return (f'{TORSO_VOLUME} priority="2" '
-            f'friction="{PLASTIC_FACTOR * friction:.4f} 0.02 0.001"')
+            f'friction="{plastic_factor() * friction:.4f} 0.02 0.001"')
 
 
 PART_ONLY = 'density="0"'          # collision shape only: its mass is in the servo or link
@@ -127,7 +131,7 @@ def _torso(morph: Morphology, friction: float = 1.0) -> Tuple[str, str]:
     areas = [abs(a[0] * b[1] - b[0] * a[1]) / 2
              for a, b in zip(poly, poly[1:] + poly[:1])]
     assets, geoms = [], []
-    plastic = _special_geom(PLASTIC_FACTOR, friction)
+    plastic = _special_geom(plastic_factor(), friction)
     for k, (a, b) in enumerate(zip(poly, poly[1:] + poly[:1])):
         verts = [(0, 0, -h), (a[0], a[1], -h), (b[0], b[1], -h),
                  (0, 0, h), (a[0], a[1], h), (b[0], b[1], h)]
@@ -163,7 +167,7 @@ def _segment_geoms(node, friction: float = 1.0) -> str:
     mass = SHELL_DENSITY * node.length * node.width * SEGMENT_HEIGHT
     return (f'<geom name="segment{node.id}" type="box" pos="{_f(*centre)}" '
             f'size="{_f(*half)}" mass="{mass:.6f}" '
-            f'rgba="0.25 0.35 0.75 1" {_special_geom(PLASTIC_FACTOR, friction)}/>')
+            f'rgba="0.25 0.35 0.75 1" {_special_geom(plastic_factor(), friction)}/>')
 
 
 def _frame_attrs(morph: Morphology, node) -> str:
@@ -174,7 +178,7 @@ def _frame_attrs(morph: Morphology, node) -> str:
 def _servo_box(i: int, axis: str, friction: float = 1.0) -> str:
     half, centre = servo_box(axis)
     return (f'<geom name="servo{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" '
-            f'{_special_geom(PLASTIC_FACTOR, friction)}/>')
+            f'{_special_geom(plastic_factor(), friction)}/>')
 
 
 # Look only: no mass, no contact, render group 1. They show the printed
@@ -192,7 +196,7 @@ def _cradle_geom(i: int, axis: str, friction: float = 1.0) -> str:
     the servo box, in the part the servo is bolted to."""
     half, centre = cradle_box(axis)
     return (f'<geom name="cradle{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" '
-            f'{PART_ONLY} rgba="{BRACKET_RGBA}" {_special_geom(PLASTIC_FACTOR, friction)}/>')
+            f'{PART_ONLY} rgba="{BRACKET_RGBA}" {_special_geom(plastic_factor(), friction)}/>')
 
 
 def _servo_dress(axis: str) -> str:
@@ -283,7 +287,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
     side = 1.0 if slot == 1 else -1.0
     d = elbow_distance(child)
     tip, rot = link_tip(parent)
-    plastic = _special_geom(PLASTIC_FACTOR, friction)
+    plastic = _special_geom(plastic_factor(), friction)
     near, w = -ELBOW_BOSS_R, max(parent.width, 2 * ELBOW_BOSS_R)
     if child.kind in ("joint", "segment", "wheel"):
         from darwinbot import export
@@ -374,7 +378,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     i = node.id
     ranges = {} if ranges is None else ranges
     inner = ""
-    plastic = _special_geom(PLASTIC_FACTOR, friction)
+    plastic = _special_geom(plastic_factor(), friction)
     tip_child = children.get(i, {}).get(0)
     # a servo cradle or a foot takes the place of the boss at the link tip
     tip_cap = tip_child is not None and morph.nodes[tip_child].kind not in (
@@ -497,7 +501,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
     """ranges: {node id: (lo, hi)} joint limits in rad; None measures them
     with joint_ranges, {} keeps the JOINT_RANGE defaults."""
     if ranges is None:
-        ranges = joint_ranges(morph)
+        ranges = {} if ablate.active("ranges") else joint_ranges(morph)
     friction = terrain_friction
     actuators: list = []
     layout: ActuatorLayout = []
@@ -552,7 +556,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
 # say which of them may meet: a servo in its cradle, a link in the U fork that
 # clasps it, an elbow on the tip it is bolted to. Everything else that
 # overlaps is a clash, in the spawn pose (sim.is_buildable) and in motion
-# (joint_ranges). MuJoCo never collides bodies that are parent and child, or
+# (joint_ranges, one joint at a time). MuJoCo never collides bodies that are parent and child, or
 # welded together (a passive link, a foot, a tab: nothing turns between
 # them), so those pairs are measured here with mj_geomDistance.
 # --------------------------------------------------------------------------
@@ -709,29 +713,18 @@ class AssemblyRules:
 
 SWEEP_STEP = np.radians(3.0)
 SWEEP_MARGIN = np.radians(8.0)   # kept clear of the first clashing angle
-POSE_SAMPLES = 96           # random poses a joint range must keep clean
-SHRINK = 0.8                # factor a range takes when a pose clashes
 _RANGES: dict = {}
-
-
-def _chain(model, body: int) -> list:
-    """Joints between a body and the world, nearest first."""
-    out = []
-    while body > 0:
-        n = model.body_jntnum[body]
-        out += [int(model.body_jntadr[body]) + k for k in range(n)]
-        body = int(model.body_parentid[body])
-    return out
 
 
 def joint_ranges(morph: Morphology) -> dict:
     """{node id: (lo, hi)} rad for every servo joint and spring, inside their
     defaults. A printed robot is not allowed to turn into itself: each joint is
-    first swept on its own from 0 towards both ends and stops one step before
-    the first pose where printed parts clash (the parent filter of MuJoCo is
-    off here, so a link that cuts into its parent counts), then random poses
-    of all the joints together are drawn and the joints that stand between a
-    clashing pair shrink until none of them clashes."""
+    swept on its own from 0 towards both ends and stops one step before the
+    first pose where printed parts clash (the parent filter of MuJoCo is off
+    here, so a link that cuts into its parent counts). Clashes that need
+    several joints at once are not looked for: the parts of different limbs
+    collide in the episode (self-collision is on), like a real robot hitting
+    itself."""
     import mujoco
     from darwinbot.morphology import encode
     key = encode(morph).tobytes()
@@ -782,31 +775,6 @@ def joint_ranges(morph: Morphology) -> dict:
                 reach = max(0.0, lo - SWEEP_MARGIN)
             ends.append(sign * reach)
         out[i] = (float(ends[1]), float(ends[0]))
-    # all the joints together
-    if len(nodes) > 1:
-        rng = np.random.default_rng(zlib.crc32(key))
-        u = rng.uniform(-1.0, 1.0, (POSE_SAMPLES, len(nodes)))
-        u[POSE_SAMPLES // 2:] = np.sign(u[POSE_SAMPLES // 2:])    # corners
-        for _ in range(24):
-            worst = None
-            for row in u:
-                pose({i: (v * out[i][1] if v >= 0 else -v * out[i][0])
-                      for i, v in zip(nodes, row)})
-                hit = rules.clashes(model, data, first=True)
-                if hit:
-                    worst = (row, hit[0])
-                    break
-            if worst is None:
-                break
-            row, (a, b, _) = worst
-            ba, bb = rules.bodies(model, a, b)
-            chain_a, chain_b = _chain(model, ba), _chain(model, bb)
-            common = set(chain_a) & set(chain_b)
-            involved = {j for j in chain_a + chain_b if j not in common}
-            for i in nodes:
-                if jid[i] in involved:
-                    lo, hi = out[i]
-                    out[i] = (lo * SHRINK, hi * SHRINK)
     out = {i: (round(lo, 4), round(hi, 4)) for i, (lo, hi) in out.items()}
     if len(_RANGES) > 4096:
         _RANGES.clear()

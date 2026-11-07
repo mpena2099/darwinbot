@@ -14,6 +14,7 @@ Minimum wall 2 mm; slots and holes are vertical, so little needs support.
 
 import math
 
+import numpy as np
 from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Location,
                        Locations, gp_Trsf,
                        Part, Polygon, Pos, Rot, Sphere, SlotOverall, extrude,
@@ -392,8 +393,13 @@ def link(length_mm: float, width_mm: float = LINK_W,
     for pos, rot, args in (elbow[3] if len(elbow) > 3 else ()):
         # a plain link hung on this one is rigid with it and overlaps its end:
         # printed as one piece, placed where the module tree puts it
+        # the nine numbers are rounded to 4 digits: made orthonormal again, as
+        # OpenCascade takes a slightly scaled turn for a scaled shape and its
+        # fuse then silently drops the child link
+        u, _, vt = np.linalg.svd(np.reshape(rot, (3, 3)))
+        r = u @ vt
         trsf = gp_Trsf()
-        trsf.SetValues(*rot[0:3], pos[0], *rot[3:6], pos[1], *rot[6:9], pos[2])
+        trsf.SetValues(*r[0], pos[0], *r[1], pos[1], *r[2], pos[2])
         child = link(*args[:5], axis=args[5], foot_r=args[6], tip_axis=args[7],
                      elbow=args[8])
         part += child.moved(Location(trsf))
@@ -615,6 +621,33 @@ def foot(radius_mm: float = FOOT_R, shape: str = "sphere") -> Part:
     return part
 
 
+RISER_FLANGE_T = 3.0     # base flange of a riser post
+RISER_FLANGE_D = 28.0
+RISER_OD = 20.0
+RISER_CAP_T = 4.0        # solid top under the spigot
+RISER_SPIGOT_L = 8.2     # into the foot socket, 0.8 mm short of its floor
+
+
+def riser(height_mm: float) -> Part:
+    """Post from the torso plate to a module on a core face slot. Z up from
+    the plate face: a flange screwed through the face mount (the common M3
+    pattern), a hollow column, and a spigot that goes into the foot socket at
+    the top, `height_mm` from the plate."""
+    h = float(height_mm)
+    if h < 1.0:
+        raise ValueError("riser too short")
+    part = Cylinder(RISER_FLANGE_D / 2, min(RISER_FLANGE_T, h),
+                    align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part += Cylinder(RISER_OD / 2, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    if h - RISER_CAP_T > RISER_FLANGE_T + 2.0:     # a short post stays solid
+        part -= Cylinder(RISER_OD / 2 - 3.0, h - RISER_CAP_T,
+                         align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part += Pos(0, 0, h - min(1.0, h)) * Cylinder(
+        SPIGOT_R, RISER_SPIGOT_L + min(1.0, h), align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= _mount_holes(RISER_FLANGE_T)
+    return part
+
+
 def tail_bar(length_mm: float) -> Part:
     """PLA bar along +X with an M3 hole near the tip for the counterweight."""
     if length_mm < TAIL_W or length_mm > BED_MM:
@@ -643,8 +676,8 @@ def spike() -> Part:
 
 def wheel(radius_mm: float) -> Part:
     """Disc on a servo horn; V groove on the rim holds an O-ring tyre."""
-    if not 30 <= radius_mm <= 60:
-        raise ValueError("wheel radius must be 30..60 mm")
+    if not 30 <= radius_mm <= 100:
+        raise ValueError("wheel radius must be 30..100 mm")
     disc = Cylinder(radius_mm, WHEEL_T)
     # groove: 3 mm deep, 4 mm wide, rectangular, at mid-thickness
     ring = Cylinder(radius_mm + 1, 4) - Cylinder(radius_mm - 3, 4 + 1)

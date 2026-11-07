@@ -45,7 +45,7 @@ def progress(m, task, command=0.0):
     (turn), or radians turned the way asked (a steering command)."""
     if task == "turn":
         return abs(m.yaw)
-    return m.dx if command == 0.0 else -command * m.yaw
+    return m.progress if command == 0.0 else -command * m.yaw
 
 
 def validate_terrain(task):

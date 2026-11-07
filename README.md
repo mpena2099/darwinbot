@@ -3,6 +3,7 @@
 **Evolving robots designed to be built.**
 
 [![tests](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml/badge.svg)](https://github.com/mpena2099/darwinbot/actions/workflows/tests.yml)
+[![Docs](https://img.shields.io/badge/docs-online-2e7d32.svg)](https://mpena2099.github.io/darwinbot/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](pyproject.toml)
 [![MuJoCo](https://img.shields.io/badge/sim-MuJoCo-0b6e99.svg)](https://mujoco.org)

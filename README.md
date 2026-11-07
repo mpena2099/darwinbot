@@ -49,6 +49,14 @@ python experiments/replay.py --list                                   # see the 
 python experiments/replay.py --type 8servos-mid-trot                  # watch one
 ```
 
+To watch the showcase robots without training, download their archive from
+the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
+
+```bash
+curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.pkl
+python experiments/replay.py --archive showcase.pkl --type 13servos-mid-trot --speed 0.5
+```
+
 ## Documentation
 
 Full documentation: <https://mpena2099.github.io/darwinbot/> (online once the

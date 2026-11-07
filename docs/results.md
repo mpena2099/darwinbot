@@ -29,6 +29,16 @@ early.
 
 ![Printable parts of the best robot](img/parts.png)
 
+The archive of these robots is attached to the
+[showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
+
+```bash
+curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.pkl
+python experiments/replay.py --archive showcase.pkl --list
+python experiments/replay.py --archive showcase.pkl --type 13servos-mid-trot --speed 0.5
+python experiments/export.py --archive showcase.pkl --type 13servos-mid-trot
+```
+
 ## Previous steer run
 
 This archive uses the default `steer` task on the default `terrain`

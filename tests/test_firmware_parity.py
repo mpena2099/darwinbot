@@ -2,7 +2,7 @@
 test_firmware_parity.py
 -----------------------
 Compile the portable C++ controller core and check, tick by tick, that it
-reproduces the targets of darwinbot/controller.py (format 3 firmware rules).
+reproduces the targets of darwinbot/controller.py (format 4 firmware rules).
 """
 
 import shutil
@@ -35,9 +35,9 @@ def _fmt(v):
     return f"{float(v):.9g}"
 
 
-def _write_case(path, ctrl, loads, command=0.0):
+def _write_case(path, ctrl, loads, command=0.0, speed=1.0):
     """Write a case file; expected targets come from controller.py."""
-    c = co.Controller(ctrl, LAYOUT, command)
+    c = co.Controller(ctrl, LAYOUT, command, speed)
     p = c.params
     n = len(LAYOUT)
     limits = [LIMITS.get(a.axis, 0.0) for a in LAYOUT]
@@ -45,17 +45,18 @@ def _write_case(path, ctrl, loads, command=0.0):
     lines = [" ".join(_fmt(v) for v in
                       (p.omega / (2 * np.pi), co.RAMP_TIME,
                        round(1 / co.CONTROL_DT), n, co.LOAD_FULL_SCALE,
-                       command))]
+                       command, speed))]
     for i, act in enumerate(LAYOUT):
         sign, lim = SIGNS[i], limits[i]
         if act.kind == "wheel":
             fields = (0, 0, 0, 0, 0, 0, p.steer_gain[i], p.steer_shift[i],
-                      sign, 0, 0, 0, p.offset_base[i])
+                      p.speed_gain[i], p.speed_shift[i], sign, 0, 0, 0, p.offset_base[i])
             lines.append("wheel " + " ".join(_fmt(v) for v in fields))
         else:
             fields = (p.amp1_base[i], p.phase1[i], p.offset_base[i],
                       p.amp2_base[i], p.phase2[i], p.sigma[i],
                       p.steer_gain[i], p.steer_shift[i],
+                      p.speed_gain[i], p.speed_shift[i],
                       sign, 2048, -lim, lim, 0)
             lines.append("position " + " ".join(_fmt(v) for v in fields))
 
@@ -80,12 +81,12 @@ def _write_case(path, ctrl, loads, command=0.0):
     path.write_text("\n".join(lines) + "\n")
 
 
-def _run_case(tmp_path, ctrl, loads, command=0.0):
+def _run_case(tmp_path, ctrl, loads, command=0.0, speed=1.0):
     compiler = next((c for c in COMPILERS if shutil.which(c)), None)
     if compiler is None:
         pytest.skip("no C++ compiler found")
     case = tmp_path / "case.txt"
-    _write_case(case, ctrl, loads, command)
+    _write_case(case, ctrl, loads, command, speed)
     exe = tmp_path / "parity"
     build = subprocess.run(
         [compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-o", str(exe),
@@ -128,6 +129,21 @@ def test_parity_with_steering_commands(tmp_path, command):
     assert np.any(p.steer_shift != 0)
     loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
     _run_case(tmp_path, ctrl, loads, command)
+
+
+@pytest.mark.parametrize("command,speed", [(0.0, 0.0), (0.0, 0.5), (-0.6, 0.25), (1.0, 0.7)])
+def test_parity_with_speed_commands(tmp_path, command, speed):
+    rng, ctrl = _genes(8)
+    for slot in (1, 2, 3):                 # speed genes away from the mid value
+        b = co.node_base(slot)
+        ctrl[b + co.SPEED_GAIN], ctrl[b + co.SPEED_SHIFT] = 0.9, 0.2
+    ctrl[co.node_base(4) + co.SPEED_SHIFT] = 0.1
+    ctrl[co.node_base(5) + co.SPEED_SHIFT] = 0.95
+    p = co.Controller(ctrl, LAYOUT, command, speed).params
+    full = co.Controller(ctrl, LAYOUT, command, 1.0).params
+    assert np.any(p.amp1 != full.amp1) and np.any(p.offset != full.offset)
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads, command, speed)
 
 
 def test_parity_open_loop_when_sigma_is_zero(tmp_path):

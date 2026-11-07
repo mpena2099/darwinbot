@@ -48,7 +48,7 @@ def load(path, cell):
     return archive, archive.cells[key]
 
 
-def record(episode, ctrl, path, seconds, fps=30, command=0.0):
+def record(episode, ctrl, path, seconds, fps=30, command=0.0, speed_command=1.0):
     try:
         import imageio
     except ImportError:
@@ -57,7 +57,7 @@ def record(episode, ctrl, path, seconds, fps=30, command=0.0):
         return
 
     renderer = mujoco.Renderer(episode.model, height=480, width=640)
-    cpg = episode.reset(ctrl, command=command)
+    cpg = episode.reset(ctrl, command=command, speed=speed_command)
     dt = episode.model.opt.timestep
     every = max(1, int(round(1.0 / (fps * dt))))
     fps = 1.0 / (every * dt)       # the rate the frame step really gives
@@ -77,14 +77,17 @@ def record(episode, ctrl, path, seconds, fps=30, command=0.0):
 
 
 STEER_KEYS = {263: -1.0, 262: 1.0, 265: 0.0, 264: 0.0}   # GLFW left, right, up, down
+SPEED_KEYS = {266: 0.1, 267: -0.1}   # GLFW page up, page down: speed command step
 
 
-def watch(episode, ctrl, speed=1.0, command=0.0):
+def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0):
     """Open the viewer. The arrow keys steer while it runs: left -1, right +1,
-    up or down straight; the phases carry on, only the command changes."""
+    up or down straight. Page up and page down raise and lower the speed
+    command by 0.1 (0 slowest, 1 full). The phases carry on, only the command
+    changes."""
     from mujoco import viewer
 
-    cpg = episode.reset(ctrl, command=command)
+    cpg = episode.reset(ctrl, command=command, speed=speed_command)
     keys = []
     dt = episode.model.opt.timestep
     wall_dt = dt / speed     # real seconds per simulation step
@@ -102,8 +105,13 @@ def watch(episode, ctrl, speed=1.0, command=0.0):
                 while keys:
                     key = keys.pop(0)
                     if key in STEER_KEYS:
-                        cpg.params = Params(ctrl, episode.layout, STEER_KEYS[key])
-                        print(f"command {STEER_KEYS[key]:+.0f}")
+                        command = STEER_KEYS[key]
+                    elif key in SPEED_KEYS:
+                        speed_command = min(1.0, max(0.0, speed_command + SPEED_KEYS[key]))
+                    else:
+                        continue
+                    cpg.params = Params(ctrl, episode.layout, command, speed_command)
+                    print(f"steering {command:+.0f}, speed {speed_command:.1f}")
                 episode.step(cpg)
                 handle.sync()
                 time.sleep(max(0.0, wall_dt - (time.perf_counter() - t0)))
@@ -133,6 +141,9 @@ def main():
     p.add_argument("--command", type=float, default=0.0,
                    help="steering command from -1 (left) to +1 (right); in the "
                         "viewer the arrow keys change it")
+    p.add_argument("--speed-command", type=float, default=1.0,
+                   help="speed command from 0 (slowest) to 1 (full, as evolved); in "
+                        "the viewer page up and page down change it")
     p.add_argument("--list", action="store_true",
                    help="print every archive cell with its fitness, duty, height and servos, then exit")
     a = p.parse_args()
@@ -161,9 +172,10 @@ def main():
     episode = Episode(morph, terrain, payload=archive.payload)
     print(f"terrain {terrain.name}")
     if a.record:
-        record(episode, elite.ctrl, a.record, a.seconds, command=a.command)
+        record(episode, elite.ctrl, a.record, a.seconds, command=a.command,
+               speed_command=a.speed_command)
     else:
-        watch(episode, elite.ctrl, a.speed, a.command)
+        watch(episode, elite.ctrl, a.speed, a.command, a.speed_command)
 
 
 if __name__ == "__main__":

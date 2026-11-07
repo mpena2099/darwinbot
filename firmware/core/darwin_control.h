@@ -11,7 +11,11 @@
 // Steering: command c in [-1, 1] scales position amplitudes by
 // clip(1 + c * steer_gain, 0, 2), shifts position offsets by c * steer_shift
 // and shifts wheel speeds by c * steer_shift (clipped to +/-4.71 rad/s).
-// Steering is applied before the amplitude speed clip.
+// Speed: command s in [0, 1] (1 = the gait as evolved), d = 1 - s. Position
+// amplitudes are also scaled by clip(1 - d * speed_gain, 0, 2) and offsets
+// shifted by d * speed_shift; wheel speeds shift by d * speed_shift. The wheel
+// speed is clipped once, after both shifts.
+// Steering and speed are applied before the amplitude speed clip.
 // Amplitudes are clipped so (amp1 + 2 amp2) * omega <= 4.71 rad/s.
 #pragma once
 
@@ -31,6 +35,8 @@ struct ServoParams {
     float sigma = 0.0f;     // rad/s, load feedback gain (0 = open loop)
     float steer_gain = 0.0f;   // amplitude change at full steering command
     float steer_shift = 0.0f;  // rad, offset change at full command (wheel: rad/s)
+    float speed_gain = 0.0f;   // amplitude change at speed command 0
+    float speed_shift = 0.0f;  // rad, offset change at speed command 0 (wheel: rad/s)
     float sign = 1.0f;      // +1 or -1, mounting direction
     float zero = 2048.0f;   // servo counts at target 0 rad
     float min = 0.0f;       // rad, joint limit
@@ -60,6 +66,10 @@ public:
     // the steering genes and the speed clip; does not advance time.
     void set_command(float c);
 
+    // Speed command in [0, 1] (1 = full, the default). Same effect as
+    // set_command: recomputes the parameters; does not advance time.
+    void set_speed(float s);
+
     std::vector<float> targets;       // position: rad (clamped); wheel: rad/s
     std::vector<int> steps;           // position: servo counts, 0 on wheels
     std::vector<float> wheel_speeds;  // wheel: signed rad/s, 0 on joints
@@ -72,6 +82,8 @@ private:
     float load_full_scale_;
     float time_ = 0.0f;
     float command_ = 0.0f;
+    float speed_ = 1.0f;
+    void apply();
     std::vector<ServoParams> servos_;
     std::vector<ServoParams> base_;   // decoded values, before steering
     std::vector<float> theta_;

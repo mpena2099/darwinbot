@@ -31,7 +31,7 @@ on them.
 ## Next
 
 - **The next run from scratch**, which bumps `BODY_MODEL`, brings together
-  three changes; each gets a short run against the current rules, alone and
+  several changes; each gets a short run against the current rules, alone and
   together, before the run starts:
   - **Wheels up to 100 mm radius** (60 mm before). A servo turning a wheel
     directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
@@ -45,6 +45,11 @@ on them.
     jittered at 2 instead of 6 to 7 reversals per second.
   - **Progress from the second half of the episode**, scored twice (see the
     fall item below).
+  - **A speed command** next to steering (two more genes per slot, control
+    file format 4): the `steer` task adds a fourth episode per evaluation,
+    straight at speed 0.5, scored on how close its distance is to half of the
+    full-speed one, so evaluations cost a third more. Run it against the
+    current rule first, to check it does not shrink the archive's variety.
   - **A showcase GIF of four environments**: the best robot trained on flat
     ground only, on flat ground and steps, on flat ground and rubble, and on
     the full set, each filmed on its own terrain
@@ -69,7 +74,7 @@ on them.
   genes of modules that exist, with smaller steps, or repair bodies before
   they are scored.
 - **Cheap evaluation first** (multi-fidelity): every child pays the full
-  evaluation (four terrains, three commands, two physics variants) even when
+  evaluation (four terrains, four commands, two physics variants) even when
   it is hopeless. A quick screen first, such as straight on flat ground with a
   small CMA-ES budget, would drop the worst before the full test and could
   make training several times cheaper.
@@ -284,11 +289,11 @@ than evolve missions. What it would take:
   module a `<link>` with its mesh, every servo a `<joint>`), so it opens in
   RViz, Gazebo, MoveIt and the rest of the ROS 2 tools. The body is already a
   tree of links and joints, so this is a direct translation.
-- **Speed command**: Nav2 sends a `Twist` with forward and turning speed;
-  today a robot takes only the turn command and walks at its own pace. A
-  second gene pair per joint, like the steering one, would let evolution learn
-  to go faster or slower when told. This is the one part that touches
-  evolution itself.
+- **Speed command**: Nav2 sends a `Twist` with forward and turning speed.
+  The robot takes a turn command and a speed command from 0 to 1 (two gene
+  pairs per joint, trained by a half-speed episode); the node maps the
+  `Twist` linear speed to that number, using the top speed measured on the
+  bench.
 - **Odometry**: navigating needs the robot to estimate where it is. Counting
   steps drifts badly on legs, so this needs the IMU and, better, the distance
   sensor or a camera (see Later).

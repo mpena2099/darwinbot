@@ -11,8 +11,8 @@ latency) and compare with the nominal model.
 
 The archive's task and payload are used, so the robot is checked under the
 conditions it was trained for (turn: |yaw| instead of dx). A steer robot is
-checked under every steering command: straight (dx), left and right (radians
-turned the way asked). A command the robot does not follow even on the nominal
+checked under every command: straight (dx), left and right (radians turned
+the way asked) and half speed (dx). A command the robot does not follow even on the nominal
 model has no loss to measure and is left out of the mean.
 
 Prints PASS (exit 0) when the mean loss across terrains and commands is below
@@ -37,15 +37,16 @@ from replay import load  # noqa: E402
 MAX_LOSS = 0.30
 
 
-COMMAND_NAMES = {0.0: "straight", -1.0: "left", 1.0: "right"}
+COMMAND_NAMES = {(0.0, 1.0): "straight", (-1.0, 1.0): "left", (1.0, 1.0): "right",
+                 (0.0, 0.5): "half speed"}
 
 
-def progress(m, task, command=0.0):
+def progress(m, task, command=(0.0, 1.0)):
     """What the task is after: metres forward, radians turned either way
     (turn), or radians turned the way asked (a steering command)."""
     if task == "turn":
         return abs(m.yaw)
-    return m.progress if command == 0.0 else -command * m.yaw
+    return m.progress if command[0] == 0.0 else -command[0] * m.yaw
 
 
 def validate_terrain(task):
@@ -53,14 +54,14 @@ def validate_terrain(task):
     Every command of a terrain meets the same variants (same seed)."""
     genes, ctrl, terrain, n, seconds, seed, payload, task, command = task
     ep = Episode(morpho.decode(genes), terrain, seconds, payload)
-    nominal = ep.run(ctrl, None, command)
+    nominal = ep.run(ctrl, None, *command)
     rng = np.random.default_rng(seed)
-    runs = [ep.run(ctrl, randomize.perturb(ep.model, rng), command) for _ in range(n)]
+    runs = [ep.run(ctrl, randomize.perturb(ep.model, rng), *command) for _ in range(n)]
     prog = np.array([progress(r, task, command) for r in runs])
     fell = np.array([r.fell or r.unstable for r in runs])
     base = progress(nominal, task, command)
     loss = 1.0 - prog.mean() / base if base > 1e-6 else float("nan")
-    return terrain.name, COMMAND_NAMES.get(command, f"{command:+g}"), base, \
+    return terrain.name, COMMAND_NAMES.get(tuple(command), str(command)), base, \
         float(prog.mean()), float(prog.min()), float(fell.mean()), loss
 
 

@@ -130,7 +130,15 @@ def _shared(solid_a, solid_b, frame_a=None, frame_b=None, lap=True) -> float:
     The thickness is read in the frame of each part ((position, rotation)
     given as `frame_a` and `frame_b`), so a pose that tilts the pair does not
     thicken a lap; the world frame is used when no frame is given."""
-    common = solid_a & solid_b
+    common = None
+    for eps in (0.0, 0.01, 0.05):
+        # OpenCascade returns a null shape for some exactly coincident faces
+        # (a foot spigot flush on its link); a hundredth of a mm unsticks it
+        try:
+            common = solid_a & (Pos(eps, 0, 0) * solid_b if eps else solid_b)
+            break
+        except ValueError:
+            continue
     if common is None:
         return 0.0
     total = 0.0

@@ -4,10 +4,10 @@
 
 | File | Content |
 |------|---------|
-| `control.json` | the evolved controller for the ESP32 firmware (format 3), described in [formato-controle.md](formato-controle.md) |
+| `control.json` | the evolved controller for the ESP32 firmware (format 4), described in [formato-controle.md](formato-controle.md) |
 | `bom.md`, `bom.csv` | servos, printed parts with quantities and material, electronics, screws, tyres |
 | `assembly.md` | one row per servo in layout order: id, node slot, parent chain in words (for example `core right-front > joint pitch > joint roll`), axis, link length, sign; mounting direction and calibration step |
-| `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl` (bent links add `_L{deg}` or `_arc{deg}`; a joint's link adds `_u{axis}` for the fork, a tip cradle `_c{axis}`), `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl` (blade, pad and claw feet: `foot_{shape}_{R}.stl`), `wheel_{R}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `cradle_{axis}.stl` (variants `_w{deg}`, `_back`, `_free`) with `wedge_{deg}.stl`, `segment_plate_{L}x{W}.stl` for each spine segment, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
+| `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl` (bent links add `_L{deg}` or `_arc{deg}`; a joint's link adds `_u{axis}` for the fork, a tip cradle `_c{axis}`), `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl` (blade, pad and claw feet: `foot_{shape}_{R}.stl`), `wheel_{R}x{W}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `cradle_{axis}.stl` (variants `_w{deg}`, `_back`, `_free`) with `wedge_{deg}.stl`, `segment_plate_{L}x{W}.stl` for each spine segment, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
 | `robot.xml` | the MuJoCo model, for inspection |
 
 The export walks the module tree: every joint, link and spring needs a link of

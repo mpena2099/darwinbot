@@ -3,9 +3,11 @@ evolve.py
 ---------
 Outer loop: quality diversity over body plans.
 
-The archive is a pyribs CVTArchive (about 500 cells) over four behaviour and
+The archive is a pyribs CVTArchive (about 800 cells) over five behaviour and
 cost descriptors, all measured on the nominal flat-terrain episode of the
-body's best controller: duty (fraction of time the terminal points touch the
+body's best controller (the servo count is a property of the body): number of
+servos (the cost of building the robot, so a 6-servo body and a 16-servo one
+that move alike never compete for a cell), duty (fraction of time the terminal points touch the
 ground), height (mean torso height over the body's reach), number of legs
 (limbs on the torso with a joint and no wheel, so a hexapod never competes with
 a two-legged crawler for a cell) and cost of transport (work per weight and
@@ -36,7 +38,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate
+from darwinbot import ablate, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import TASKS
@@ -44,8 +46,8 @@ from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 21                     # bump when the genome meaning changes
-N_CELLS    = 500                    # CVT cells
+BODY_MODEL = 22                     # bump when the genome meaning changes
+N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
@@ -59,15 +61,16 @@ CRAWL_DUTY, WALK_DUTY, BELLY_DUTY = 0.8, 0.5, 0.15
 Cell = int                          # index of the CVT cell
 
 
-N_DESCRIPTORS = 4
+N_DESCRIPTORS = 5
 
 
 def normalise(behaviour) -> np.ndarray:
-    """Descriptor in [0, 1]^4 from a behaviour vector, so that every axis
+    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot) from a behaviour vector, so that every axis
     weighs the same. Cost of transport spans decades, so it is taken in log."""
-    duty, height, _, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
+    duty, height, servos, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
     cot = np.log(np.clip(cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([duty, height / HEIGHT_MAX, legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
+    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS,
+                    legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
 
 
 @lru_cache(maxsize=1)
@@ -153,6 +156,7 @@ class Archive:
     task:     str = "forward"  # fitness.TASKS: how episodes are scored
     payload:  float = 0.0      # extra torso mass in kg
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
+    rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -267,6 +271,10 @@ class Archive:
         if (state.get("body_model") != BODY_MODEL or "cells" in state
                 or (grid is not None and not isinstance(grid, CVTArchive))):
             raise ValueError("archive from an older body model, retrain")
+        if grid is not None and grid.measure_dim != N_DESCRIPTORS:
+            raise ValueError(
+                f"archive with {grid.measure_dim} archive axes, this code uses "
+                f"{N_DESCRIPTORS} (the servo count is an axis again): retrain")
         self.__dict__.update(state)
         self.__dict__.setdefault("_grid", None)
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
@@ -275,6 +283,7 @@ class Archive:
         self.__dict__.setdefault("task", "forward")   # nor tasks
         self.__dict__.setdefault("payload", 0.0)      # nor payload
         self.__dict__.setdefault("ablate", ())        # nor ablations
+        self.__dict__.setdefault("rules", ())         # nor optional score rules
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
@@ -289,7 +298,7 @@ class Archive:
                 "qd_score": float(sum(f + 5.0 for f in fits))}
 
 
-MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate")
+MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate", "rules")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -355,11 +364,12 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=()):
+def _init_worker(ablations=(), score_rules=()):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations."""
+    carry the run's ablations and optional score rules."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
+    rules.set_active(score_rules)
 
 
 def _cuda_devices() -> int:
@@ -367,9 +377,9 @@ def _cuda_devices() -> int:
     return max(1, wp.get_cuda_device_count())
 
 
-def _warp_worker(counter, n_gpus: int, ablations=()):
+def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=()):
     """Pool initializer for --device warp: bind this worker to the next GPU."""
-    _init_worker(ablations)
+    _init_worker(ablations, score_rules)
     with counter.get_lock():
         i = counter.value
         counter.value += 1
@@ -424,6 +434,7 @@ def run(
     task: str = "forward",
     payload: float = 0.0,
     ablations: tuple = (),
+    score_rules: tuple = (),
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -451,8 +462,10 @@ def run(
     else:
         archive = Archive(terrains=terrains, seconds=episode_seconds,
                           variants=variants, task=task, payload=payload,
-                          ablate=ablate.normalise(ablations))
+                          ablate=ablate.normalise(ablations),
+                          rules=rules.normalise(score_rules))
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
+    rules.set_active(archive.rules)             # and its score rules
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
@@ -489,16 +502,17 @@ def run(
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
           f"batches={n_batches} batch_size={batch_size} "
           f"task={archive.task} payload={archive.payload} kg"
-          + (f" ablate={list(archive.ablate)}" if archive.ablate else ""))
+          + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
+          + (f" rules={list(archive.rules)}" if archive.rules else ""))
     if device == "gpu" or (device == "warp" and workers == 1):
         pool = None
     elif device == "warp":
         # CUDA does not survive fork: spawned workers, each bound to one GPU.
         ctx = multiprocessing.get_context("spawn")
         pool = ctx.Pool(workers, _warp_worker,
-                        (ctx.Value("i", 0), _cuda_devices(), archive.ablate))
+                        (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules))
     else:
-        pool = multiprocessing.Pool(workers, _init_worker, (archive.ablate,))
+        pool = multiprocessing.Pool(workers, _init_worker, (archive.ablate, archive.rules))
     path = os.path.join(out_dir, "archive.pkl")
     code = code_version()
     print(f"[darwinbot] code {code}")

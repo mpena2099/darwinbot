@@ -51,7 +51,7 @@ de 12 a 30 mm por 3 a 10 mm, o cotovelo tem distância e ângulo próprios, o
 encaixe gira em qualquer ângulo e pode ficar em qualquer ponto da borda, do
 topo ou da base do tronco. O contorno do tronco é um polígono de 8 vértices
 que a evolução deforma, o link pode ser reto, em L ou em arco, o pé pode ser
-esfera, lâmina, pata ou garra, e o tronco pode ganhar até duas placas extras
+esfera, lâmina, pata ou garra, e o tronco pode ganhar até seis placas extras
 ligadas por servos de coluna. Cada bloco tem 15 genes. Os módulos passivos (mola, cauda com
 contrapeso, patim, espeto, roda livre) não têm servo.
 
@@ -162,6 +162,7 @@ DarwinBot, os eixos do mapa são:
 
 - `duty`: quanto tempo as pontas ficam no chão (rastejar, andar, trotar);
 - `height`: altura do tronco;
+- `servos`: número de servos (o custo de construir o robô);
 - `legs`: número de pernas (membros com junta e sem roda);
 - `cot`: custo de transporte (energia por peso e distância).
 

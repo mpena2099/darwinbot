@@ -23,7 +23,9 @@ PARAMS = SimpleNamespace(omega=2 * np.pi * 1.4,
                          amp2_base=np.array([0.1, 0.05, 0.0, 0, 0]),
                          offset_base=np.array([-0.1, -0.1, 0.3, 4.0, -4.0]),
                          steer_gain=np.array([0.5, -0.5, 0.2, 0, 0]),
-                         steer_shift=np.array([0.1, -0.2, 0.3, 2.0, -1.5]))
+                         steer_shift=np.array([0.1, -0.2, 0.3, 2.0, -1.5]),
+                         speed_gain=np.array([0.6, -0.4, 0.1, 0, 0]),
+                         speed_shift=np.array([0.05, -0.15, 0.2, 1.0, -2.5]))
 RANGES = {"pitch": 1.2, "roll": 0.9, "yaw": 0.9}
 SIGNS = [1, -1, 1, 1, -1]
 
@@ -41,7 +43,7 @@ def test_round_trip(tmp_path):
 def test_ids_names_signs_frequency():
     d = _make()
     s = d["servos"]
-    assert d["format"] == 3
+    assert d["format"] == 4
     assert [x["id"] for x in s] == [1, 2, 3, 4, 5]
     assert [x["name"] for x in s] == ["s2_pitch", "s5_pitch", "s7_roll", "s9_wheel", "s11_wheel"]
     assert [x["sign"] for x in s] == SIGNS
@@ -56,6 +58,7 @@ def test_position_servo_fields():
     assert (s["amp1"], s["phase1"], s["offset"]) == (0.3, 2.0, -0.1)
     assert (s["amp2"], s["phase2"], s["sigma"]) == (0.05, 1.5, -1.0)
     assert (s["steer_gain"], s["steer_shift"]) == (-0.5, -0.2)
+    assert (s["speed_gain"], s["speed_shift"]) == (-0.4, -0.15)
     assert "amp" not in s and "phase" not in s
 
 
@@ -63,6 +66,7 @@ def test_wheel_fields():
     s = _make()["servos"][4]
     assert s["mode"] == "wheel" and s["speed"] == -4.0
     assert (s["steer_gain"], s["steer_shift"]) == (0.0, -1.5)
+    assert (s["speed_gain"], s["speed_shift"]) == (0.0, -2.5)
     assert "amp1" not in s and "sigma" not in s
 
 
@@ -71,7 +75,7 @@ def test_default_signs_are_one():
     assert all(s["sign"] == 1 for s in d["servos"])
 
 
-@pytest.mark.parametrize("old", [1, 4])
+@pytest.mark.parametrize("old", [1, 5])
 def test_rejects_other_formats(tmp_path, old):
     d = _make()
     d["format"] = old
@@ -88,9 +92,23 @@ def test_format_2_reads_with_zero_steering(tmp_path):
     for s in d["servos"]:
         del s["steer_gain"]
         del s["steer_shift"]
+        del s["speed_gain"]
+        del s["speed_shift"]
     write_control_file(d, tmp_path / "c.json")
     r = read_control_file(tmp_path / "c.json")
     assert all(s["steer_gain"] == 0 and s["steer_shift"] == 0 for s in r["servos"])
+
+
+def test_format_3_reads_with_zero_speed_genes(tmp_path):
+    d = _make()
+    d["format"] = 3
+    for s in d["servos"]:
+        del s["speed_gain"]
+        del s["speed_shift"]
+    write_control_file(d, tmp_path / "c.json")
+    r = read_control_file(tmp_path / "c.json")
+    assert all(s["speed_gain"] == 0 and s["speed_shift"] == 0 for s in r["servos"])
+    assert r["servos"][1]["steer_gain"] == -0.5
 
 
 def test_rejects_missing_fields(tmp_path):
@@ -107,7 +125,7 @@ def test_rejects_missing_fields(tmp_path):
 
 def test_load_full_scale_field(tmp_path):
     d = _make()
-    assert d["format"] == 3 and d["load_full_scale"] == 0.7
+    assert d["format"] == 4 and d["load_full_scale"] == 0.7
     del d["load_full_scale"]                 # optional: older files lack it
     write_control_file(d, tmp_path / "c.json")
     assert read_control_file(tmp_path / "c.json")["load_full_scale"] == 0.7

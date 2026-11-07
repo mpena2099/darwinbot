@@ -420,7 +420,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         pos, rot = frames[i]
         name = f"w{i}"
         hub = morph.wheel_hub(node, pos, rot)
-        half_t = max(0.01, 0.25 * node.wheel_rad)
+        half_t = node.wheel_width / 2
         axle = np.array([0.0, morph.wheel_axis_sign(rot), 0.0])
         actuators.append(
             f'<velocity name="{name}" joint="{name}" kv="{WHEEL_KV}" '

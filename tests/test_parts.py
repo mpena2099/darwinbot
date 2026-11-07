@@ -254,6 +254,15 @@ def test_wheel_radius(r):
     assert p.bounding_box().size.X == pytest.approx(2 * r, abs=0.1)
 
 
+@pytest.mark.parametrize("w", [10, 25, 60])
+def test_wheel_width(w):
+    p = parts.wheel(45, w)
+    _ok(p)
+    assert p.bounding_box().size.Z == pytest.approx(w, abs=0.1)
+    with pytest.raises(ValueError):
+        parts.wheel(45, 9)
+
+
 def test_wheel_rejects_bad_radius():
     with pytest.raises(ValueError):
         parts.wheel(20)

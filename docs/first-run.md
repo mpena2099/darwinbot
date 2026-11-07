@@ -78,7 +78,7 @@ worst distance, fall rate and relative loss per terrain.
 ## Viewing the different robot types
 
 The archive keeps one robot per **cell** of the behaviour map: the best one found
-with that duty, height, number of legs and cost of transport (four descriptors). A new robot only replaces the one in
+with that duty, height, number of servos, number of legs and cost of transport (five descriptors). A new robot only replaces the one in
 its own cell, and only if it scores higher, so slow crawlers survive next to
 fast rollers.
 
@@ -87,7 +87,7 @@ A type is a short name derived from the cell, `<servos>servos-<height>-<gait>`
 
 | Part | Values | Meaning |
 |------|--------|---------|
-| `servos` | 1 to 16 | number of servos, the cost of the robot (shown in the name, not a map axis) |
+| `servos` | 1 to 16 | number of servos, the cost of the robot (a map axis, and shown in the name) |
 | `height` | `low`, `mid`, `high` | mean torso height over body reach: below 0.4, below 0.8, above |
 | `gait` | `crawl`, `walk`, `trot`, `belly`, `roll` | duty, the share of time the tips touch the ground: above 0.8, 0.5 to 0.8, 0.15 to 0.5, below 0.15 (sliding on the body); `roll` when wheels carry more than half of the contact time |
 

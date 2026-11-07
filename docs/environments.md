@@ -80,7 +80,7 @@ decide whether the result is what you expect:
   place, evolution learns that one layout. Draw the layout from a seed, as
   `rough` and `rubble` do, so every body meets a new one.
 - **The map is still measured on flat ground.** The archive's axes (contact
-  time, height, legs, cost of transport) come from the flat floor; a new
+  time, height, servos, legs, cost of transport) come from the flat floor; a new
   environment changes the fitness, not how robots are sorted.
 - **Contacts cost time.** `rubble` has 40 rocks; hundreds of objects can make
   training several times slower.

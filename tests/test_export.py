@@ -471,3 +471,30 @@ def test_foot_on_a_face_slot_gets_a_riser_that_reaches_it(tmp_path, slot, shape)
     assert abs(back_mesh - export.foot_back_mm(m.nodes[2])) <= 0.5
     post = parts.riser(r.height).bounding_box()
     assert abs(post.min.Z) < 1e-6 and post.max.Z >= r.height + 8
+
+
+def test_long_spine_exports_its_plates(tmp_path):
+    from tests.test_morphology import _long_spine
+    m, _ = _long_spine()
+    elite = _elite(m)
+    morph = mo.decode(elite.morph)
+    rows = {item: q for item, q, _ in bom_rows(morph)}
+    assert rows["segment_plate_100x100.stl"] == 6
+    out = tmp_path / "robot"
+    export_robot(elite, out, "spine6", stl=True)
+    assert (out / "parts" / "segment_plate_100x100.stl").stat().st_size > 0
+    assert (out / "assembly.md").read_text().count("spine servo") >= 6
+
+
+def test_wheel_width_names_the_part_and_sets_its_stl(tmp_path):
+    m = mo.template(1, wheels=True)
+    ids = [i for i, n in m.nodes.items() if n.kind == "wheel"]
+    m.nodes[ids[0]].wheel_width = 0.040
+    elite = _elite(m)
+    morph = mo.decode(elite.morph)
+    rows = {item: q for item, q, _ in bom_rows(morph)}
+    name = f"wheel_{round(morph.nodes[ids[0]].wheel_rad * 1000)}x40.stl"
+    assert rows[name] >= 1
+    out = tmp_path / "robot"
+    export_robot(elite, out, "wide", stl=True)
+    assert (out / "parts" / name).stat().st_size > 0

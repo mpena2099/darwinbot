@@ -31,13 +31,23 @@ on them.
 ## Next
 
 - **The next run from scratch**, which bumps `BODY_MODEL`, brings together
-  three changes; each gets a short run against the current rules, alone and
+  several changes; each gets a short run against the current rules, alone and
   together, before the run starts:
   - **Wheels up to 100 mm radius** (60 mm before). A servo turning a wheel
     directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
     reach 0.35 to 0.4 m/s, so the long-run wheeled robots used their wheels
     as feet: in the best of them the wheels turned for only 16 to 66% of the
     distance. A 100 mm printed wheel reaches about 0.47 m/s.
+  - **Six torso segments** (two before), chained through the front slot of
+    each plate, so long bodies with repeated vertebrae can appear, the way
+    nature builds snakes and centipedes. Segments add no depth, so limbs on
+    the last plate are as deep as limbs on the core; `MAX_NODES` and
+    `MAX_SERVOS` still bound the body. Lateral undulation also needs the
+    direction-dependent friction under Later; sidewinding and concertina
+    motion work without it.
+  - **Wheel width as a gene**, 10 to 60 mm (it was derived from the radius),
+    so a wide, tyre-like wheel and a thin disc are both reachable. 10 mm is
+    the least that holds the horn screws and the O-ring groove.
   - **Joint ranges from each joint alone**: a joint stops only before the
     clashes it causes moving by itself; clashes that need several joints at
     once are left to MuJoCo's collisions between the robot's parts. With all
@@ -45,12 +55,28 @@ on them.
     jittered at 2 instead of 6 to 7 reversals per second.
   - **Progress from the second half of the episode**, scored twice (see the
     fall item below).
+  - **Servo count as an archive axis** (five CVT axes, 800 cells): a 6-servo
+    body and a 16-servo one that move alike get separate cells, so simple
+    robots stop losing their cell to the ones with more motors. Check the
+    cells stay filled over ~50 batches.
+  - **A speed command** next to steering (two more genes per slot, control
+    file format 4): the `steer` task adds a fourth episode per evaluation,
+    straight at speed 0.5, scored on how close its distance is to half of the
+    full-speed one, so evaluations cost a third more. Run it against the
+    current rule first, to check it does not shrink the archive's variety.
   - **A showcase GIF of four environments**: the best robot trained on flat
     ground only, on flat ground and steps, on flat ground and rubble, and on
     the full set, each filmed on its own terrain
     (`tools/make_readme_figures.py` needs a terrain per robot), so the GIF
     shows how the ground shapes the body.
-
+  - **Five score rules, implemented behind `--rules`** and off by default:
+    `worse_turn` (the worse of the two turns, not the mean), `turn_forward`
+    (a turn earns nothing if the torso ended behind the spawn), `tilt`
+    (penalty on mean torso tilt), `slip` (penalty on the speed of feet
+    sliding while in contact) and `servo_ground` (penalty on the share of
+    time a servo housing touches the ground). Each enters the run only if its
+    own short run, over three seeds, passes against the current score
+    without shrinking the archive's variety.
 - **Assemble every export virtually, then build one**: no robot has been
   assembled yet, even on screen. A script that places every exported part and
   a servo model in the spawn pose would check that holes and screws line up,
@@ -69,7 +95,7 @@ on them.
   genes of modules that exist, with smaller steps, or repair bodies before
   they are scored.
 - **Cheap evaluation first** (multi-fidelity): every child pays the full
-  evaluation (four terrains, three commands, two physics variants) even when
+  evaluation (four terrains, four commands, two physics variants) even when
   it is hopeless. A quick screen first, such as straight on flat ground with a
   small CMA-ES budget, would drop the worst before the full test and could
   make training several times cheaper.
@@ -78,33 +104,6 @@ on them.
   the body is worse (Cheney et al., 2018). A grace period, or a larger budget
   after a big body mutation, lets an innovation live long enough to show what
   it can do.
-- **Score the worse of the two turns**: the `steer` task averages the left and
-  right turns, so a robot that only turns one way, such as a one-servo wheel
-  dragging itself in circles, still earns half the turn credit. Counting the
-  worse turn instead rewards only robots that obey both commands. To be
-  measured with a short run against the current rule.
-  A first single-seed short run was mixed: straighter robots and more legged
-  gaits, but the top ten turned both ways less well than under the current
-  rule. Needs three seeds before a decision.
-- **Turn forwards, not backwards**: a turn earns its heading change up to the
-  distance the torso travelled, in any direction, so a curve driven in reverse
-  still scores. In the 92-cell archive of the long3 run, 14 of the 114 turning
-  episodes that earned credit drove the curve in reverse, and only 1 of the 18
-  among the ten best robots. Counting only forward progress in a turn would
-  close the gap; one short run against the current rule measures what it costs.
-- **Servo count back as an archive axis**: nothing in the score or the
-  archive favours a simpler body, and the best robots use 13 to 16 servos, the
-  most expensive to build. With the servo count as an axis next to the number
-  of legs, simple robots get cells of their own instead of competing with the
-  big ones; the score inside each cell stays the same. It changes the archive
-  cells, so it needs a new run.
-- **Torso tilt**: only a full fall costs score today, so a robot that runs
-  tilted, close to tipping over, loses nothing. A term for the torso's mean
-  tilt, or distance multiplied by a stability factor as in some quadruped
-  studies, would favour bodies that carry themselves upright.
-- **Feet that slip**: a foot sliding while it bears weight leans on the
-  simulator's friction model and tends to fail on a real floor. Legged robot
-  training commonly subtracts the horizontal speed of feet in contact.
 - **Collapsing forward**: falling forward is a classic exploit (Karl Sims'
   creatures learned to topple instead of walk). The fall penalty only catches
   a torso tilted past 60 degrees, so a robot that drops from 23 to 12 cm
@@ -112,12 +111,6 @@ on them.
   in that one drop, then crawls at 1 cm/s. Scoring the progress of the second
   half of the episode, twice, keeps a steady gait's score and removes most of
   the drop.
-- **Servo bodies touching the ground**: some robots lean on a knee, the servo
-  housing, instead of the foot. That is not wrong in itself (gorillas walk on
-  their knuckles), so it should not be banned; but the housing was not made to
-  drag on the floor and its simulated friction is a guess. Give servo housings
-  a measured friction and a wear cost, or let the export add a printed cap
-  where a robot uses them, so the choice stays evolution's and stays honest.
 - **Adversarial terrains**: instead of drawing rough and rubble terrains at
   random, keep the terrains and physics variants where the current elites fail
   most and score everyone on them too, the way Hillis evolved hard test cases
@@ -169,12 +162,6 @@ on them.
   between the commanded and the measured wheel speed (the STS3215 reports both)
   would separate free from stalled wheels; it changes the controller, the
   firmware and the control file, with a new `BODY_MODEL`.
-- **Servo count as an archive axis**: a 6-servo body and a 16-servo one that
-  move alike share a cell today, and the one with more motors usually wins it;
-  the ten best robots average 13.8 servos. With the servo count as an axis,
-  simple and cheap bodies would keep their own cells next to the complex
-  ones. The cells change, so earlier archives no longer fit and training
-  starts over.
 - **A surrogate model**: a small model trained on the thousands of bodies the
   archive has already scored would predict a new body's score before it is
   simulated, so only promising ones are; it complements cheap evaluation
@@ -192,12 +179,6 @@ on them.
   hamstring moves hip and knee together (MuJoCo simulates tendons natively).
 - **Direction-dependent friction**: printed scales that slide forwards and
   grip backwards, the way a snake's belly scales push it along.
-- **More vertebrae**: allow six to eight torso segments instead of two, so
-  long bodies with repeated vertebrae can appear, the way nature builds snakes
-  and centipedes. Today a body has at most three articulated torso pieces and
-  limbs five modules deep, enough for a legless "lizard" with a waving tail but
-  not for a snake. Lateral undulation also needs the direction-dependent
-  friction above; sidewinding and concertina motion work without it.
 - **Growth rules for the body**: instead of describing a body part by part,
   the genome would hold a rule that grows it ("a segment sprouts a leg on each
   side and another segment, five times"), as L-systems and Karl Sims'
@@ -284,11 +265,11 @@ than evolve missions. What it would take:
   module a `<link>` with its mesh, every servo a `<joint>`), so it opens in
   RViz, Gazebo, MoveIt and the rest of the ROS 2 tools. The body is already a
   tree of links and joints, so this is a direct translation.
-- **Speed command**: Nav2 sends a `Twist` with forward and turning speed;
-  today a robot takes only the turn command and walks at its own pace. A
-  second gene pair per joint, like the steering one, would let evolution learn
-  to go faster or slower when told. This is the one part that touches
-  evolution itself.
+- **Speed command**: Nav2 sends a `Twist` with forward and turning speed.
+  The robot takes a turn command and a speed command from 0 to 1 (two gene
+  pairs per joint, trained by a half-speed episode); the node maps the
+  `Twist` linear speed to that number, using the top speed measured on the
+  bench.
 - **Odometry**: navigating needs the robot to estimate where it is. Counting
   steps drifts badly on legs, so this needs the IMU and, better, the distance
   sensor or a camera (see Later).

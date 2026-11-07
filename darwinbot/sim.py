@@ -54,6 +54,9 @@ class Metrics:
     yaw:      float = 0.0   # net change of the torso heading (rad, unwrapped)
     upright:  float = 1.0   # mean cosine of the torso tilt over the control ticks
     progress: Optional[float] = None   # forward progress the score counts (m), see below
+    tilt:     float = 0.0   # mean torso tilt over the control ticks (rad)
+    slip:     float = 0.0   # mean over ticks of the summed horizontal speed (m/s) of non-wheel terminals that touched the ground on two consecutive ticks
+    servo_ground: float = 0.0   # share of control ticks a servo housing touches the ground
 
     def __post_init__(self):
         # progress = 2 * (x_end - x_mid): only the second half of the episode
@@ -123,6 +126,13 @@ def terminal_geoms(model: mujoco.MjModel, morph: Morphology):
                          + model.geom_size[g][0]))
         wheel.append(is_wheel)
     return np.array(geoms, dtype=int), np.array(wheel, dtype=bool)
+
+
+def servo_geoms(model: mujoco.MjModel) -> np.ndarray:
+    """MuJoCo geom ids of the servo housings (`servo{i}`)."""
+    return np.array([g for g in range(model.ngeom)
+                     if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "")
+                     .startswith("servo")], dtype=int)
 
 
 def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
@@ -202,17 +212,19 @@ class Episode:
         self._robot = self.model.geom_contype == 2
         self._tgeoms, self._twheel = terminal_geoms(self.model, morph)
         self._hit = np.zeros(self.model.ngeom, dtype=bool)
+        self._sgeoms = servo_geoms(self.model)
         self._k = 0
         assert self.model.nu == len(self.layout)
 
-    def reset(self, ctrl: np.ndarray, model=None, command: float = 0.0) -> Controller:
+    def reset(self, ctrl: np.ndarray, model=None, command: float = 0.0,
+              speed: float = 1.0) -> Controller:
         model = model or self.model
         mujoco.mj_resetData(model, self.data)
         mujoco.mj_forward(model, self.data)
         self._k = 0
         for w in BLOWUP_WARNINGS:
             self.data.warning[w].number = 0
-        return Controller(ctrl, self.layout, command)
+        return Controller(ctrl, self.layout, command, speed)
 
     def _blew_up(self, t_prev: float) -> bool:
         """True when the last mj_step diverged: a MuJoCo warning fired (it has
@@ -239,7 +251,8 @@ class Episode:
         hit[b[~self._robot[a]]] = True
         return hit[self._tgeoms]
 
-    def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0) -> Metrics:
+    def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0,
+            speed: float = 1.0) -> Metrics:
         """
         Simulate one episode. With a randomize.Variant the perturbed model is
         stepped instead (same sizes, so the MjData is reused) and every new
@@ -253,7 +266,7 @@ class Episode:
         """
         m, d = self.model, self.data
         sim_model = variant.model if variant is not None else m
-        controller = self.reset(ctrl, sim_model, command)
+        controller = self.reset(ctrl, sim_model, command, speed)
         queue = (deque([np.zeros(m.nu)] * variant.latency)
                  if variant is not None and variant.latency > 0 else None)
         xmat, xpos = d.xmat[self.torso], d.xpos[self.torso]
@@ -272,6 +285,11 @@ class Episode:
         t_prev = 0.0
         touch = np.zeros(len(self._tgeoms))
         zsum, upsum, ticks = 0.0, 0.0, 0
+        tiltsum, slipsum, sgsum = 0.0, 0.0, 0
+        prev_pos = np.zeros((len(self._tgeoms), 2))
+        prev_touch = np.zeros(len(self._tgeoms), dtype=bool)
+        tick_dt = hold * dt
+        feet = ~self._twheel
 
         for n in range(1, self.n_steps + 1):
             if self._k % hold == 0:
@@ -299,9 +317,17 @@ class Episode:
             if n == mid:
                 x_mid = float(xpos[0])
             if n % hold == 0:          # behaviour sampled once per control tick
-                touch += self._touching()
+                now_touch = self._touching()
+                touch += now_touch
+                sgsum += bool(self._hit[self._sgeoms].any())
+                pos = d.geom_xpos[self._tgeoms, :2]
+                on = now_touch & prev_touch & feet
+                if on.any():
+                    slipsum += float(np.linalg.norm(pos[on] - prev_pos[on], axis=1).sum()) / tick_dt
+                prev_pos, prev_touch = pos.copy(), now_touch
                 zsum += float(xpos[2])
                 upsum += float(xmat[8])
+                tiltsum += math.acos(min(1.0, max(-1.0, float(xmat[8]))))
                 ticks += 1
 
         x, y = d.xpos[self.torso][:2]
@@ -316,4 +342,7 @@ class Episode:
             duty=duty, height=height, wheel_share=share,
             yaw=yaw if not unstable else 0.0,
             upright=upsum / ticks if ticks else 1.0,
+            tilt=tiltsum / ticks if ticks else 0.0,
+            slip=slipsum / ticks if ticks else 0.0,
+            servo_ground=sgsum / ticks if ticks else 0.0,
         )

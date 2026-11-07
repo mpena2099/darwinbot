@@ -51,7 +51,8 @@ BED_MM = 220.0          # largest part that fits a common print bed
 SPLICE_W = 24.0         # splice strip width, across the cut
 SPLICE_EDGE = 12.0      # splice hole distance from the strip ends
 SPLICE_HOLE = 8.0       # splice hole distance from the cut on each side
-WHEEL_T = 10.0          # wheel thickness
+WHEEL_T = 10.0          # least wheel width: holds the horn screws and the O-ring groove with 3 mm walls
+WHEEL_MAX_T = 60.0      # widest wheel, matches morphology.WHEEL_WIDTH_RANGE
 CASTER_T = 8.0          # caster wheel thickness, matches morphology.CASTER_WHEEL_T
 CASTER_GAP = CASTER_T + 1.2   # clearance between the fork arms
 CASTER_ARM = 7.5        # fork arm width, keeps >= 2 mm around the axle hole
@@ -674,15 +675,18 @@ def spike() -> Part:
     return Rot(Y=90) * part                        # tip along +X, as the module
 
 
-def wheel(radius_mm: float) -> Part:
-    """Disc on a servo horn; V groove on the rim holds an O-ring tyre."""
+def wheel(radius_mm: float, width_mm: float = 20.0) -> Part:
+    """Disc on a servo horn; a groove on the rim holds an O-ring tyre. The
+    width runs along the axle (Z), 10 to 60 mm."""
     if not 30 <= radius_mm <= 100:
         raise ValueError("wheel radius must be 30..100 mm")
-    disc = Cylinder(radius_mm, WHEEL_T)
+    if not WHEEL_T <= width_mm <= WHEEL_MAX_T:
+        raise ValueError("wheel width must be 10..60 mm")
+    disc = Cylinder(radius_mm, width_mm)
     # groove: 3 mm deep, 4 mm wide, rectangular, at mid-thickness
     ring = Cylinder(radius_mm + 1, 4) - Cylinder(radius_mm - 3, 4 + 1)
     part = disc - ring
-    part -= _horn_holes(WHEEL_T)
+    part -= _horn_holes(width_mm)
     # lightening holes keep walls >= 2 mm: only when the disc is big enough
     if radius_mm >= 40:
         r_mid = (radius_mm - 3 + HORN_BOLT_CIRCLE / 2 + HORN_HOLE_D) / 2
@@ -690,7 +694,7 @@ def wheel(radius_mm: float) -> Part:
         if d > 4:
             for i in range(6):
                 a = 2 * math.pi * (i + 0.5) / 6
-                part -= Pos(r_mid * math.cos(a), r_mid * math.sin(a), 0) * Cylinder(d / 2, WHEEL_T * 3)
+                part -= Pos(r_mid * math.cos(a), r_mid * math.sin(a), 0) * Cylinder(d / 2, width_mm * 3)
     return part
 
 

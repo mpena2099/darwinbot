@@ -82,8 +82,8 @@ import numpy as np
 MAX_NODES  = 20
 MAX_SERVOS = 16
 MAX_LEGS   = 8          # descriptor scale of n_legs (normalise clips)
-MAX_DEPTH  = 5      # core is depth 0
-MAX_SEGMENTS = 2    # spine plates per body
+MAX_DEPTH  = 5      # core is depth 0; spine segments do not add depth (see Morphology.depth)
+MAX_SEGMENTS = 6    # spine plates per body
 
 LENGTH_RANGE = (0.04, 0.20)               # m, joint / link length
 FOOT_LINK_MIN = 0.07                      # m: a link that ends in a foot cap needs room for its spigot
@@ -103,6 +103,9 @@ SPIKE_RADIUS = 0.005                      # m
 ELBOW_RANGE = (0.045, 0.08)               # m, side slot offset from the link axis; under 45 mm the
                                           # child's printed cradle reaches back over the link axis
 WHEEL_RANGE_M = (0.03, 0.10)              # m, wheel radius
+WHEEL_HORN_GAP = 0.003                    # m, the horn's thickness: the wheel disc sits on it
+WHEEL_WIDTH_RANGE = (0.010, 0.060)        # m, wheel width; 10 mm is the least that holds the horn
+                                          # screws (14 mm circle) and the 4 mm O-ring groove with 3 mm walls
 CASTER_RANGE = (0.015, 0.035)             # m, free caster wheel radius
 CASTER_FORK_SIZE = (0.02, 0.02, 0.02)     # m, printed fork box of a caster
 CASTER_WHEEL_T = 0.008                    # m, caster wheel thickness
@@ -287,6 +290,7 @@ class Node:
     axis:     str = "pitch"        # joint and spring only
     length:   float = 0.08         # joint, link and spring
     wheel_rad: float = 0.045       # wheel and caster radius
+    wheel_width: float = 0.020     # wheel only, along its axle
     flip:     bool = False         # joint and spring only
     width:    float = 0.020        # joint, link and spring
     thick:    float = 0.006        # joint and link; spring: blade thickness
@@ -439,10 +443,13 @@ class Morphology:
         return out
 
     def depth(self, i: int) -> int:
+        """Modules between the core and node i, not counting spine segments:
+        the spine is a chain of up to MAX_SEGMENTS plates, and a limb on its
+        last plate is as deep as one on the core."""
         d = 0
         while self.nodes[i].parent >= 0:
+            d += self.nodes[i].kind != "segment"
             i = self.nodes[i].parent
-            d += 1
         return d
 
     @property
@@ -601,11 +608,11 @@ class Morphology:
     def wheel_hub(self, node: Node, pos: np.ndarray, rot: np.ndarray) -> np.ndarray:
         """Wheel centre offset from the node origin, in the node frame: the
         wheel sits on the outer side of its servo."""
-        half_t = max(0.01, 0.25 * node.wheel_rad)
+        half_t = node.wheel_width / 2
         s = 1.0
         if abs(rot[1, 1]) > 0.5:
             s = np.sign(rot[1, 1]) * (-1.0 if pos[1] < 0 else 1.0)
-        return np.array([0.0, s * (servo_box("yaw")[0][1] + half_t), 0.0])
+        return np.array([0.0, s * (servo_box("yaw")[0][1] + WHEEL_HORN_GAP + half_t), 0.0])
 
     def caster_hub(self, node: Node, pos: np.ndarray, rot: np.ndarray) -> np.ndarray:
         """Caster wheel centre offset from the node origin, in the node frame:
@@ -701,7 +708,7 @@ class Morphology:
             elif n.kind == "wheel":
                 c = pos + rot @ self.wheel_hub(n, pos, rot)
                 az = abs(float((rot @ np.array([0.0, 1.0, 0.0]))[2]))
-                half = max(0.01, 0.25 * n.wheel_rad)
+                half = n.wheel_width / 2
                 low = min(low, float(c[2] - half * az
                                      - n.wheel_rad * np.sqrt(max(0.0, 1 - az * az))))
             elif n.kind == "caster":
@@ -930,11 +937,14 @@ def decode(genes: np.ndarray) -> Morphology:
 
     servos, segments = 0, 0
     frontier = [0]
-    for _ in range(MAX_DEPTH):
+    dep = {0: 0}
+    for _ in range(MAX_DEPTH + MAX_SEGMENTS):
         nxt = []
         for p in frontier:
             for s, i in sorted(kids.get(p, [])):
                 kind = kinds[i]
+                if dep[p] + (kind != "segment") > MAX_DEPTH:
+                    continue
                 if is_joint(kind) or kind == "wheel":
                     if servos >= MAX_SERVOS:
                         continue
@@ -944,6 +954,7 @@ def decode(genes: np.ndarray) -> Morphology:
                         continue
                     segments += 1
                 morph.nodes[i] = _node_from_block(i, kind, p, s, blocks[i])
+                dep[i] = dep[p] + (kind != "segment")
                 nxt.append(i)
         frontier = nxt
     _ensure_servo(morph)
@@ -974,6 +985,7 @@ def _node_from_block(i, kind, parent, slot, b) -> Node:
         n.length = round(_scale(b[LENGTH], *LENGTH_RANGE), 6)
     if kind == "wheel":
         n.wheel_rad = round(_scale(b[WHEEL], *WHEEL_RANGE_M), 6)
+        n.wheel_width = round(_scale(b[WIDTH], *WHEEL_WIDTH_RANGE), 6)
     if kind == "caster":
         n.wheel_rad = round(_scale(b[WHEEL], *CASTER_RANGE), 6)
     if kind == "foot":
@@ -1017,8 +1029,11 @@ def encode(morph: Morphology) -> np.ndarray:
         else:
             b[WHEEL] = _unscale(n.wheel_rad, *WHEEL_RANGE_M)
         b[FLIP] = 0.75 if n.flip else 0.25
-        b[WIDTH] = _unscale(n.width, *(SEGMENT_WIDTH_RANGE
-                                      if n.kind == "segment" else LINK_WIDTH_RANGE))
+        if n.kind == "wheel":
+            b[WIDTH] = _unscale(n.wheel_width, *WHEEL_WIDTH_RANGE)
+        else:
+            b[WIDTH] = _unscale(n.width, *(SEGMENT_WIDTH_RANGE
+                                          if n.kind == "segment" else LINK_WIDTH_RANGE))
         b[THICK] = _unscale(n.thick, *(SPRING_BLADE_RANGE if n.kind == "spring"
                                        else LINK_THICK_RANGE))
         b[OFFSET] = _unscale(n.offset, 0.0, 1.0)
@@ -1278,7 +1293,8 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
         return None
     if morph.nodes[parent].kind == "segment" and slot == 1:
         return None
-    base = morph.depth(parent) + 1 - source.depth(root)
+    base = (morph.depth(parent) + (source.nodes[root].kind != "segment")
+            - source.depth(root))
     cm = source.child_map()
     queue = [(root, parent, slot)]
     new_root = None
@@ -1405,6 +1421,7 @@ def _random_node(rng, kind: str, parent: int, slot: int) -> Node:
         n.tail_mass = round(float(rng.uniform(*TAIL_MASS_RANGE)), 6)
     if kind == "wheel":
         n.wheel_rad = round(float(rng.uniform(*WHEEL_RANGE_M)), 6)
+        n.wheel_width = round(float(rng.uniform(*WHEEL_WIDTH_RANGE)), 6)
     if kind == "caster":
         n.wheel_rad = round(float(rng.uniform(*CASTER_RANGE)), 6)
     if kind == "foot":
@@ -1433,8 +1450,7 @@ def _add_segment(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     """A segment on a core or segment front/back slot, within the limit."""
     i = _free_id(morph)
     if (i is None or morph.n_segments >= MAX_SEGMENTS
-            or not _segment_slot(morph.nodes[p].kind, s)
-            or morph.depth(p) + 1 > MAX_DEPTH):
+            or not _segment_slot(morph.nodes[p].kind, s)):
         return None
     node = _random_node(rng, "segment", p, s)
     node.id = i
@@ -1526,6 +1542,8 @@ def _op_param(morph, rng):
         choices += ["flip"]       # the axis is fixed: see _node_from_block
     if n.kind in ("wheel", "caster"):
         choices += ["wheel_rad"] * 2
+    if n.kind == "wheel":
+        choices += ["wheel_width"]
     if n.kind == "foot":
         choices += ["foot_rad", "foot_shape"]
     what = str(rng.choice(choices))
@@ -1560,6 +1578,8 @@ def _op_param(morph, rng):
     elif what == "wheel_rad":
         span = CASTER_RANGE if n.kind == "caster" else WHEEL_RANGE_M
         n.wheel_rad = _jitter(n.wheel_rad, *span, rng)
+    elif what == "wheel_width":
+        n.wheel_width = _jitter(n.wheel_width, *WHEEL_WIDTH_RANGE, rng)
     elif what == "tail_mass":
         n.tail_mass = _jitter(n.tail_mass, *TAIL_MASS_RANGE, rng)
     elif what == "foot_shape":

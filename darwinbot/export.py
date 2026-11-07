@@ -6,7 +6,7 @@ notes and the MJCF used in simulation.
 
 The body is a module tree (darwinbot/morphology.py), so everything is read by
 walking the tree: one STL per distinct part (the extruded torso contour plate
-or its tiles, one per link size and profile, elbow size, wheel radius, caster
+or its tiles, one per link size and profile, elbow size, wheel radius and width, caster
 wheel radius, foot shape and radius and spring flexure, servo cradle and
 wedge, splice plates, one plate per spine segment size), and one assembly row per servo in
 layout order. Mount positions on the plate are the core slot offsets of
@@ -423,7 +423,7 @@ def part_counts(morph):
     (length, width, thick, profile, bend deg, fork axis, foot radius, tip
     cradle axis), elbow plates by (distance, angle deg, width, thick, cradle
     axis), cradles by (axis, wedge angle, has a foot) for the servos on the torso, wedges
-    by angle, feet by (shape, radius), wheels by radius, springs by (width,
+    by angle, feet by (shape, radius), wheels by (radius, width), springs by (width,
     blade), tails by length and caster wheels by radius; skids and spikes as
     plain counts."""
     cm = morph.child_map()
@@ -449,7 +449,7 @@ def part_counts(morph):
             if mount.angle:
                 wedges[abs(int(round(mount.angle)))] += 1
         if n.kind == "wheel":
-            wheels[_mm(n.wheel_rad)] += 1
+            wheels[(_mm(n.wheel_rad), _mm(n.wheel_width))] += 1
         elif n.kind == "caster":
             casters[_mm(n.wheel_rad)] += 1
         elif n.kind == "foot":
@@ -578,9 +578,9 @@ def bom_rows(morph):
     for height, q in sorted(risers(morph).items()):
         rows.append((f"riser_{height}.stl", q,
                      "PLA, post from the torso plate to a module on a face slot"))
-    for r, q in sorted(wheels.items()):
-        rows.append((f"wheel_{r}.stl", q, "PLA"))
-        rows.append((f"Rubber O-ring tyre, wheel_{r}", q, f"fits rim of radius {r} mm"))
+    for (r, w), q in sorted(wheels.items()):
+        rows.append((f"wheel_{r}x{w}.stl", q, "PLA"))
+        rows.append((f"Rubber O-ring tyre, wheel_{r}x{w}", q, f"fits rim of radius {r} mm"))
     for r, q in sorted(casters.items()):
         rows.append((f"caster_wheel_{r}.stl", q, "PLA"))
         rows.append((f"Rubber O-ring tyre, caster_wheel_{r}", q,
@@ -834,8 +834,8 @@ def _write_stls(morph, out_dir):
         out(f"riser_{height}.stl", parts.riser(height))
     for shape, radius in sorted(feet):
         out(f"{foot_name(shape, radius)}.stl", parts.foot(radius, shape))
-    for r in sorted(wheels):
-        out(f"wheel_{r}.stl", parts.wheel(r))
+    for r, w in sorted(wheels):
+        out(f"wheel_{r}x{w}.stl", parts.wheel(r, w))
     for r in sorted(casters):
         out(f"caster_wheel_{r}.stl", parts.caster_wheel(r))
     if casters:

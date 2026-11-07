@@ -674,3 +674,14 @@ def test_episode_reports_upright_near_one_at_rest():
     ep = Episode(mo.template(2), te.get_terrains("flat")[0], seconds=0.5)
     m = ep.run(np.zeros(CTRL_LENGTH))
     assert 0.9 < m.upright <= 1.0
+
+
+def test_wheel_mass_follows_width():
+    def mass(width):
+        m = mo.template(1, wheels=True)
+        for n in m.nodes.values():
+            if n.kind == "wheel":
+                n.wheel_width = width
+        return float(Episode(mo.decode(mo.encode(m)), te.flat(),
+                             seconds=0.1).model.body_mass.sum())
+    assert mass(0.060) > mass(0.030) > mass(0.010)

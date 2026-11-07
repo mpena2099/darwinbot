@@ -598,7 +598,7 @@ def test_decode_drops_misplaced_and_extra_segments():
     m.nodes[third] = mo.Node(third, "segment", max(m.nodes) - 1, 1, 0)
     m.nodes[third + 1] = mo.Node(third + 1, "segment", 0, 2, 0)   # side slot
     d = mo.decode(mo.encode(m))
-    assert d.n_segments == 2
+    assert d.n_segments == 2                 # both misplaced ones are dropped
     assert all(n.slot in (0, 1) for n in d.nodes.values() if n.kind == "segment")
     # a child on slot 1 of a segment is dropped
     seg = next(i for i, n in m.nodes.items() if n.kind == "segment")
@@ -666,3 +666,70 @@ def test_servo_on_a_torso_face_is_not_buildable():
     passive = mo.Morphology(0.15, 0.20, {0: mo.Node(0, "core"),
                                          1: mo.Node(1, "foot", 0, 10, 0.0)})
     assert not mo.violations(passive)
+
+
+def _long_spine(n=None):
+    """A core with a chain of MAX_SEGMENTS spine plates and a leg pair on the last."""
+    n = mo.MAX_SEGMENTS if n is None else n
+    m = mo.template(1)
+    first = max(m.nodes) + 1
+    prev, slot = 0, 1
+    for k in range(n):
+        m.nodes[first + k] = mo.Node(first + k, "segment", prev, slot, 0,
+                                     axis="yaw" if k % 2 else "pitch",
+                                     length=0.10, width=0.10)
+        prev, slot = first + k, 0
+    for j, s in enumerate((3, 6)):
+        i = first + n + j
+        m.nodes[i] = mo.Node(i, "joint", prev, s, 0, axis="pitch", length=0.08)
+    return m, prev
+
+
+def test_six_segment_spine_decodes_and_segments_add_no_depth():
+    assert mo.MAX_SEGMENTS == 6
+    m, last = _long_spine()
+    d = mo.decode(mo.encode(m))
+    assert d.n_segments == 6 and sorted(d.nodes) == sorted(m.nodes)
+    assert d.depth(last) == 0 and d.max_depth == mo.template(1).max_depth
+    assert mo.violations(d) == []
+    # a seventh plate is dropped, the limbs stay
+    m7, _ = _long_spine(7)
+    d7 = mo.decode(mo.encode(m7))
+    assert d7.n_segments == 6
+    # limbs still stop at MAX_DEPTH behind the spine
+    k = max(m.nodes) + 1
+    parent = max(i for i, n in m.nodes.items() if n.kind == "joint")
+    for j in range(mo.MAX_DEPTH + 1):
+        m.nodes[k + j] = mo.Node(k + j, "link", parent, 0, 0, length=0.08)
+        parent = k + j
+    assert mo.decode(mo.encode(m)).max_depth <= mo.MAX_DEPTH
+
+
+def test_long_spine_is_buildable():
+    from darwinbot.sim import Episode
+    import darwinbot.terrain as te
+    m, _ = _long_spine()
+    d = mo.decode(mo.encode(m))
+    assert Episode(d, te.flat(), seconds=0.3).buildable
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_operators_respect_the_longer_spine(seed):
+    rng = np.random.default_rng(seed)
+    g = mo.encode(_long_spine()[0])
+    for _ in range(30):
+        g = mo.mutate(g, rng)
+        m = mo.decode(g)
+        assert m.n_segments <= mo.MAX_SEGMENTS and m.max_depth <= mo.MAX_DEPTH
+        assert m.n_nodes <= mo.MAX_NODES and m.n_servos <= mo.MAX_SERVOS
+
+
+def test_wheel_width_gene_roundtrip_and_range():
+    m = mo.template(1, wheels=True)
+    w = next(i for i, n in m.nodes.items() if n.kind == "wheel")
+    for width in (0.010, 0.035, 0.060):
+        m.nodes[w].wheel_width = width
+        back = mo.decode(mo.encode(m))
+        assert back.nodes[w].wheel_width == pytest.approx(width, abs=1e-6)
+    g = mo.encode(m)
+    assert g.size == mo.MAX_NODES * mo.BLOCK_GENES

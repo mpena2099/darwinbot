@@ -221,6 +221,8 @@ def placements(morph) -> list:
                                  lambda r=r_mm, s=node.foot_shape: parts.foot(r, s), TPU))
         elif node.kind == "wheel":
             r_mm = export._mm(node.wheel_rad)
+            w_mm = export._mm(node.wheel_width)
             out.append(Placement(f"wheel{i}", i, f"w{i}", (0, 0, 0), rx(90),
-                                 f"wheel_{r_mm}", lambda r=r_mm: parts.wheel(r), PLA))
+                                 f"wheel_{r_mm}x{w_mm}",
+                                 lambda r=r_mm, w=w_mm: parts.wheel(r, w), PLA))
     return out

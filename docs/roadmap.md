@@ -31,13 +31,23 @@ on them.
 ## Next
 
 - **The next run from scratch**, which bumps `BODY_MODEL`, brings together
-  three changes; each gets a short run against the current rules, alone and
+  several changes; each gets a short run against the current rules, alone and
   together, before the run starts:
   - **Wheels up to 100 mm radius** (60 mm before). A servo turning a wheel
     directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
     reach 0.35 to 0.4 m/s, so the long-run wheeled robots used their wheels
     as feet: in the best of them the wheels turned for only 16 to 66% of the
     distance. A 100 mm printed wheel reaches about 0.47 m/s.
+  - **Six torso segments** (two before), chained through the front slot of
+    each plate, so long bodies with repeated vertebrae can appear, the way
+    nature builds snakes and centipedes. Segments add no depth, so limbs on
+    the last plate are as deep as limbs on the core; `MAX_NODES` and
+    `MAX_SERVOS` still bound the body. Lateral undulation also needs the
+    direction-dependent friction under Later; sidewinding and concertina
+    motion work without it.
+  - **Wheel width as a gene**, 10 to 60 mm (it was derived from the radius),
+    so a wide, tyre-like wheel and a thin disc are both reachable. 10 mm is
+    the least that holds the horn screws and the O-ring groove.
   - **Joint ranges from each joint alone**: a joint stops only before the
     clashes it causes moving by itself; clashes that need several joints at
     once are left to MuJoCo's collisions between the robot's parts. With all
@@ -192,12 +202,6 @@ on them.
   hamstring moves hip and knee together (MuJoCo simulates tendons natively).
 - **Direction-dependent friction**: printed scales that slide forwards and
   grip backwards, the way a snake's belly scales push it along.
-- **More vertebrae**: allow six to eight torso segments instead of two, so
-  long bodies with repeated vertebrae can appear, the way nature builds snakes
-  and centipedes. Today a body has at most three articulated torso pieces and
-  limbs five modules deep, enough for a legless "lizard" with a waving tail but
-  not for a snake. Lateral undulation also needs the direction-dependent
-  friction above; sidewinding and concertina motion work without it.
 - **Growth rules for the body**: instead of describing a body part by part,
   the genome would hold a rule that grows it ("a segment sprouts a leg on each
   side and another segment, five times"), as L-systems and Karl Sims'

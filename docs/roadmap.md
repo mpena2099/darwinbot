@@ -45,6 +45,10 @@ on them.
     jittered at 2 instead of 6 to 7 reversals per second.
   - **Progress from the second half of the episode**, scored twice (see the
     fall item below).
+  - **Servo count as an archive axis** (five CVT axes, 800 cells): a 6-servo
+    body and a 16-servo one that move alike get separate cells, so simple
+    robots stop losing their cell to the ones with more motors. Check the
+    cells stay filled over ~50 batches.
   - **A showcase GIF of four environments**: the best robot trained on flat
     ground only, on flat ground and steps, on flat ground and rubble, and on
     the full set, each filmed on its own terrain
@@ -92,12 +96,6 @@ on them.
   episodes that earned credit drove the curve in reverse, and only 1 of the 18
   among the ten best robots. Counting only forward progress in a turn would
   close the gap; one short run against the current rule measures what it costs.
-- **Servo count back as an archive axis**: nothing in the score or the
-  archive favours a simpler body, and the best robots use 13 to 16 servos, the
-  most expensive to build. With the servo count as an axis next to the number
-  of legs, simple robots get cells of their own instead of competing with the
-  big ones; the score inside each cell stays the same. It changes the archive
-  cells, so it needs a new run.
 - **Torso tilt**: only a full fall costs score today, so a robot that runs
   tilted, close to tipping over, loses nothing. A term for the torso's mean
   tilt, or distance multiplied by a stability factor as in some quadruped
@@ -169,12 +167,6 @@ on them.
   between the commanded and the measured wheel speed (the STS3215 reports both)
   would separate free from stalled wheels; it changes the controller, the
   firmware and the control file, with a new `BODY_MODEL`.
-- **Servo count as an archive axis**: a 6-servo body and a 16-servo one that
-  move alike share a cell today, and the one with more motors usually wins it;
-  the ten best robots average 13.8 servos. With the servo count as an axis,
-  simple and cheap bodies would keep their own cells next to the complex
-  ones. The cells change, so earlier archives no longer fit and training
-  starts over.
 - **A surrogate model**: a small model trained on the thousands of bodies the
   archive has already scored would predict a new body's score before it is
   simulated, so only promising ones are; it complements cheap evaluation

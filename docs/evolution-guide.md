@@ -163,6 +163,7 @@ that worked reasonably well, and different ideas die before they mature.
 behavior space into a map and keeps **the best robot of each region**. In
 DarwinBot, the axes of the map are:
 
+- `servos`: number of servos (the cost of building the robot);
 - `duty`: how long the feet stay on the ground (crawling, walking, trotting);
 - `height`: trunk height;
 - `legs`: number of legs (limbs with a joint and no wheel);

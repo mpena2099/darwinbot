@@ -108,8 +108,8 @@ def test_names_round_trip_with_parse():
 
 def _at(i):
     """Behaviour vector sitting on the centroid of cell i."""
-    duty, height, legs, cot = evolve._centroids()[i]
-    return [duty, height * evolve.HEIGHT_MAX, 8, 0.0,
+    duty, height, servos, legs, cot = evolve._centroids()[i]
+    return [duty, height * evolve.HEIGHT_MAX, servos * mo.MAX_SERVOS, 0.0,
             evolve.COT_MIN * (evolve.COT_MAX / evolve.COT_MIN) ** cot, legs * mo.MAX_LEGS]
 
 
@@ -431,3 +431,22 @@ def test_rescore_keeps_cells_and_lineage(tmp_path):
     assert out.history[-1]["rescored"] and len(out.history) == len(archive.history) + 1
     for c, e in out.cells.items():
         assert np.allclose(e.ctrl, archive.cells[c].ctrl)
+
+
+def test_servo_count_is_an_archive_axis():
+    base = [0.6, 0.5, 6, 0.0, 1.0, 4]
+    assert evolve.cell_of(base) != evolve.cell_of([0.6, 0.5, 16, 0.0, 1.0, 4])
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, base))
+    archive.insert(_elite(0.5, [0.6, 0.5, 16, 0.0, 1.0, 4]))
+    assert len(archive.cells) == 2
+
+
+def test_archive_with_four_axes_is_refused():
+    from ribs.archives import CVTArchive
+    old = evolve.Archive(terrains="flat")
+    old._grid = CVTArchive(solution_dim=1, centroids=np.random.default_rng(0).uniform(size=(5, 4)),
+                           ranges=[(0.0, 1.0)] * 4)
+    state = old.__dict__.copy()
+    with pytest.raises(ValueError, match="archive axes"):
+        evolve.Archive.__new__(evolve.Archive).__setstate__(state)

@@ -3,9 +3,11 @@ evolve.py
 ---------
 Outer loop: quality diversity over body plans.
 
-The archive is a pyribs CVTArchive (about 500 cells) over four behaviour and
+The archive is a pyribs CVTArchive (about 800 cells) over five behaviour and
 cost descriptors, all measured on the nominal flat-terrain episode of the
-body's best controller: duty (fraction of time the terminal points touch the
+body's best controller (the servo count is a property of the body): number of
+servos (the cost of building the robot, so a 6-servo body and a 16-servo one
+that move alike never compete for a cell), duty (fraction of time the terminal points touch the
 ground), height (mean torso height over the body's reach), number of legs
 (limbs on the torso with a joint and no wheel, so a hexapod never competes with
 a two-legged crawler for a cell) and cost of transport (work per weight and
@@ -45,7 +47,7 @@ from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
 BODY_MODEL = 21                     # bump when the genome meaning changes
-N_CELLS    = 500                    # CVT cells
+N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
@@ -59,15 +61,16 @@ CRAWL_DUTY, WALK_DUTY, BELLY_DUTY = 0.8, 0.5, 0.15
 Cell = int                          # index of the CVT cell
 
 
-N_DESCRIPTORS = 4
+N_DESCRIPTORS = 5
 
 
 def normalise(behaviour) -> np.ndarray:
-    """Descriptor in [0, 1]^4 from a behaviour vector, so that every axis
+    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot) from a behaviour vector, so that every axis
     weighs the same. Cost of transport spans decades, so it is taken in log."""
-    duty, height, _, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
+    duty, height, servos, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
     cot = np.log(np.clip(cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([duty, height / HEIGHT_MAX, legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
+    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS,
+                    legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
 
 
 @lru_cache(maxsize=1)
@@ -267,6 +270,10 @@ class Archive:
         if (state.get("body_model") != BODY_MODEL or "cells" in state
                 or (grid is not None and not isinstance(grid, CVTArchive))):
             raise ValueError("archive from an older body model, retrain")
+        if grid is not None and grid.measure_dim != N_DESCRIPTORS:
+            raise ValueError(
+                f"archive with {grid.measure_dim} archive axes, this code uses "
+                f"{N_DESCRIPTORS} (the servo count is an axis again): retrain")
         self.__dict__.update(state)
         self.__dict__.setdefault("_grid", None)
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes

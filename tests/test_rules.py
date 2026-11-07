@@ -23,7 +23,8 @@ def _m(dx=0.3, dy=0.0, yaw=0.0, **kw):
 
 
 def _steer(left, right, straight=None):
-    return [straight or _m(), left, right]
+    # straight, left, right, then straight at half speed
+    return [straight or _m(), left, right, _m()]
 
 
 def _turn(yaw_towards, dx=0.2):
@@ -48,8 +49,12 @@ def test_names_default_off_and_archive():
 def test_no_rule_keeps_current_score():
     ms = _steer(_turn(1.0), _turn(-0.2), _m(tilt=0.4, slip=2.0, servo_ground=1.0))
     base = fitness.task_score(ms, "steer")
-    expected = 0.5 * fitness.score(ms[0], "forward") + 0.25 * (
-        fitness.up(0.2, ms[1]) + fitness.up(0.2 * 0.2, ms[2]))
+    full = max(fitness.up(ms[0].progress, ms[0]), 0.0)
+    slow = max(fitness.up(ms[3].progress, ms[3]), 0.0)
+    half = (fitness.SPEED_ASKED * full - abs(slow - fitness.SPEED_ASKED * full)
+            - fitness.ENERGY_W * ms[3].energy / (ms[3].mass * fitness.G))
+    expected = 0.4 * fitness.score(ms[0], "forward") + 0.2 * (
+        fitness.up(0.2, ms[1]) + fitness.up(0.2 * 0.2, ms[2])) + 0.2 * half
     assert base == pytest.approx(expected)
     assert fitness.score(_m(tilt=0.4, slip=2.0, servo_ground=1.0)) == pytest.approx(0.3)
 

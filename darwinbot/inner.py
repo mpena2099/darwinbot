@@ -21,7 +21,7 @@ grow the missing pair or wheel back.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 import cma
 import numpy as np
@@ -86,6 +86,20 @@ def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:
                             behaviour=behaviour_vector(morph, None))
 
 
+def cpu_evaluator(morph: Morphology, terrains: Sequence[Terrain], seconds: float,
+                  payload: float, variants: int, seed: int, task: str):
+    """Episodes of a body and the function that scores one full controller on
+    them; the physics variants come from the seed alone, so every process that
+    builds this with the same arguments scores a controller the same way."""
+    episodes = [Episode(morph, t, seconds, payload) for t in terrains]
+    var_sets = None
+    if variants > 0 and episodes[0].buildable:
+        vrng = np.random.default_rng([seed, 1])
+        var_sets = [[randomize.perturb(ep.model, vrng) for _ in range(variants)]
+                    for ep in episodes]
+    return episodes, lambda c: evaluate(episodes, c, var_sets, task)
+
+
 def optimise_controller(
     morph: Morphology,
     terrains: Sequence[Terrain],
@@ -99,6 +113,7 @@ def optimise_controller(
     variants: int = 0,
     task: str = "forward",
     payload: float = 0.0,
+    map_many: Optional[Callable] = None,
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
@@ -106,6 +121,9 @@ def optimise_controller(
     its seed, so all candidates face the same ones (common random numbers).
     task picks the score (fitness.TASKS); payload is extra torso mass in kg.
     The behaviour descriptor is the same for every task.
+    map_many (CPU only): scores a list of full controllers, for example on a
+    process pool whose workers built the same cpu_evaluator; the result does
+    not change, only the wall time.
     """
     if variants > 0 and device == "gpu":
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
@@ -148,21 +166,16 @@ def optimise_controller(
         # must not be lost just because CMA-ES never resamples it exactly.
         fit, scores, metrics = run_one(base, popsize or 1)
     else:
-        episodes = [Episode(morph, t, seconds, payload) for t in terrains]
+        episodes, run_cpu = cpu_evaluator(morph, terrains, seconds, payload,
+                                          variants, seed, task)
         if not episodes[0].buildable:
             return _unbuildable(morph, base, terrains, episodes[0].mass)
 
-        var_sets = None
-        if variants > 0:
-            vrng = np.random.default_rng([seed, 1])    # leaves rng untouched
-            var_sets = [[randomize.perturb(ep.model, vrng) for _ in range(variants)]
-                        for ep in episodes]
-
         def run_one(c, n: int = 1):
-            return evaluate(episodes, c, var_sets, task)
+            return run_cpu(c)
 
         def run_many(cs):
-            return [run_one(c) for c in cs]
+            return map_many(cs) if map_many else [run_one(c) for c in cs]
 
         fit, scores, metrics = run_one(base)
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)

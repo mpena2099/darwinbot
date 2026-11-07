@@ -31,12 +31,7 @@ on them.
 ## Next
 
 - **The next run from scratch**, which bumps `BODY_MODEL`, brings together
-  four changes, each checked first by a short run against the current rules:
-  - **Wheels up to 100 mm radius** (60 mm today). A servo turning a wheel
-    directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
-    reach 0.35 to 0.4 m/s. So today's wheeled robots use their wheels as
-    feet: in the best of them the wheels turn for only 16 to 66% of the
-    distance. A 100 mm printed wheel reaches about 0.47 m/s.
+  three changes, each checked first by a short run against the current rules:
   - **Joint ranges from each joint alone**: `builder.joint_ranges` cuts every
     joint by the worst case of random poses of all joints together. With the
     ranges off, the short ablation runs trotted at 0.16 instead of below zero
@@ -210,11 +205,6 @@ on them.
   making the firmware run any evolved program safely (bounded size and time,
   no division by zero or runaway values) and testing parity with the Python
   for arbitrary programs rather than one formula.
-- **Wider wheel sizes**: wheel radius is limited to 30 to 60 mm, a
-  conservative choice rather than a physical limit. Opening it to about 25 to
-  100 mm would leave only the real checks: the wheel fits the print bed, the
-  servo body clears the ground, and the torque is enough, which the simulation
-  already tests. Large wheels could roll over rocks that stop today's ones.
 - **Coupled oscillators**: each joint's oscillator also feels its neighbours'
   phases, the way the spinal circuits of each leg synchronise a gait, instead
   of coordinating only through the body and the phase genes. Control only, no

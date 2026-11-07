@@ -102,7 +102,7 @@ SPIKE_LENGTH = 0.03                       # m
 SPIKE_RADIUS = 0.005                      # m
 ELBOW_RANGE = (0.045, 0.08)               # m, side slot offset from the link axis; under 45 mm the
                                           # child's printed cradle reaches back over the link axis
-WHEEL_RANGE_M = (0.03, 0.06)              # m, wheel radius
+WHEEL_RANGE_M = (0.03, 0.10)              # m, wheel radius
 CASTER_RANGE = (0.015, 0.035)             # m, free caster wheel radius
 CASTER_FORK_SIZE = (0.02, 0.02, 0.02)     # m, printed fork box of a caster
 CASTER_WHEEL_T = 0.008                    # m, caster wheel thickness

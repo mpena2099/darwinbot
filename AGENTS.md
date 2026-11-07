@@ -21,6 +21,8 @@ python experiments/train.py --terrains terrain --batches 30 --workers 3
 python experiments/train.py --parent-selection uniform   # default: novelty
 python experiments/replay.py --list           # robot types in the archive, with duty, height, servos and cost of transport (cot)
 python experiments/replay.py --type 12servos-high-trot --speed 0.5
+python experiments/snapshot.py --archive <archive.pkl> --types a,b   # code-independent recording for later playback
+python experiments/replay.py --snapshot a.snap.pkl --type <type>   # play a snapshot without the archive's code
 python experiments/validate.py --type <type>  # PASS if it loses < 30% under varied physics
 python experiments/export.py --type <type>    # exports/<type>/; --organic adds hollowed links and elbows
 python experiments/plot_archive.py

@@ -46,7 +46,7 @@ from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 21                     # bump when the genome meaning changes
+BODY_MODEL = 22                     # bump when the genome meaning changes
 N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score

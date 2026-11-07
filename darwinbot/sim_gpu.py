@@ -137,14 +137,15 @@ class BatchEpisode:
         hit = ((a[None] == t) & ~self.robot[b][None]) | ((b[None] == t) & ~self.robot[a][None])
         return jnp.any(hit & active[None], axis=1)
 
-    def run_batch(self, ctrls: np.ndarray, command: float = 0.0) -> List[Metrics]:
+    def run_batch(self, ctrls: np.ndarray, command: float = 0.0,
+                  speed: float = 1.0) -> List[Metrics]:
         ctrls = np.asarray(ctrls, dtype=float).reshape(-1, CTRL_LENGTH)
         n = len(ctrls)
         assert n > 0
         pad = -n % BATCH_ALIGN
         if pad:
             ctrls = np.concatenate([ctrls, np.repeat(ctrls[-1:], pad, axis=0)])
-        ps = [Params(c, self.layout, command) for c in ctrls]
+        ps = [Params(c, self.layout, command, speed) for c in ctrls]
 
         def stack(name):
             return jnp.asarray(np.stack([getattr(p, name) for p in ps]))

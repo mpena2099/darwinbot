@@ -4,19 +4,20 @@
 // Case file (plain text, one record per line, blank lines and lines starting
 // with '#' are ignored):
 //
-//   frequency ramp_time control_hz n_servos [load_full_scale [command]]
+//   frequency ramp_time control_hz n_servos [load_full_scale [command [speed]]]
 //   <servo line>                                (n_servos times)
 //   loads (n_servos) expected targets (n_servos) expected wheel speeds (n_servos)
 //                                                    (one line per tick)
 //
-// A servo line is always thirteen numbers after the mode:
-//   position amp1 phase1 offset amp2 phase2 sigma steer_gain steer_shift sign zero min max speed
-//   wheel    0    0      0      0    0      0     0    0          0          sign 0    0   0   speed
+// A servo line is always fifteen numbers after the mode:
+//   position amp1 phase1 offset amp2 phase2 sigma steer_gain steer_shift speed_gain speed_shift sign zero min max speed
+//   wheel    0    0      0      0    0      0     0    0          0           0          sign 0    0   0   speed
 //
 // The values are the decoded genes before steering (amp1_base, amp2_base and
 // offset_base in controller.py). Loads are bus loads over the servo maximum
 // torque (signed, in [-1, 1]); the core divides them by load_full_scale
-// (default 0.7). The optional command is the steering command in [-1, 1].
+// (default 0.7). The optional command is the steering command in [-1, 1] and the optional
+// speed the speed command in [0, 1] (1 if absent).
 // Expected targets are radians for position servos and rad/s for wheels
 // (unsigned). Expected wheel speeds are the signed rad/s a wheel servo is
 // commanded, 0 for position servos.
@@ -68,6 +69,7 @@ int main(int argc, char** argv) {
     float frequency = 0.0f, ramp_time = 0.0f, control_hz = 0.0f;
     float load_full_scale = darwinbot::Controller::kLoadFullScale;
     float command = 0.0f;
+    float speed_cmd = 1.0f;
     int n_servos = 0;
     {
         std::istringstream header(lines.empty() ? "" : lines[0]);
@@ -78,6 +80,7 @@ int main(int argc, char** argv) {
         }
         header >> load_full_scale;      // optional, keeps the default if absent
         header >> command;              // optional, 0 (straight) if absent
+        header >> speed_cmd;            // optional, 1 (full speed) if absent
     }
 
     if (lines.size() < static_cast<size_t>(n_servos) + 1) {
@@ -92,7 +95,8 @@ int main(int argc, char** argv) {
         std::string mode;
         darwinbot::ServoParams& p = servos[static_cast<size_t>(i)];
         if (!(in >> mode >> p.amp1 >> p.phase1 >> p.offset >> p.amp2 >>
-              p.phase2 >> p.sigma >> p.steer_gain >> p.steer_shift >> p.sign >>
+              p.phase2 >> p.sigma >> p.steer_gain >> p.steer_shift >> p.speed_gain >>
+              p.speed_shift >> p.sign >>
               p.zero >> p.min >> p.max >> p.speed) ||
             (mode != "position" && mode != "wheel")) {
             std::fprintf(stderr, "bad servo line %d\n", i + 1);
@@ -105,6 +109,7 @@ int main(int argc, char** argv) {
     darwinbot::Controller controller(frequency, ramp_time, control_hz,
                                      std::move(servos), load_full_scale);
     controller.set_command(command);
+    controller.set_speed(speed_cmd);
     std::vector<float> loads(static_cast<size_t>(n_servos));
     std::vector<float> expected(static_cast<size_t>(n_servos));
     std::vector<float> expected_speed(static_cast<size_t>(n_servos));

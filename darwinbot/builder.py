@@ -28,7 +28,6 @@ geoms already touch at spawn is not buildable (see sim.is_buildable).
 """
 
 import re
-import zlib
 from typing import Tuple
 
 import numpy as np
@@ -557,7 +556,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
 # say which of them may meet: a servo in its cradle, a link in the U fork that
 # clasps it, an elbow on the tip it is bolted to. Everything else that
 # overlaps is a clash, in the spawn pose (sim.is_buildable) and in motion
-# (joint_ranges). MuJoCo never collides bodies that are parent and child, or
+# (joint_ranges, one joint at a time). MuJoCo never collides bodies that are parent and child, or
 # welded together (a passive link, a foot, a tab: nothing turns between
 # them), so those pairs are measured here with mj_geomDistance.
 # --------------------------------------------------------------------------
@@ -714,29 +713,18 @@ class AssemblyRules:
 
 SWEEP_STEP = np.radians(3.0)
 SWEEP_MARGIN = np.radians(8.0)   # kept clear of the first clashing angle
-POSE_SAMPLES = 96           # random poses a joint range must keep clean
-SHRINK = 0.8                # factor a range takes when a pose clashes
 _RANGES: dict = {}
-
-
-def _chain(model, body: int) -> list:
-    """Joints between a body and the world, nearest first."""
-    out = []
-    while body > 0:
-        n = model.body_jntnum[body]
-        out += [int(model.body_jntadr[body]) + k for k in range(n)]
-        body = int(model.body_parentid[body])
-    return out
 
 
 def joint_ranges(morph: Morphology) -> dict:
     """{node id: (lo, hi)} rad for every servo joint and spring, inside their
     defaults. A printed robot is not allowed to turn into itself: each joint is
-    first swept on its own from 0 towards both ends and stops one step before
-    the first pose where printed parts clash (the parent filter of MuJoCo is
-    off here, so a link that cuts into its parent counts), then random poses
-    of all the joints together are drawn and the joints that stand between a
-    clashing pair shrink until none of them clashes."""
+    swept on its own from 0 towards both ends and stops one step before the
+    first pose where printed parts clash (the parent filter of MuJoCo is off
+    here, so a link that cuts into its parent counts). Clashes that need
+    several joints at once are not looked for: the parts of different limbs
+    collide in the episode (self-collision is on), like a real robot hitting
+    itself."""
     import mujoco
     from darwinbot.morphology import encode
     key = encode(morph).tobytes()
@@ -787,31 +775,6 @@ def joint_ranges(morph: Morphology) -> dict:
                 reach = max(0.0, lo - SWEEP_MARGIN)
             ends.append(sign * reach)
         out[i] = (float(ends[1]), float(ends[0]))
-    # all the joints together
-    if len(nodes) > 1:
-        rng = np.random.default_rng(zlib.crc32(key))
-        u = rng.uniform(-1.0, 1.0, (POSE_SAMPLES, len(nodes)))
-        u[POSE_SAMPLES // 2:] = np.sign(u[POSE_SAMPLES // 2:])    # corners
-        for _ in range(24):
-            worst = None
-            for row in u:
-                pose({i: (v * out[i][1] if v >= 0 else -v * out[i][0])
-                      for i, v in zip(nodes, row)})
-                hit = rules.clashes(model, data, first=True)
-                if hit:
-                    worst = (row, hit[0])
-                    break
-            if worst is None:
-                break
-            row, (a, b, _) = worst
-            ba, bb = rules.bodies(model, a, b)
-            chain_a, chain_b = _chain(model, ba), _chain(model, bb)
-            common = set(chain_a) & set(chain_b)
-            involved = {j for j in chain_a + chain_b if j not in common}
-            for i in nodes:
-                if jid[i] in involved:
-                    lo, hi = out[i]
-                    out[i] = (lo * SHRINK, hi * SHRINK)
     out = {i: (round(lo, 4), round(hi, 4)) for i, (lo, hi) in out.items()}
     if len(_RANGES) > 4096:
         _RANGES.clear()

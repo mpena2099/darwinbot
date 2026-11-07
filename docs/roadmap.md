@@ -37,11 +37,6 @@ on them.
     reach 0.35 to 0.4 m/s. So today's wheeled robots use their wheels as
     feet: in the best of them the wheels turn for only 16 to 66% of the
     distance. A 100 mm printed wheel reaches about 0.47 m/s.
-  - **Joint ranges from each joint alone**: `builder.joint_ranges` cuts every
-    joint by the worst case of random poses of all joints together. With the
-    ranges off, the short ablation runs trotted at 0.16 instead of below zero
-    and jittered at 2 instead of 6 to 7 reversals per second. Clashes that
-    need several joints at once would be left to MuJoCo's collisions.
   - **Progress from the second half of the episode**, scored twice (see the
     fall item below).
   - **A showcase GIF of four environments**: the best robot trained on flat

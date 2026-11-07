@@ -1,6 +1,37 @@
 # Results
 
-The showcase archive uses the default `steer` task on the default `terrain`
+## Showcase
+
+The current showcase comes from the long run with 12 V servos, the
+assembly checks and plastic friction. Five CPU islands on Kaggle, one night
+island on a desktop and one GPU island trained on the `steer` task and were
+merged (129 cells, best fitness 0.56). The best robots of each region then
+got a longer controller search (`experiments/polish.py`), lost the parts they
+did not need (`experiments/prune.py`), passed `experiments/validate.py` (mean
+loss between -18% and 5% under varied physics, limit 30%) and
+`tools/check_assembly.py` (no clashes between printed parts or servo bodies):
+
+| Robot | Fitness | Before polishing |
+|---|---|---|
+| 13servos-mid-trot | 0.71 | 0.46 (a roller) |
+| 16servos-mid-roll | 0.70 | 0.56 |
+| 13servos-mid-belly | 0.66 | 0.33 |
+| 6servos-low-trot | 0.53 | 0.36 (7 servos before pruning) |
+| 6servos-low-belly | 0.54 | 0.40 (9 servos before pruning) |
+| 11servos-low-belly | 0.54 | 0.39 |
+
+Polishing changed the gait of two robots: the 13-servo body trotted on four
+legs once its controller had more search. Walking and crawling robots stay
+weak (0.10 to 0.12): their links scrape the floor and their joints stop
+early.
+
+![Evolved body plans](img/robots.png)
+
+![Printable parts of the best robot](img/parts.png)
+
+## Previous steer run
+
+This archive uses the default `steer` task on the default `terrain`
 set (flat, rough, steps and rubble), with two randomised physics variants per
 evaluation (`--preset steer --batches 30`). Three runs of 30 batches with
 different seeds trained as islands on Kaggle and were merged
@@ -56,10 +87,10 @@ from 0.55 at batch 3 to 0.60 at batch 30, and the best walker has stayed at
 ## Steering versus forward only
 
 A control run with the same terrains and variants, 30 batches on the `forward`
-task (`--preset forward`, one CPU run), was compared with the showcase archive
+task (`--preset forward`, one CPU run), was compared with the previous steer archive
 scored under the forward rule:
 
-| | `steer` (showcase) | `forward` (control) |
+| | `steer` (previous run) | `forward` (control) |
 |---|---|---|
 | Evaluations | 403,016 (three islands) | 127,938 |
 | Cells | 116 | 78 |
@@ -68,7 +99,7 @@ scored under the forward rule:
 | Best walker | 0.31 | 0.34 |
 | Best belly crawler | 0.19 | 0.26 |
 
-The showcase had three times the evaluations. Its rollers went further, its
+The steer run had three times the evaluations. Its rollers went further, its
 trotters matched the control and its walkers came close, while also turning
 on command. The control robots cannot turn, and a
 robot you build needs to. Use `--preset forward` when turning on command does
@@ -104,13 +135,9 @@ runs above only roughly:
 | Best rolling robot | 1.27 | 0.95 | 0.91 | 1.01 | 1.03 |
 | Best legged robot | 0.40 | 0.39 | 0.25 | 0.15 | 0.25 |
 
-![Evolved body plans](img/robots.png)
-
 ![MAP-Elites archive](img/archive_map.png)
 
 ![Training progress](img/progress.png)
-
-![Printable parts of the best robot](img/parts.png)
 
 ## What counts as success (honestly)
 

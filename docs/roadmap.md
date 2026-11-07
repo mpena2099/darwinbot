@@ -30,6 +30,26 @@ on them.
 
 ## Next
 
+- **The next run from scratch**, which bumps `BODY_MODEL`, brings together
+  four changes, each checked first by a short run against the current rules:
+  - **Wheels up to 100 mm radius** (60 mm today). A servo turning a wheel
+    directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
+    reach 0.35 to 0.4 m/s. So today's wheeled robots use their wheels as
+    feet: in the best of them the wheels turn for only 16 to 66% of the
+    distance. A 100 mm printed wheel reaches about 0.47 m/s.
+  - **Joint ranges from each joint alone**: `builder.joint_ranges` cuts every
+    joint by the worst case of random poses of all joints together. With the
+    ranges off, the short ablation runs trotted at 0.16 instead of below zero
+    and jittered at 2 instead of 6 to 7 reversals per second. Clashes that
+    need several joints at once would be left to MuJoCo's collisions.
+  - **Progress from the second half of the episode**, scored twice (see the
+    fall item below).
+  - **A showcase GIF of four environments**: the best robot trained on flat
+    ground only, on flat ground and steps, on flat ground and rubble, and on
+    the full set, each filmed on its own terrain
+    (`tools/make_readme_figures.py` needs a terrain per robot), so the GIF
+    shows how the ground shapes the body.
+
 - **Polish the controllers after training**: a controller search ten times
   longer (3600 evaluations from the elite's own controller) raised the same
   bodies by 45 to 75% (walker 0.17 to 0.30, trotter 0.29 to 0.43, roller 0.60
@@ -95,10 +115,13 @@ on them.
 - **Feet that slip**: a foot sliding while it bears weight leans on the
   simulator's friction model and tends to fail on a real floor. Legged robot
   training commonly subtracts the horizontal speed of feet in contact.
-- **A minimum distance before a fall**: falling forward is a classic exploit
-  (Karl Sims' creatures learned to topple instead of walk). None of today's
-  top robots fall, but scoring zero for a fall before a minimum distance
-  closes the door cheaply.
+- **Collapsing forward**: falling forward is a classic exploit (Karl Sims'
+  creatures learned to topple instead of walk). The fall penalty only catches
+  a torso tilted past 60 degrees, so a robot that drops from 23 to 12 cm
+  without tipping keeps the distance: 6servos-low-walk gains 16 of its 28 cm
+  in that one drop, then crawls at 1 cm/s. Scoring the progress of the second
+  half of the episode, twice, keeps a steady gait's score and removes most of
+  the drop.
 - **Servo bodies touching the ground**: some robots lean on a knee, the servo
   housing, instead of the foot. That is not wrong in itself (gorillas walk on
   their knuckles), so it should not be banned; but the housing was not made to

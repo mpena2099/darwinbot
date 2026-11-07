@@ -28,7 +28,8 @@ DEVICE = "cuda:0" if wp.get_cuda_device_count() > 0 else "cpu"
 
 def _ref(morph, ctrls, commands, seconds):
     cpu = Episode(morph, te.get_terrains("flat")[0], seconds=seconds)
-    return [cpu.run(c, None, float(m)) for c, m in zip(ctrls, commands)]
+    return [cpu.run(c, None, float(m[0]), float(m[1]))
+            for c, m in zip(ctrls, commands)]
 
 
 def _check(got, ref):
@@ -43,6 +44,9 @@ def _check(got, ref):
         assert abs(g.energy - r.energy) <= 0.02 + 0.05 * r.energy, (i, g.energy, r.energy)
         assert abs(g.duty - r.duty) <= 0.1, (i, g.duty, r.duty)
         assert abs(g.height - r.height) <= 0.03, (i, g.height, r.height)
+        assert abs(g.tilt - r.tilt) <= 0.05, (i, g.tilt, r.tilt)
+        assert abs(g.slip - r.slip) <= 0.02 + 0.1 * r.slip, (i, g.slip, r.slip)
+        assert abs(g.servo_ground - r.servo_ground) <= 0.1, (i, g.servo_ground, r.servo_ground)
         assert abs(g.duration - r.duration) <= 1e-4, (i, g.duration, r.duration)
 
 
@@ -51,7 +55,7 @@ def test_short_parity(wheels):
     morph = mo.template(2, wheels=wheels)
     rng = np.random.default_rng(0)
     ctrls = np.stack([co.random_controller(rng) for _ in range(4)])
-    commands = np.array([-1.0, 0.0, 1.0, 0.0])
+    commands = np.array([[-1.0, 1.0], [0.0, 1.0], [1.0, 1.0], [0.0, 0.5]])
     batch = WarpBatchEpisode(morph, te.get_terrains("flat")[0], seconds=1.0,
                              device=DEVICE)
     _check(batch.run_batch(ctrls, commands),
@@ -72,7 +76,7 @@ def test_variants_parity():
     variants[1] = dataclasses.replace(variants[1], latency=2)
     batch = WarpBatchEpisode(morph, terrain, seconds=1.0, device=DEVICE)
     _check(batch.run_batch(ctrls, 0.0, variants),
-           [cpu.run(c, v, 0.0) for c, v in zip(ctrls, variants)])
+           [cpu.run(c, v, 0.0, 1.0) for c, v in zip(ctrls, variants)])
 
 
 @pytest.mark.parametrize("name", ["rubble", "steps", "soft", "downhill",
@@ -84,7 +88,7 @@ def test_terrains(name):
     ctrls = np.stack([co.random_controller(rng) for _ in range(3)])
     cpu = Episode(morph, terrain, seconds=1.0)
     batch = WarpBatchEpisode(morph, terrain, seconds=1.0, device=DEVICE)
-    _check(batch.run_batch(ctrls), [cpu.run(c, None, 0.0) for c in ctrls])
+    _check(batch.run_batch(ctrls), [cpu.run(c, None, 0.0, 1.0) for c in ctrls])
 
 
 def test_statistical_parity():
@@ -94,7 +98,7 @@ def test_statistical_parity():
     batch = WarpBatchEpisode(morph, te.get_terrains("flat")[0], seconds=3.0,
                              device=DEVICE)
     got = batch.run_batch(ctrls, 0.0)
-    ref = _ref(morph, ctrls, np.zeros(12), 3.0)
+    ref = _ref(morph, ctrls, np.tile([0.0, 1.0], (12, 1)), 3.0)
     warp_dx = np.array([m.dx for m in got])
     cpu_dx = np.array([m.dx for m in ref])
     fell = sum(g.fell == r.fell for g, r in zip(got, ref))

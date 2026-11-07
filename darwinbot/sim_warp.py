@@ -174,14 +174,17 @@ def _sample(
     done: wp.array(dtype=int),
     zsum: wp.array(dtype=float),
     upsum: wp.array(dtype=float),
+    tiltsum: wp.array(dtype=float),
     ticks: wp.array(dtype=int),
 ):
-    """Torso height and uprightness of one behaviour tick."""
+    """Torso height, uprightness and tilt angle of one behaviour tick."""
     w = wp.tid()
     if done[w] != 0:
         return
+    c = xmat[w, torso][2, 2]
     zsum[w] = zsum[w] + xpos[w, torso][2]
-    upsum[w] = upsum[w] + xmat[w, torso][2, 2]
+    upsum[w] = upsum[w] + c
+    tiltsum[w] = tiltsum[w] + wp.acos(wp.min(1.0, wp.max(-1.0, c)))
     ticks[w] = ticks[w] + 1
 
 
@@ -191,11 +194,14 @@ def _contacts(
     worldid: wp.array(dtype=int),
     geom: wp.array(dtype=wp.vec2i),
     robot: wp.array(dtype=int),
+    servo: wp.array(dtype=int),
     tip_of: wp.array(dtype=int),
     hit: wp.array2d(dtype=float),
+    sghit: wp.array(dtype=float),
 ):
     """One thread per contact slot: mark the terminal point it touches, if the
-    other geom is not part of the robot (as Episode._touching)."""
+    other geom is not part of the robot (as Episode._touching), and whether a
+    servo housing touches the ground."""
     c = wp.tid()
     if c >= nacon[0]:
         return
@@ -206,19 +212,51 @@ def _contacts(
         hit[w, tip_of[a]] = 1.0
     if tip_of[b] >= 0 and robot[a] == 0:
         hit[w, tip_of[b]] = 1.0
+    if (servo[a] != 0 and robot[b] == 0) or (servo[b] != 0 and robot[a] == 0):
+        sghit[w] = 1.0
 
 
 @wp.kernel
 def _touch(
     done: wp.array(dtype=int),
+    xpos: wp.array2d(dtype=wp.vec3),
+    tip_geom: wp.array(dtype=int),
+    feet: wp.array(dtype=int),
+    tick_dt: float,
     hit: wp.array2d(dtype=float),
     touch: wp.array2d(dtype=float),
+    prev_pos: wp.array3d(dtype=float),
+    prev_touch: wp.array2d(dtype=float),
+    slipsum: wp.array(dtype=float),
 ):
-    """Add this tick's touches of the worlds still running, then clear them."""
+    """Add this tick's touches of the worlds still running, the sliding speed
+    of feet that touched on two consecutive ticks, then clear the contacts."""
     w, k = wp.tid()
+    on = hit[w, k]
     if done[w] == 0:
-        touch[w, k] = touch[w, k] + hit[w, k]
+        touch[w, k] = touch[w, k] + on
+        pos = xpos[w, tip_geom[k]]
+        if on > 0.5 and prev_touch[w, k] > 0.5 and feet[k] != 0:
+            ddx = pos[0] - prev_pos[w, k, 0]
+            ddy = pos[1] - prev_pos[w, k, 1]
+            slipsum[w] = slipsum[w] + wp.sqrt(ddx * ddx + ddy * ddy) / tick_dt
+        prev_pos[w, k, 0] = pos[0]
+        prev_pos[w, k, 1] = pos[1]
+        prev_touch[w, k] = on
     hit[w, k] = 0.0
+
+
+@wp.kernel
+def _servo_ground(
+    done: wp.array(dtype=int),
+    sghit: wp.array(dtype=float),
+    sgsum: wp.array(dtype=float),
+):
+    """Add this tick's servo housing contact of the worlds still running."""
+    w = wp.tid()
+    if done[w] == 0:
+        sgsum[w] = sgsum[w] + sghit[w]
+    sghit[w] = 0.0
 
 
 class WarpBatchEpisode:
@@ -260,6 +298,13 @@ class WarpBatchEpisode:
         tip_of = np.full(ep.model.ngeom, -1, dtype=np.int32)   # geom -> terminal index
         tip_of[np.asarray(ep._tgeoms)] = np.arange(self.n_tips, dtype=np.int32)
         self.tip_of = wp.array(tip_of, dtype=wp.int32, device=dev)
+        self.tip_geom = wp.array(np.asarray(ep._tgeoms, dtype=np.int32),
+                                 dtype=wp.int32, device=dev)
+        self.feet = wp.array((~np.asarray(ep._twheel)).astype(np.int32),
+                             dtype=wp.int32, device=dev)
+        servo = np.zeros(ep.model.ngeom, dtype=np.int32)
+        servo[np.asarray(ep._sgeoms)] = 1
+        self.servo = wp.array(servo, dtype=wp.int32, device=dev)
         self.robot = wp.array(np.asarray(ep._robot, dtype=np.int32),
                               dtype=wp.int32, device=dev)
 
@@ -298,6 +343,10 @@ class WarpBatchEpisode:
              "energy": zeros(n), "duration": zeros(n), "yaw": zeros(n),
              "step": zeros(n, wp.int32), "x_mid": zeros(n), "reached": zeros(n, wp.int32),
              "zsum": zeros(n), "upsum": zeros(n), "ticks": zeros(n, wp.int32),
+             "tiltsum": zeros(n), "slipsum": zeros(n), "sgsum": zeros(n),
+             "prev_pos": zeros((n, self.n_tips, 2)),
+             "prev_touch": zeros((n, self.n_tips)),
+             "sghit": zeros(n),
              "done": zeros(n, wp.int32), "fell": zeros(n, wp.int32),
              "unstable": zeros(n, wp.int32), "touch": zeros((n, self.n_tips)), "hit": zeros((n, self.n_tips)),
              "theta": zeros((n, nu)), "target": zeros((n, nu)),
@@ -346,12 +395,18 @@ class WarpBatchEpisode:
             return
         wp.launch(_sample, dim=d.nworld, device=dev, inputs=[
             d.xpos, d.xmat, self.torso, b["done"]],
-            outputs=[b["zsum"], b["upsum"], b["ticks"]])
+            outputs=[b["zsum"], b["upsum"], b["tiltsum"], b["ticks"]])
         wp.launch(_contacts, dim=d.contact.geom.shape[0], device=dev,
                   inputs=[d.nacon, d.contact.worldid, d.contact.geom,
-                          self.robot, self.tip_of], outputs=[b["hit"]])
+                          self.robot, self.servo, self.tip_of],
+                  outputs=[b["hit"], b["sghit"]])
         wp.launch(_touch, dim=(d.nworld, self.n_tips), device=dev,
-                  inputs=[b["done"]], outputs=[b["hit"], b["touch"]])
+                  inputs=[b["done"], d.geom_xpos, self.tip_geom, self.feet,
+                          self.hold * self.dt],
+                  outputs=[b["hit"], b["touch"], b["prev_pos"],
+                           b["prev_touch"], b["slipsum"]])
+        wp.launch(_servo_ground, dim=d.nworld, device=dev, inputs=[b["done"]],
+                  outputs=[b["sghit"], b["sgsum"]])
 
     def _reset(self, b: dict) -> None:
         """Every world back to the spawn pose (mj_resetData + mj_forward)."""
@@ -373,14 +428,16 @@ class WarpBatchEpisode:
                 getattr(v.model if v is not None else nominal, f)
                 for v in variants]))
 
-    def run_batch(self, ctrls: np.ndarray, commands=0.0,
+    def run_batch(self, ctrls: np.ndarray, commands=(0.0, 1.0),
                   variants=None) -> List[Metrics]:
-        """One episode per controller. `variants` is one randomize.Variant per
-        world (None is the nominal one): its physics replaces the model fields
-        and its latency delays the servo targets, as sim.Episode.run."""
+        """One episode per controller. `commands` is one (steering, speed) pair
+        per world, or one pair for all of them. `variants` is one
+        randomize.Variant per world (None is the nominal one): its physics
+        replaces the model fields and its latency delays the servo targets, as
+        sim.Episode.run."""
         return self.finish(self.start(ctrls, commands, variants))
 
-    def start(self, ctrls: np.ndarray, commands=0.0, variants=None):
+    def start(self, ctrls: np.ndarray, commands=(0.0, 1.0), variants=None):
         """Launch run_batch without waiting for it (on this episode's stream);
         finish() collects the metrics. Batches are padded to a multiple of PAD
         with copies of the first world."""
@@ -391,14 +448,19 @@ class WarpBatchEpisode:
             assert len(variants) == n
         if not self.buildable:
             return n, None
-        cmds = np.broadcast_to(np.asarray(commands, dtype=float), (n,))
+        cmds = np.asarray(commands, dtype=float)
+        if cmds.ndim == 0 or (cmds.ndim == 1 and cmds.shape != (2,)):
+            # steering alone (a scalar or one per world), at full speed
+            cmds = np.stack([np.broadcast_to(cmds, (n,)), np.ones(n)], axis=1)
+        cmds = np.broadcast_to(cmds, (n, 2))
         size = -(-n // PAD) * PAD
         pad = [0] * (size - n)
         ctrls = np.concatenate([ctrls, ctrls[pad]])
         cmds = np.concatenate([cmds, cmds[pad]])
         if variants is not None:
             variants = list(variants) + [variants[0]] * len(pad)
-        ps = [Params(c, self.layout, float(cmd)) for c, cmd in zip(ctrls, cmds)]
+        ps = [Params(c, self.layout, float(cmd[0]), float(cmd[1]))
+              for c, cmd in zip(ctrls, cmds)]
         b = self._batch(size, variants)
         with self._on_stream():
             self._reset(b)
@@ -432,6 +494,7 @@ class WarpBatchEpisode:
         """Copies back and builds Metrics as sim.Episode.run does."""
         out = {k: b[k].numpy() for k in ("dx", "dy", "energy", "duration", "yaw",
                                          "fell", "unstable", "zsum", "upsum", "ticks",
+                                         "tiltsum", "slipsum", "sgsum",
                                          "touch", "x_mid", "reached")}
         out["touch"] = out["touch"].astype(float)
         # A world that ran out of contact or constraint room was simulated wrong.
@@ -454,5 +517,11 @@ class WarpBatchEpisode:
                 mass=self.mass, duty=duty, height=height, wheel_share=share,
                 yaw=float(out["yaw"][i]) * keep,
                 upright=(float(out["upsum"][i]) / int(out["ticks"][i])
-                         if out["ticks"][i] else 1.0)))
+                         if out["ticks"][i] else 1.0),
+                tilt=(float(out["tiltsum"][i]) / int(out["ticks"][i])
+                      if out["ticks"][i] else 0.0),
+                slip=(float(out["slipsum"][i]) / int(out["ticks"][i])
+                      if out["ticks"][i] else 0.0),
+                servo_ground=(float(out["sgsum"][i]) / int(out["ticks"][i])
+                              if out["ticks"][i] else 0.0)))
         return res

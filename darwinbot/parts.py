@@ -676,8 +676,8 @@ def spike() -> Part:
 
 def wheel(radius_mm: float) -> Part:
     """Disc on a servo horn; V groove on the rim holds an O-ring tyre."""
-    if not 30 <= radius_mm <= 60:
-        raise ValueError("wheel radius must be 30..60 mm")
+    if not 30 <= radius_mm <= 100:
+        raise ValueError("wheel radius must be 30..100 mm")
     disc = Cylinder(radius_mm, WHEEL_T)
     # groove: 3 mm deep, 4 mm wide, rectangular, at mid-thickness
     ring = Cylinder(radius_mm + 1, 4) - Cylinder(radius_mm - 3, 4 + 1)

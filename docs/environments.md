@@ -37,10 +37,10 @@ staircase); more make a generalist. The choice is saved in the archive, so
 (a house step is 17 to 18 cm, taller than most of these robots) and 50 cm deep.
 In an 8 s episode a good robot covers 1.5 to 2.3 m, so it meets the first two to
 four steps, at x = 0.6, 1.1, 1.6 and 2.1 m. A wheel climbs an edge up to about
-its own radius, and wheels here are 30 to 60 mm, so a low robot on wheels rolls
+its own radius, and wheels here are 30 to 100 mm, so a low robot on wheels rolls
 up a 3 cm step; a low body without wheels can push its torso over the edge like
 a sled. Robots trained only on flat ground still mostly stall there. `ledges`
-doubles the height to 6 cm, too tall to roll up.
+doubles the height to 6 cm, too tall for small wheels to roll up.
 
 Ready sets:
 

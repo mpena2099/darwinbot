@@ -48,20 +48,25 @@ def load(path, cell):
     return archive, archive.cells[key]
 
 
-def record(episode, ctrl, path, seconds, fps=30, command=0.0):
+def _video(path, fps):
     try:
         import imageio
     except ImportError:
         print("imageio is not installed: pip install 'darwinbot[video]'")
         print("or: pip install imageio[ffmpeg]")
-        return
+        return None
+    return imageio.get_writer(path, fps=fps)
 
-    renderer = mujoco.Renderer(episode.model, height=480, width=640)
+
+def record(episode, ctrl, path, seconds, fps=30, command=0.0):
     cpg = episode.reset(ctrl, command=command)
     dt = episode.model.opt.timestep
     every = max(1, int(round(1.0 / (fps * dt))))
     fps = 1.0 / (every * dt)       # the rate the frame step really gives
-    writer = imageio.get_writer(path, fps=fps)
+    writer = _video(path, fps)
+    if writer is None:
+        return
+    renderer = mujoco.Renderer(episode.model, height=480, width=640)
     frames = 0
     try:
         for i in range(int(seconds / dt)):
@@ -74,6 +79,73 @@ def record(episode, ctrl, path, seconds, fps=30, command=0.0):
         writer.close()
         renderer.close()
     print(f"wrote {path} ({frames} frames, {frames / fps:.1f} s)")
+
+
+def open_snapshot(path):
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"{path} not found: create it with experiments/snapshot.py")
+
+
+def snapshot_robot(snap, name):
+    """Model, qpos frames and fps of a named snapshot robot (default: best)."""
+    if not snap["robots"]:
+        raise SystemExit("the snapshot has no robots")
+    if name is None:
+        name = max(snap["robots"], key=lambda n: snap["robots"][n]["fitness"])
+    elif name not in snap["robots"]:
+        raise SystemExit(f"no {name} robot in the snapshot; see the names with --list")
+    robot = snap["robots"][name]
+    model = mujoco.MjModel.from_xml_string(robot["xml"])
+    return name, model, robot["qpos"], robot["fps"]
+
+
+def record_snapshot(model, qpos, path, fps):
+    writer = _video(path, fps)
+    if writer is None:
+        return
+    data = mujoco.MjData(model)
+    renderer = mujoco.Renderer(model, height=480, width=640)
+    try:
+        for q in qpos:
+            data.qpos[:] = q
+            mujoco.mj_forward(model, data)
+            renderer.update_scene(data, camera="track")
+            writer.append_data(renderer.render())
+    finally:
+        writer.close()
+        renderer.close()
+    print(f"wrote {path} ({len(qpos)} frames, {len(qpos) / fps:.1f} s)")
+
+
+def watch_snapshot(model, qpos, fps, speed=1.0):
+    """Play the recorded frames in a loop, at `speed` times real time."""
+    from mujoco import viewer
+
+    data = mujoco.MjData(model)
+    wall_dt = 1.0 / fps / speed
+    stop = []
+    previous = signal.signal(signal.SIGINT, lambda *_: stop.append(True))
+    try:
+        with viewer.launch_passive(model, data) as handle:
+            while handle.is_running() and not stop:
+                for q in qpos:
+                    if not handle.is_running() or stop:
+                        break
+                    t0 = time.perf_counter()
+                    data.qpos[:] = q
+                    mujoco.mj_forward(model, data)
+                    handle.sync()
+                    time.sleep(max(0.0, wall_dt - (time.perf_counter() - t0)))
+            handle.close()
+        # same wait as watch(): the render thread is still releasing GLFW
+        time.sleep(0.5)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    if stop:
+        print("stopped")
 
 
 STEER_KEYS = {263: -1.0, 262: 1.0, 265: 0.0, 264: 0.0}   # GLFW left, right, up, down
@@ -120,6 +192,8 @@ def watch(episode, ctrl, speed=1.0, command=0.0):
 def main():
     p = argparse.ArgumentParser(description="darwinbot: replay an evolved robot")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--snapshot", default=None, metavar="FILE",
+                   help="play a snapshot from experiments/snapshot.py without the archive")
     p.add_argument("--type", dest="cell", default=None,
                    help="robot type from --list, e.g. 8servos-low-crawl "
                         "(default: best robot overall)")
@@ -136,6 +210,22 @@ def main():
     p.add_argument("--list", action="store_true",
                    help="print every archive cell with its fitness, duty, height and servos, then exit")
     a = p.parse_args()
+
+    if a.snapshot:
+        snap = open_snapshot(a.snapshot)
+        robots = snap["robots"]
+        if a.list:
+            print("type                       fitness  frames")
+            for name, r in sorted(robots.items(), key=lambda kv: -kv[1]["fitness"]):
+                print(f"{name:26s} {r['fitness']:7.2f}  {len(r['qpos']):6d}")
+            return
+        name, model, qpos, fps = snapshot_robot(snap, a.cell)
+        print(f"{name}: {len(qpos)} frames at {fps} fps, body model {snap['body_model']}")
+        if a.record:
+            record_snapshot(model, qpos, a.record, fps)
+        else:
+            watch_snapshot(model, qpos, fps, a.speed)
+        return
 
     if a.list:
         archive = open_archive(a.archive)

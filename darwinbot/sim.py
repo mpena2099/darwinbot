@@ -12,6 +12,7 @@ at spawn (overlapping legs) is not buildable and is never simulated.
 """
 
 import math
+from typing import Optional
 from collections import deque
 from dataclasses import dataclass
 
@@ -52,6 +53,15 @@ class Metrics:
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
     yaw:      float = 0.0   # net change of the torso heading (rad, unwrapped)
     upright:  float = 1.0   # mean cosine of the torso tilt over the control ticks
+    progress: Optional[float] = None   # forward progress the score counts (m), see below
+
+    def __post_init__(self):
+        # progress = 2 * (x_end - x_mid): only the second half of the episode
+        # counts, so a one-time drop of the torso is mostly ignored and a steady
+        # gait keeps its dx. An episode that ended before the half-way step
+        # (a fall) counts the distance covered so far, which is dx.
+        if self.progress is None:
+            self.progress = self.dx
 
 
 def cost_of_transport(m: "Metrics", task: str = "forward") -> float:
@@ -256,6 +266,7 @@ class Episode:
         step = mujoco.mj_step
         theta, omega, sigma = controller.theta, controller.omega, controller.params.sigma
         energy = 0.0
+        mid, x_mid = self.n_steps // 2, None
         yaw, prev = 0.0, math.atan2(xmat[3], xmat[0])
         fell = unstable = False
         t_prev = 0.0
@@ -285,6 +296,8 @@ class Episode:
             if xmat[8] < UPRIGHT_MIN:
                 fell = True
                 break
+            if n == mid:
+                x_mid = float(xpos[0])
             if n % hold == 0:          # behaviour sampled once per control tick
                 touch += self._touching()
                 zsum += float(xpos[2])
@@ -296,6 +309,8 @@ class Episode:
         return Metrics(
             dx=float(x - x0) if not unstable else 0.0,
             dy=float(y - y0) if not unstable else 0.0,
+            progress=(0.0 if unstable else
+                      float(x - x0) if x_mid is None else 2.0 * float(x - x_mid)),
             energy=energy, fell=fell, unstable=unstable,
             duration=float(d.time), mass=self.mass,
             duty=duty, height=height, wheel_share=share,

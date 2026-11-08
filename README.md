@@ -41,7 +41,7 @@ Trained on four environments: flat floor, bumps, low steps and rubble
 [Full results →](https://mpena2099.github.io/darwinbot/results/) (numbers, the
 archive map and training progress)
 
-## In three commands
+## Quick start
 
 ```bash
 python -m venv venv && source venv/bin/activate && pip install -e .   # install

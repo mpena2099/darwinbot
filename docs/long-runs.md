@@ -127,3 +127,12 @@ python tools/check_assembly.py --archive pruned.pkl --type 13servos-mid-trot
 
 Pruning reruns the score with fresh terrains and variants, so its number is
 the one to report.
+
+A snapshot plays a robot recorded on flat ground, walking straight, with any
+later version of the code, while an archive needs the code of its BODY_MODEL.
+Record one before the genome or the physics changes:
+
+```bash
+python experiments/snapshot.py --archive pruned.pkl --types 13servos-mid-trot --out showcase.snap.pkl
+python experiments/replay.py --snapshot showcase.snap.pkl --type 13servos-mid-trot
+```

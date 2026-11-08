@@ -35,7 +35,8 @@ def main():
     archive, elite = load(a.archive, a.cell)
     name = archive.names()[cell_of(elite.behaviour)]
     out = a.out or os.path.join("exports", name)
-    info = export_robot(elite, out, name, payload=archive.payload, organic=a.organic)
+    info = export_robot(elite, out, name, payload=archive.payload,
+                        organic=a.organic, seconds=archive.seconds)
     print(f"wrote {out}")
     print(f"{name}: {info['servos']} servos, {info['printed_parts']} printed parts")
     for part, ratio in info.get("organic", {}).items():

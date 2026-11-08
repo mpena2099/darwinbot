@@ -34,7 +34,7 @@ from typing import List, NamedTuple, Tuple
 import numpy as np
 
 from darwinbot import morphology as morpho
-from darwinbot import ablate, body_options, rules, randomize
+from darwinbot import ablate, body_options, power, rules, randomize
 from darwinbot.fitness import commands
 from darwinbot.sim import Episode
 from darwinbot.terrain import SEEDED, TERRAINS, get_terrains
@@ -178,7 +178,8 @@ def main():
     a = p.parse_args()
 
     archive, elite = load(a.archive, a.cell)
-    print(morpho.summary(morpho.decode(elite.morph)))
+    morph = morpho.decode(elite.morph)
+    print(morpho.summary(morph))
     units = {"turn": "|yaw| in rad", "steer": "straight: dx in m, left/right: "
              "yaw the way asked in rad"}.get(archive.task, "dx in m")
 
@@ -197,6 +198,13 @@ def main():
             print(f"unseen: {'PASS' if unseen_ok else 'FAIL'}")
         else:
             print("\nunseen: the archive trained on every terrain")
+
+    flat = get_terrains("flat")[0]
+    est = power.estimate(Episode(morph, flat, archive.seconds, archive.payload),
+                         elite.ctrl, archive.seconds)
+    print("\npower (nominal flat run, straight command):")
+    for line in power.report_lines(est):
+        print(f"  {line}")
 
     print(f"\ntrained terrains (mean loss < {MAX_LOSS:.0%}, p5 loss < {P5_LOSS:.0%}, "
           f"fall rate <= {MAX_FALL:.0%}): {'PASS' if ok else 'FAIL'}")

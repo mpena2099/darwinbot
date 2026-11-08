@@ -17,6 +17,21 @@ angle, every servo one cradle, every wheel, caster, tail, skid, spike and foot
 get one STL per distinct size. Springs and spikes are printed in TPU, the rest in
 PLA. The bill of materials counts everything from the tree.
 
+## Power estimate
+
+`bom.md` and `assembly.md` end with a power section, also returned in the
+export's info dict. `darwinbot/power.py` runs the evolved gait straight on flat
+ground for the archive's episode length and reads the actuator force of every
+servo, wheels included. The current of a 12 V STS3215 is linear between its
+200 mA idle and 2.7 A stall current, from zero to the stall torque the
+simulation uses; 0.15 A goes to the ESP32 and no current to the passive
+modules. The section gives the mean, peak and 1 s peak draw, the runtime on a
+1200 mAh 3S LiPo (the middle of the documented 1000 to 1500 mAh range), the C
+rating the pack would need and a warning when the 1 s peak is above what the
+pack can deliver. `validate.py` prints the same lines for the nominal flat run.
+This is a report: it never enters the score, and it comes from simulated
+torque, not from a meter on a real robot.
+
 ## Cradle, U link and wedge
 
 A servo is held by a printed cradle that belongs to its parent, around the body

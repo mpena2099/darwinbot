@@ -21,10 +21,11 @@ from typing import NamedTuple
 
 import numpy as np
 
-from darwinbot import builder
+from darwinbot import builder, power
 from darwinbot import morphology as morpho
 from darwinbot.control_file import make_control_file, write_control_file
 from darwinbot.controller import Controller
+from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
 CORE_SLOTS = ("front", "back", "left-front", "left-middle", "left-rear",
@@ -848,7 +849,15 @@ def _write_stls(morph, out_dir):
         out("spike.stl", parts.spike())
 
 
-def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False) -> dict:
+def _write_power(lines, out_dir):
+    """Append the power section to the bill of materials and the guide."""
+    for f in ("bom.md", "assembly.md"):
+        with open(os.path.join(out_dir, f), "a") as h:
+            h.write("\n## Power\n\n" + "\n".join(lines) + "\n")
+
+
+def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False,
+                 seconds: float = 10.0) -> dict:
     """Write the build folder for elite into out_dir; returns a small summary."""
     morph = morpho.decode(elite.morph)
     os.makedirs(out_dir, exist_ok=True)
@@ -865,9 +874,13 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False) -> 
     rows = bom_rows(morph)
     _write_bom(rows, out_dir, name)
     _write_assembly(morph, ctl, layout, out_dir)
+    est = power.estimate(Episode(morph, flat, seconds, payload), elite.ctrl,
+                         seconds)
+    _write_power(power.report_lines(est), out_dir)
     if stl:
         _write_stls(morph, out_dir)
-    info = {"servos": morph.n_servos, "printed_parts": printed_parts(rows)}
+    info = {"servos": morph.n_servos, "printed_parts": printed_parts(rows),
+            "power": est}
     if stl and organic:
         info["organic"] = _write_organic(morph, out_dir)
     return info

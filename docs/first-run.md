@@ -1,5 +1,8 @@
 # First run
 
+Not sure which flags to combine? The [command builder](command-builder.md) builds a
+`train.py` command from a form, ready to copy.
+
 Train a small archive, list the robot types it found and watch one move.
 
 ```bash

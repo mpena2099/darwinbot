@@ -16,7 +16,7 @@ import time
 
 import mujoco
 
-from darwinbot import ablate, rules
+from darwinbot import ablate, body_options, rules
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
@@ -150,6 +150,7 @@ def main():
 
     if a.list:
         archive = open_archive(a.archive)
+        body_options.set_active(archive.body)
         names = archive.names()
         if archive.task != "forward" or archive.payload:
             print(f"task: {archive.task}, payload {archive.payload:g} kg")
@@ -163,6 +164,7 @@ def main():
     archive, elite = load(a.archive, a.cell)
     ablate.set_active(archive.ablate)      # the robot was trained with these rules off
     rules.set_active(archive.rules)
+    body_options.set_active(archive.body)  # and with these body limits
     morph = morpho.decode(elite.morph)
     print(morpho.summary(morph))
     print(f"fitness {elite.fitness:.3f}  (task {archive.task}, payload {archive.payload:g} kg)")

@@ -38,7 +38,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, rules
+from darwinbot import ablate, body_options, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import TASKS
@@ -157,6 +157,7 @@ class Archive:
     payload:  float = 0.0      # extra torso mass in kg
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
+    body:     str = ""         # body_options limits, as given to train.py --body
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -284,6 +285,7 @@ class Archive:
         self.__dict__.setdefault("payload", 0.0)      # nor payload
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
+        self.__dict__.setdefault("body", "")          # nor body options
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
@@ -298,7 +300,8 @@ class Archive:
                 "qd_score": float(sum(f + 5.0 for f in fits))}
 
 
-MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate", "rules")
+MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
+              "rules", "body")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -364,12 +367,13 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=(), score_rules=()):
+def _init_worker(ablations=(), score_rules=(), body=""):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations and optional score rules."""
+    carry the run's ablations, optional score rules and body options."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
     rules.set_active(score_rules)
+    body_options.set_active(body)
 
 
 def _cuda_devices() -> int:
@@ -377,9 +381,9 @@ def _cuda_devices() -> int:
     return max(1, wp.get_cuda_device_count())
 
 
-def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=()):
+def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body=""):
     """Pool initializer for --device warp: bind this worker to the next GPU."""
-    _init_worker(ablations, score_rules)
+    _init_worker(ablations, score_rules, body)
     with counter.get_lock():
         i = counter.value
         counter.value += 1
@@ -435,6 +439,7 @@ def run(
     payload: float = 0.0,
     ablations: tuple = (),
     score_rules: tuple = (),
+    body: str = "",
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -463,9 +468,11 @@ def run(
         archive = Archive(terrains=terrains, seconds=episode_seconds,
                           variants=variants, task=task, payload=payload,
                           ablate=ablate.normalise(ablations),
-                          rules=rules.normalise(score_rules))
+                          rules=rules.normalise(score_rules),
+                          body=body_options.parse(body).to_string())
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
     rules.set_active(archive.rules)             # and its score rules
+    body_options.set_active(archive.body)       # and its body limits
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
@@ -503,16 +510,19 @@ def run(
           f"batches={n_batches} batch_size={batch_size} "
           f"task={archive.task} payload={archive.payload} kg"
           + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
-          + (f" rules={list(archive.rules)}" if archive.rules else ""))
+          + (f" rules={list(archive.rules)}" if archive.rules else "")
+          + (f" body={archive.body}" if archive.body else ""))
     if device == "gpu" or (device == "warp" and workers == 1):
         pool = None
     elif device == "warp":
         # CUDA does not survive fork: spawned workers, each bound to one GPU.
         ctx = multiprocessing.get_context("spawn")
         pool = ctx.Pool(workers, _warp_worker,
-                        (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules))
+                        (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules,
+                         archive.body))
     else:
-        pool = multiprocessing.Pool(workers, _init_worker, (archive.ablate, archive.rules))
+        pool = multiprocessing.Pool(workers, _init_worker,
+                                    (archive.ablate, archive.rules, archive.body))
     path = os.path.join(out_dir, "archive.pkl")
     code = code_version()
     print(f"[darwinbot] code {code}")

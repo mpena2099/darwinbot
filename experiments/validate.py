@@ -26,7 +26,7 @@ import sys
 import numpy as np
 
 from darwinbot import morphology as morpho
-from darwinbot import body_options, randomize
+from darwinbot import ablate, body_options, rules, randomize
 from darwinbot.fitness import commands
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
@@ -52,8 +52,10 @@ def progress(m, task, command=(0.0, 1.0)):
 def validate_terrain(task):
     """Pool worker: nominal and randomised runs of one terrain and command.
     Every command of a terrain meets the same variants (same seed)."""
-    genes, ctrl, terrain, n, seconds, seed, payload, task, command, body = task
-    body_options.set_active(body)
+    genes, ctrl, terrain, n, seconds, seed, payload, task, command, settings = task
+    ablate.set_active(settings[0])
+    rules.set_active(settings[1])
+    body_options.set_active(settings[2])
     ep = Episode(morpho.decode(genes), terrain, seconds, payload)
     nominal = ep.run(ctrl, None, *command)
     rng = np.random.default_rng(seed)
@@ -77,11 +79,11 @@ def main():
     a = p.parse_args()
 
     archive, elite = load(a.archive, a.cell)
-    body_options.set_active(archive.body)
     print(morpho.summary(morpho.decode(elite.morph)))
     terrains = get_terrains(archive.terrains)
     tasks = [(elite.morph, elite.ctrl, t, a.n, archive.seconds, a.seed + i,
-              archive.payload, archive.task, c, archive.body)
+              archive.payload, archive.task, c,
+              (archive.ablate, archive.rules, archive.body))
              for i, t in enumerate(terrains) for c in commands(archive.task)]
     if a.workers > 1:
         with multiprocessing.Pool(a.workers) as pool:

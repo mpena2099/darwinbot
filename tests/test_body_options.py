@@ -94,3 +94,24 @@ def test_no_options_is_the_old_random_bodies():
     body_options.set_active(None)
     without = bodies()
     assert all(np.array_equal(a, b) for a, b in zip(with_opts, without))
+
+
+def test_open_archive_turns_on_its_settings(tmp_path):
+    import pickle
+    import sys
+    sys.path.insert(0, "experiments")
+    from replay import open_archive
+    from darwinbot import ablate, rules
+    a = evolve.Archive(terrains="flat", ablate=(ablate.NAMES[0],),
+                       rules=(rules.NAMES[0],), body="no-wheels")
+    path = tmp_path / "a.pkl"
+    path.write_bytes(pickle.dumps(a))
+    try:
+        open_archive(str(path))
+        assert ablate.active(ablate.NAMES[0])
+        assert rules.active(rules.NAMES[0])
+        assert not body_options.active().allow_wheels
+    finally:
+        ablate.set_active(())
+        rules.set_active(())
+        body_options.set_active(None)

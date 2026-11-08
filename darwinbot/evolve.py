@@ -189,6 +189,13 @@ class Archive:
                     data["behaviour"][i])
                 for i in range(len(data["solution"]))}
 
+    def activate(self) -> None:
+        """Turn on the ablations, score rules and body limits this archive was
+        trained with; scripts that score, decode or build its robots call this."""
+        ablate.set_active(self.ablate)
+        rules.set_active(self.rules)
+        body_options.set_active(self.body)
+
     def names(self) -> Dict[Cell, str]:
         """Unique readable name of every filled cell. Cells that share a type
         name get their cell index appended."""

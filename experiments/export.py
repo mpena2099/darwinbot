@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from replay import load  # noqa: E402
 
-from darwinbot import body_options  # noqa: E402
 from darwinbot.evolve import cell_of  # noqa: E402
 from darwinbot.export import export_robot  # noqa: E402
 
@@ -34,7 +33,6 @@ def main():
     a = p.parse_args()
 
     archive, elite = load(a.archive, a.cell)
-    body_options.set_active(archive.body)
     name = archive.names()[cell_of(elite.behaviour)]
     out = a.out or os.path.join("exports", name)
     info = export_robot(elite, out, name, payload=archive.payload, organic=a.organic)

@@ -16,7 +16,6 @@ import time
 
 import mujoco
 
-from darwinbot import ablate, body_options, rules
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
@@ -24,15 +23,18 @@ from darwinbot.terrain import get_terrains
 
 
 def open_archive(path):
-    """Unpickle an archive, turning the usual failures into a plain message."""
+    """Unpickle an archive, turning the usual failures into a plain message, and
+    turn on the ablations, score rules and body limits it was trained with."""
     try:
         with open(path, "rb") as f:
-            return pickle.load(f)
+            archive = pickle.load(f)
     except FileNotFoundError:
         raise SystemExit(f"{path} not found: train first with experiments/train.py")
     except ValueError as e:
         raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
                          f"(or pass --archive with a newer one).")
+    archive.activate()
+    return archive
 
 
 def load(path, cell):
@@ -150,7 +152,6 @@ def main():
 
     if a.list:
         archive = open_archive(a.archive)
-        body_options.set_active(archive.body)
         names = archive.names()
         if archive.task != "forward" or archive.payload:
             print(f"task: {archive.task}, payload {archive.payload:g} kg")
@@ -162,9 +163,6 @@ def main():
         return
 
     archive, elite = load(a.archive, a.cell)
-    ablate.set_active(archive.ablate)      # the robot was trained with these rules off
-    rules.set_active(archive.rules)
-    body_options.set_active(archive.body)  # and with these body limits
     morph = morpho.decode(elite.morph)
     print(morpho.summary(morph))
     print(f"fitness {elite.fitness:.3f}  (task {archive.task}, payload {archive.payload:g} kg)")

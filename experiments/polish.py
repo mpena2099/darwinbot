@@ -26,7 +26,6 @@ from multiprocessing import Pool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from darwinbot import morphology as morpho   # noqa: E402
-from darwinbot import body_options   # noqa: E402
 from darwinbot.evolve import Archive, cell_of, scaled_budget, type_name   # noqa: E402
 from darwinbot.inner import cpu_evaluator, optimise_controller   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
@@ -50,7 +49,6 @@ def _score_one(ctrl):
 def polish_elite(job, workers=1):
     """Polish one robot; workers > 1 scores each CMA-ES generation on a pool."""
     cell, elite, a, budget, sigma, seed = job
-    body_options.set_active(a.body)
     m = morpho.decode(elite.morph)
     terrains = get_terrains(a.terrains, seed=seed)
     start = time.time()
@@ -117,7 +115,6 @@ def main():
         if bad:
             sys.exit(f"unknown gait(s) {', '.join(bad)}; pick from {', '.join(GAITS)}")
     a: Archive = open_archive(args.archive)
-    body_options.set_active(a.body)
     cells = picks(a, args.types.split(",") if args.types else None, gaits)
     jobs = [(c, a.cells[c], a, args.budget, args.sigma, args.seed) for c in cells]
     if args.workers > 1 and len(jobs) < args.workers:

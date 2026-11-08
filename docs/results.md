@@ -39,6 +39,21 @@ python experiments/replay.py --archive showcase.pkl --type 13servos-mid-trot --s
 python experiments/export.py --archive showcase.pkl --type 13servos-mid-trot
 ```
 
+To train a showcase like it from scratch, run the `steer` preset (the `steer`
+task on the full terrain set; plain `train.py` trains on flat ground only) as
+islands, then take the chosen robots through
+[the showcase steps](long-runs.md#from-an-archive-to-a-showcase):
+
+```bash
+python tools/kaggle/islands.py --user <you> --code-dataset <you>/darwinbot-code \
+    --islands 5 --rounds 4 --batches-per-round 8 --train-args "--preset steer"
+# or on one machine (much slower):
+python experiments/train.py --preset steer --batches 200 --workers 8
+```
+
+The showcase archive holds about 400,000 evaluations; an island run reaches
+a similar spread in a few days, and a different seed gives different robots.
+
 ## Previous steer run
 
 This archive uses the default `steer` task on the default `terrain`

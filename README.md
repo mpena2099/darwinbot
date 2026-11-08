@@ -41,14 +41,19 @@ Trained on four environments: flat floor, bumps, low steps and rubble
 [Full results →](https://mpena2099.github.io/darwinbot/results/) (numbers, the
 archive map and training progress)
 
-## In three commands
+## Quick start
 
 ```bash
 python -m venv venv && source venv/bin/activate && pip install -e .   # install
-python experiments/train.py                                           # evolve
+python experiments/train.py                                           # evolve (flat ground)
 python experiments/replay.py --list                                   # see the robot types, then:
 python experiments/replay.py --type 8servos-mid-trot                  # watch one
+python experiments/export.py --type 8servos-mid-trot                  # parts, BOM, control file
 ```
+
+The showcase robots trained on the `steer` preset (`--preset steer`: four
+environments, steering commands), as islands over several days
+([how to train a showcase](https://mpena2099.github.io/darwinbot/results/#showcase)).
 
 To watch the showcase robots without training, download their archive from
 the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
@@ -60,8 +65,8 @@ python experiments/replay.py --archive showcase.pkl --type 13servos-mid-trot --s
 
 ## Documentation
 
-Full documentation: <https://mpena2099.github.io/darwinbot/> (online once the
-repository is public). To preview it locally:
+Full documentation: <https://mpena2099.github.io/darwinbot/>. To preview it
+locally:
 
 ```bash
 pip install -e ".[docs]"
@@ -71,6 +76,7 @@ mkdocs serve
 - [Gallery](docs/site/index.html): interactive map of the archive and a 3D replay of each robot
 - Beginner guide to evolutionary algorithms: [English](docs/evolution-guide.md) · [Português](docs/guia-evolucao.md)
 - [Control file format](docs/formato-controle.md) and [hardware data](docs/hardware-dados.md) (Portuguese)
+- [Related work](https://mpena2099.github.io/darwinbot/related-work/): where DarwinBot sits among other evolvable-robot projects
 - [Contributing](CONTRIBUTING.md)
 
 ## Resumo em português
@@ -89,7 +95,8 @@ emendadas. Para cada
 corpo, um otimizador (CMA-ES) procura o ritmo de movimento das juntas, com dois
 harmônicos e um retorno da carga dos servos, que leva o robô mais longe. Em vez de
 um único vencedor, o programa guarda o melhor robô de cada comportamento (MAP-Elites
-por tempo de contato com o chão, altura do tronco e número de servos), formando um
+por tempo de contato com o chão, altura do tronco, número de pernas e custo de
+transporte), formando um
 catálogo de soluções diferentes. Os robôs são montados com peças reais (servos
 STS3215, peças impressas em 3D, ESP32 e bateria LiPo), treinados com física
 propositalmente variada para resistir às diferenças entre simulação e mundo real,

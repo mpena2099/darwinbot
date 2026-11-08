@@ -59,5 +59,6 @@ nav:
   - Results and gallery:
       - Results: results.md
       - Gallery: gallery.md
+      - Related work: related-work.md
   - Roadmap: roadmap.md
   - About: about.md

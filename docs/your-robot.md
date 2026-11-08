@@ -1,5 +1,8 @@
 # Constraining the body
 
+Not sure which tokens to combine? The [command builder](command-builder.md) writes
+the `--body` flag (and the rest of the command) from a form.
+
 Evolution builds whatever walks best, and that is not always the robot you want
 to build: it may grow wheels when you want legs, a spine when your printer is
 small, or sixteen servos when your budget stops at eight. `--body` limits the

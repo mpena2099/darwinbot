@@ -49,7 +49,7 @@ python experiments/replay.py --record out.mp4 --seconds 8
 # Train on randomised models (default 2 per terrain on cpu, 0 on gpu)
 python experiments/train.py --variants 4
 
-# Check the elite on 50 randomised models per terrain (PASS if mean loss < 30%)
+# Check the elite on 50 randomised models per terrain (PASS only if robust)
 python experiments/validate.py --n 50
 
 # Export a robot to build: parts, bill of materials, assembly, control file
@@ -75,8 +75,12 @@ terrain (friction, mass, servo torque and stiffness, joint play, 0 to 2
 control periods of command delay) and takes the mean, so gaits that depend on
 exact simulator details lose. It costs about N times more per evaluation, is
 CPU only, and is stored in the archive. `validate.py` runs the elite on
-`--n` fresh variants (`--seed`, `--workers`) and prints nominal, mean and
-worst distance, fall rate and relative loss per terrain.
+`--n` fresh variants (`--seed`, `--workers`) and prints nominal, mean, 5th
+percentile, worst distance, fall rate and relative loss per terrain and
+command. It passes a robot only when the mean loss is under 30%, every row
+keeps its 5th-percentile loss under 60% and its fall rate at most 10%, and
+every terrain moves at all on the nominal model. `--unseen` checks the
+terrains the archive was not trained on as well, reported on their own.
 
 ## Viewing the different robot types
 

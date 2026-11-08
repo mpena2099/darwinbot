@@ -203,7 +203,9 @@ verdade. O DarwinBot usa três defesas:
    versões com atrito, massa, torque, folga e atraso um pouco diferentes.
    Um movimento que só funciona numa física exata não sobrevive.
 3. **Validação:** `experiments/validate.py` testa o robô em 50 físicas
-   variadas e aprova se ele perde menos de 30% do desempenho.
+   variadas e aprova só se ele for robusto: perda média abaixo de 30%,
+   perda no 5º percentil abaixo de 60% e taxa de queda de no máximo 10% em
+   cada terreno e comando, e nenhum terreno onde ele não sai do lugar.
 
 Há ainda uma quarta defesa, a **seleção natural pela impressora**: um corpo
 só é construível se cada peça couber numa mesa de 220 mm, se cada link

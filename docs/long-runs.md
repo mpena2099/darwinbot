@@ -134,7 +134,10 @@ stage's archive), and `--budget` sets polish's CMA-ES evaluations.
 - `prune.py` removes, one at a time, each part whose removal does not lower
   the score, with a short controller search after each cut. A pruned robot
   can change its name (a 7-servo trotter became a 6-servo one).
-- `validate.py` passes a robot that loses less than 30% under varied physics.
+- `validate.py` passes a robot only when it is robust: mean loss under 30%,
+  5th-percentile loss under 60% and fall rate at most 10% on every terrain and
+  command, and no terrain where it fails to move at all. `--unseen` also
+  checks the grounds the archive never trained on.
 - `check_assembly.py` builds the printed parts and reports clashes.
 
 Pruning reruns the score with fresh terrains and variants, so its number is

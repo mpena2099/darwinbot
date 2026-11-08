@@ -142,6 +142,35 @@ on them.
 
 ## Later
 
+- **Hardware profiles: the default kit, or your own**: today the parts kit is
+  fixed in the code (STS3215 12 V servos, 3S LiPo, ESP32, PLA and TPU, the
+  wheel range). A profile file would describe it instead, with the current kit
+  as the default and alternatives to pick from: the servo (torque, speed, mass,
+  housing measures, horn pattern, voltage, idle and stall current, whether it
+  reports load), the battery (cells, capacity, mass, discharge limit), the
+  board (mass, box size), the material (density, allowed stress, plastic and
+  TPU friction), the print bed, wheel and foot limits within the genome's
+  ranges, parametric terrains (step height, rubble size, slope, ground
+  friction) and part prices for the bill of materials. Each profile says
+  whether its numbers are measured or datasheet only, and the export and
+  `validate.py` reports repeat it. The archive stores its profile, as it stores
+  the score rules and body limits; `merge_archives.py` refuses to mix
+  profiles, and `BODY_MODEL` stays, since the genes keep their meaning.
+  Choosing goes through a hardware tab in the command builder page, which
+  writes the profile file next to the `train.py` command, in the browser with
+  nothing to install; a local app (Streamlit) could later also start the run
+  and show the archive filling. In steps:
+  1. A profile of what are constants today, for servos of the same housing
+     (the STS3215 family), plus parametric terrains and prices; the hardware
+     tab. No retraining of existing archives.
+  2. Servos without a load sensor (common PWM servos): the load feedback gain
+     is held at zero and the firmware reads no load.
+  3. A parametric servo housing (box, shaft position, screw holes), so the
+     cradle, fork and elbow parts and `tools/check_assembly.py` work for other
+     servo sizes. The largest step.
+  4. Firmware drivers per servo family (Feetech serial, PWM, Dynamixel) under
+     the portable core.
+
 - **Archives and exports on Hugging Face** (an idea for after the repository
   opens): publish the showcase archives and the export packages (STLs, bill
   of materials, assembly guide, control file) as a Hugging Face dataset, and

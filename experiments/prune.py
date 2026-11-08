@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np   # noqa: E402
 from darwinbot import morphology as morpho, randomize   # noqa: E402
+from darwinbot import body_options   # noqa: E402
 from darwinbot.evolve import Archive, Elite, scaled_budget   # noqa: E402
 from darwinbot.inner import evaluate, optimise_controller   # noqa: E402
 from darwinbot.sim import Episode   # noqa: E402
@@ -46,6 +47,7 @@ def _score(m, ctrl, a, seed):
 
 def prune_elite(job):
     name, elite, a, budget, tol, seed = job
+    body_options.set_active(a.body)
     m = morpho.decode(elite.morph)
     ctrl, scores, beh = elite.ctrl, elite.scores, elite.behaviour
     fit = _score(m, ctrl, a, seed)       # the uncut body, judged like the cuts
@@ -94,12 +96,13 @@ def main():
         sys.exit(f"{args.out} exists; pick a new name")
     with open(args.archive, "rb") as f:
         a: Archive = pickle.load(f)
+    body_options.set_active(a.body)
     jobs = [(t, a.cells[a.find(t)], a, args.budget, args.tol, args.seed)
             for t in args.types.split(",")]
     with Pool(args.workers) as pool:
         elites = pool.map(prune_elite, jobs)
     out = Archive(terrains=a.terrains, seconds=a.seconds, variants=a.variants,
-                  task=a.task, payload=a.payload)
+                  task=a.task, payload=a.payload, body=a.body)
     for t, e in zip(args.types.split(","), elites):
         if not out.insert(e):
             print(f"warning: {t} landed in a cell already taken by a better pruned robot")

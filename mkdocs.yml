@@ -47,6 +47,7 @@ nav:
       - Fitness and tasks: fitness-tasks.md
   - Training:
       - Environments and presets: environments.md
+      - Constraining the body: your-robot.md
       - Long runs, GPU and Kaggle: long-runs.md
   - Building a robot:
       - Exporting a robot: exporting.md

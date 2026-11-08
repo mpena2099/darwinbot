@@ -113,6 +113,18 @@ python experiments/validate.py --archive pruned.pkl --type 13servos-mid-trot
 python tools/check_assembly.py --archive pruned.pkl --type 13servos-mid-trot
 ```
 
+The whole chain runs with one command. It refuses an existing `--out` and
+writes `polished.pkl`, `pruned.pkl`, `validate.txt`, `assembly.txt`,
+`showcase.snap.pkl` and a `summary.txt` with each robot's score before and after
+polish and prune, its validate verdict and its clash count:
+
+```bash
+python experiments/showcase.py --archive merged.pkl --types 13servos-mid-trot,6servos-low-trot --out showcase --workers 8
+```
+
+`--skip polish,prune` leaves stages out (the next stage then reads the previous
+stage's archive), and `--budget` sets polish's CMA-ES evaluations.
+
 - `polish.py` runs a longer CMA-ES (1200 evaluations, up to three times more
   for bodies with many joints) from each robot's own controller, on the same
   terrains, variants and task. With as many robots as workers, each worker

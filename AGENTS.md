@@ -28,10 +28,11 @@ python experiments/validate.py --type <type>  # PASS if it loses < 30% under var
 python experiments/export.py --type <type>    # exports/<type>/; --organic adds hollowed links and elbows
 python experiments/plot_archive.py
 python tools/terrain_sheet.py --archive <archive.pkl>    # docs/img/terrains.png
-python tools/make_readme_figures.py --archive <archive.pkl> --types a,b,c,d   # README figures; --types pins the robots shown
+python tools/make_readme_figures.py --archive <archive.pkl> --types a,b,c,d   # README figures; --types pins the robots shown, --terrains one ground each
 python tools/parts_sheet.py exports/<type>    # every printed part on one image
 python tools/render_assembled.py --archive <archive.pkl> --type <type>   # the robot built from its printed parts, standing and walking
 python tools/check_assembly.py --archive <archive.pkl> --type <type>    # printed parts and servo bodies: clashes and horn holes
+python experiments/showcase.py --archive <archive.pkl> --types a,b --out showcase/   # polish, prune, validate, assembly check and snapshot in one go
 python experiments/prune.py --archive <archive.pkl> --types a,b --out pruned.pkl   # cut parts the robot does not need
 python experiments/polish.py --archive <archive.pkl> --types a,b --out polished.pkl   # longer controller search for chosen robots
 python experiments/merge_archives.py a.pkl b.pkl --out merged.pkl   # islands: best elite per cell
@@ -66,7 +67,6 @@ The plan is in `docs/roadmap.md` (Next, Later, and the ROS 2 extension). Notes f
 
 - `getup` touches `sim.py` and `sim_gpu.py` (spawn orientation and fall detection) and `fitness.py`.
 - Coupled oscillators and the balance sense (IMU) touch `controller.py`, `sim.py`, `sim_gpu.py`, the firmware and `BODY_MODEL`.
-- Wider wheels and the six-segment spine already change the genome (`MAX_SEGMENTS = 6`, wheel width in the `WIDTH` gene); `BODY_MODEL` is bumped once, when the branches that change the genome are merged.
 - The speed command is in place; the ROS 2 node maps a `Twist` linear speed to it (the robot's top speed measured on the bench sets the scale).
 
 ## Conventions and pitfalls

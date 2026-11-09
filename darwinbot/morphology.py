@@ -1250,11 +1250,34 @@ def _fit_link(morph: Morphology, n: Node, servo_tip: bool, foot_tip: bool = Fals
         n.length = max(round(n.length * 0.95, 6), LENGTH_RANGE[0])
 
 
+def _turn_torso_wheel(morph: Morphology, k: int) -> bool:
+    """Turn a wheel bolted straight to the torso until its printed parts clear
+    the plate it sits on: the mount angle steps around the slot, each tried
+    with both flat cradle poses, and a pose is kept only where the cradle sits
+    flat and no clash involves the wheel. False (values restored) if none."""
+    from darwinbot import builder
+    n = morph.nodes[k]
+    if n.kind != "wheel" or morph.nodes[n.parent].kind not in ("core", "segment"):
+        return False
+    angle, rot = n.angle, n.rot
+    for a in np.linspace(0.0, 1.0, 9):
+        n.angle = float(a)
+        for r in (0.0, np.pi / 2):
+            n.rot = float(r)
+            _snap_mount_roll(morph, n)
+            if _mount_roll_ok(morph, n) and not any(
+                    k in pair for pair in builder.spawn_clashes(morph)):
+                return True
+    n.angle, n.rot = angle, rot
+    return False
+
+
 def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
     """Cut away what does not assemble: while printed parts clash in the spawn
-    pose, the module (with what hangs from it) that is later in the tree or
-    has the higher id among the first clashing pair is dropped. Slow next to
-    fit_rules (it builds the model), so only the generators call it."""
+    pose, a torso wheel is first turned clear; otherwise the module (with what
+    hangs from it) that is later in the tree or has the higher id among the
+    first clashing pair is dropped. Slow next to fit_rules (it builds the
+    model), so only the generators call it."""
     from darwinbot import builder
     for _ in range(tries):
         try:
@@ -1269,6 +1292,8 @@ def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
             break
         # prefer a leaf-most, highest-id module
         k = max(cand, key=lambda i: (morph.depth(i), i))
+        if _turn_torso_wheel(morph, k):
+            continue
         _drop_subtree(morph, k)
         _ensure_servo(morph)
         fit_rules(morph)
@@ -1647,8 +1672,19 @@ def _add_segment(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     return i
 
 
+WHEEL_LIMB_P = 0.15   # share of limbs that are a single wheel bolted to the torso
+
+
 def _grow_limb(morph: Morphology, rng, slot: int) -> Optional[int]:
-    """A chain of 1 to 3 joints or links from a core slot, maybe a wheel/foot."""
+    """A chain of 1 to 3 joints or links from a core slot, maybe a wheel/foot,
+    or one wheel bolted straight to the torso."""
+    if (rng.random() < WHEEL_LIMB_P and _body_options().allow_wheels
+            and morph.n_servos < _max_servos()):
+        i = _free_id(morph)
+        if i is not None:
+            morph.nodes[i] = _random_node(rng, "wheel", 0, slot)
+            morph.nodes[i].id = i
+            return i
     parent, sl, first = 0, slot, None
     for step in range(int(rng.integers(1, 4))):
         i = _free_id(morph)

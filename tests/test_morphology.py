@@ -733,3 +733,25 @@ def test_wheel_width_gene_roundtrip_and_range():
         assert back.nodes[w].wheel_width == pytest.approx(width, abs=1e-6)
     g = mo.encode(m)
     assert g.size == mo.MAX_NODES * mo.BLOCK_GENES
+
+
+def test_fit_clashes_turns_a_torso_wheel_instead_of_dropping_it():
+    from darwinbot import builder
+    m = mo.Morphology(0.32, 0.18, {0: mo.Node(0, "core")})
+    for node in (mo.Node(1, "wheel", 0, 2, angle=0.5, wheel_rad=0.06, wheel_width=0.02),
+                 mo.Node(2, "wheel", 0, 5, angle=0.5, wheel_rad=0.06, wheel_width=0.02),
+                 mo.Node(3, "caster", 0, 1, wheel_rad=0.025)):
+        m.nodes[node.id] = node
+    assert builder.spawn_clashes(m)                  # both wheels cut into the plate
+    mo.fit_clashes(m)
+    assert {1, 2} <= set(m.nodes) and m.nodes[1].kind == m.nodes[2].kind == "wheel"
+    assert builder.spawn_clashes(m) == []
+
+
+def test_random_trees_put_wheels_straight_on_the_torso():
+    bodies = [mo.decode(mo.random_morphology(np.random.default_rng(seed)))
+              for seed in range(200)]
+    cars = [m for m in bodies if any(
+        n.kind == "wheel" and m.nodes[n.parent].kind == "core"
+        for n in m.nodes.values() if n.parent >= 0)]
+    assert len(cars) >= 10                           # 5% of the bodies

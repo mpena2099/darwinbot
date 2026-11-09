@@ -24,6 +24,7 @@ optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
 
+import copy
 import hashlib
 import multiprocessing
 import os
@@ -38,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, rules
+from darwinbot import ablate, body_options, hardware, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import TASKS
@@ -158,6 +159,7 @@ class Archive:
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body:     str = ""         # body_options limits, as given to train.py --body
+    profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -293,6 +295,8 @@ class Archive:
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
         self.__dict__.setdefault("body", "")          # nor body options
+        if "profile" not in state:                    # nor hardware profiles
+            self.__dict__["profile"] = hardware.default_profile()
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
@@ -308,7 +312,7 @@ class Archive:
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
-              "rules", "body")
+              "rules", "body", "profile")
 
 
 def merge(archives: List[Archive]) -> Archive:

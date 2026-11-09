@@ -14,21 +14,22 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from darwinbot import hardware
 from darwinbot.controller import SERVO_TORQUE
 
 # Feetech STS3215, 12 V (C018), docs/hardware-dados.md: 200 mA idle, 2.7 A
 # stall. The stall torque is the limit the servo model already uses
 # (controller.SERVO_TORQUE: the 2.94 N*m of the table with its 30% margin).
-I_IDLE = 0.2                  # A, "corrente em repouso"
-I_STALL = 2.7                 # A, "corrente de travamento"
+I_IDLE = hardware.SERVO.current_idle                  # A, "corrente em repouso"
+I_STALL = hardware.SERVO.current_stall                 # A, "corrente de travamento"
 TAU_STALL = SERVO_TORQUE      # N*m, force where the current saturates
 # The doc has no ESP32 figure: 0.15 A for the board and its radio.
-ELECTRONICS_A = 0.15          # A
+ELECTRONICS_A = hardware.ELECTRONICS.current_a          # A
 # The doc's battery is a 3S LiPo (11.1 V) of 1000 to 1500 mAh and lists no C
 # rating: take the middle of the range and a common pack rating.
-BATTERY_AH = 1.2              # Ah, nominal capacity of the documented range
-BATTERY_C = 20.0              # discharge rating of a pack that size
-BATTERY_V = 11.1              # V nominal
+BATTERY_AH = hardware.BATTERY.capacity_ah              # Ah, nominal capacity of the documented range
+BATTERY_C = hardware.BATTERY.c_rating              # discharge rating of a pack that size
+BATTERY_V = hardware.BATTERY.volts              # V nominal
 
 
 def servo_current(tau):

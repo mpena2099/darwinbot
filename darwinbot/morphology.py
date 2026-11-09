@@ -79,6 +79,8 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
 
+from darwinbot import hardware
+
 MAX_NODES  = 20
 MAX_SERVOS = 16
 MAX_LEGS   = 8          # descriptor scale of n_legs (normalise clips)
@@ -115,12 +117,12 @@ BODY_BOUNDS = [
 ]
 TORSO_HEIGHT = 0.06                       # m
 CONTOUR_RANGE = (0.4, 1.4)                # contour factor of a torso vertex
-ELECTRONICS_BOX = (0.10, 0.06)            # m, ESP32 + LiPo footprint, centred
-SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
+ELECTRONICS_BOX = tuple(hardware.ELECTRONICS.box)   # m, ESP32 + LiPo footprint, centred
+SERVO_BOX = tuple(hardware.SERVO.box)     # m, length along the link, width, height
 # The STS3215 output axis sits 12.5 mm from the body centre, towards one end
 # (docs/hardware-dados.md): a module frame is the joint axis, so the servo
 # body sits behind it, along local -X, away from the link it drives.
-SERVO_AXIS_OFFSET = 0.0125          # m
+SERVO_AXIS_OFFSET = hardware.SERVO.axis_offset          # m
 SERVO_CENTRE = np.array([-SERVO_AXIS_OFFSET, 0.0, 0.0])   # in the module frame
 
 
@@ -143,7 +145,7 @@ ELBOW_BOSS_R = 0.0155               # m, round end of a printed elbow plate (par
 
 # Printed parts as parts.py draws them (mm there, m here): the simulation
 # collides these shapes, so a body it accepts is a body whose parts assemble.
-PRINT_BODY_H   = 0.0307             # parts.SERVO_BODY_H: servo body along its output axis
+PRINT_BODY_H   = hardware.SERVO.print_body_height   # parts.SERVO_BODY_H: servo body along its output axis
 PRINT_WALL     = 0.0029             # parts.SERVO_CLEARANCE + parts.CRADLE_T: air and wall around the servo
 FORK_ARM_T     = 0.003              # parts.ARM_T: U link arm, one on each horn face
 FORK_ARM_GAP   = 0.0002             # parts.ARM_GAP: air between a cradle cap and an arm
@@ -208,10 +210,10 @@ SEGMENT_HEIGHT = 0.03                    # m, spine plate thickness
 ELBOW_OFFSET = (0.05 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
 
 # Printability: a part must print on a common bed and survive the servo stall torque.
-SERVO_STALL = 2.94       # N*m, STS3215 (12 V) stall torque
-PLA_STRENGTH = 50e6      # Pa, printed PLA
-STRENGTH_SAFETY = 0.5    # link bending stress must stay below half of PLA
-BED = 0.22               # m, largest part that fits a common print bed
+SERVO_STALL = hardware.SERVO.stall_torque       # N*m, STS3215 (12 V) stall torque
+PLA_STRENGTH = hardware.MATERIAL.pla_strength   # Pa, printed PLA
+STRENGTH_SAFETY = hardware.MATERIAL.strength_safety   # link bending stress must stay below half of PLA
+BED = hardware.PRINTER.bed               # m, largest part that fits a common print bed
 
 # Spring (see docs/hardware-dados.md, "Mola de TPU"): a TPU blade bending at
 # one end. E is not verified yet.

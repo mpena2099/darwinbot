@@ -21,7 +21,7 @@ from multiprocessing import Pool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np   # noqa: E402
-from darwinbot import morphology as morpho, randomize   # noqa: E402
+from darwinbot import hardware, morphology as morpho, randomize   # noqa: E402
 from darwinbot.evolve import Archive, Elite, scaled_budget   # noqa: E402
 from darwinbot.inner import evaluate, optimise_controller   # noqa: E402
 from darwinbot.sim import Episode   # noqa: E402
@@ -95,6 +95,7 @@ def main():
         sys.exit(f"{args.out} exists; pick a new name")
     with open(args.archive, "rb") as f:
         a: Archive = pickle.load(f)
+    hardware.require(a.profile)
     a.activate()
     jobs = [(t, a.cells[a.find(t)], a, args.budget, args.tol, args.seed)
             for t in args.types.split(",")]

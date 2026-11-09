@@ -15,7 +15,7 @@ import pickle
 
 import numpy as np
 
-from darwinbot import ablate
+from darwinbot import ablate, hardware
 from darwinbot import evolve
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
@@ -25,7 +25,9 @@ from darwinbot.terrain import get_terrains
 def load_archive(path):
     try:
         with open(path, "rb") as f:
-            return pickle.load(f)
+            archive = pickle.load(f)
+        hardware.require(archive.profile)
+        return archive
     except FileNotFoundError:
         raise SystemExit(f"{path} not found: train first with experiments/train.py")
 

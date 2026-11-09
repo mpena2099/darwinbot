@@ -15,11 +15,11 @@ in its own folder (checkpoints/<preset>), and a preset whose folder already
 holds an archive is resumed, so the same command run again trains further.
 """
 
-import os
-
 import argparse
+import os
+import pickle
 
-from darwinbot import ablate, body_options, evolve, rules
+from darwinbot import ablate, body_options, evolve, hardware, rules
 from darwinbot.fitness import TASKS
 from darwinbot.morphology import decode, summary
 
@@ -67,6 +67,9 @@ def main():
     p.add_argument("--payload", type=float, default=0.0, metavar="KG",
                    help="extra mass carried on the torso (ignored on --resume)")
     p.add_argument("--resume", default=None)
+    p.add_argument("--profile", default=None, metavar="PATH",
+                   help="hardware profile YAML (default: the built-in STS3215 12 V one; "
+                        "stored in the archive; see docs/hardware-profiles.md)")
     p.add_argument("--preset", default=None,
                    help="comma list of ready tasks run in sequence: "
                         + ", ".join(PRESETS) + " (each in checkpoints/<preset>)")
@@ -88,6 +91,26 @@ def main():
         body_options.parse(a.body)
     except ValueError as e:
         raise SystemExit(str(e))
+
+    wanted = None
+    if a.profile:
+        try:
+            wanted = hardware.load(a.profile)
+        except (OSError, ValueError) as e:
+            raise SystemExit(str(e))
+        hardware.require(wanted)        # re-runs this command under that profile
+
+    def check_profile(path):
+        """A run that resumes an archive trains on the archive's hardware."""
+        with open(path, "rb") as f:
+            stored = pickle.load(f).profile
+        if wanted is not None and stored != wanted:
+            raise SystemExit(f"{path} was trained on another hardware profile than "
+                             f"--profile {a.profile}; drop --profile to keep the archive's")
+        hardware.require(stored)
+
+    if a.resume:
+        check_profile(a.resume)
 
     if a.device == "gpu":
         try:
@@ -123,6 +146,8 @@ def main():
         out = os.path.join(a.out, name)
         path = os.path.join(out, "archive.pkl")
         resume = path if os.path.exists(path) else None
+        if resume:
+            check_profile(resume)
         print(f"\n=== preset {name}: {PRESETS[name]} -> {out}"
               f"{' (resuming)' if resume else ''}")
         spec = dict(PRESETS[name])

@@ -56,6 +56,7 @@ nav:
       - Real parts: real-parts.md
       - Control file format: formato-controle.md
       - Hardware data: hardware-dados.md
+      - Hardware profiles: hardware-profiles.md
   - Results and gallery:
       - Results: results.md
       - Gallery: gallery.md

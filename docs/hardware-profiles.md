@@ -1,26 +1,48 @@
 # Hardware profiles
 
-A profile is one YAML file with every hardware number the project uses. The default, `darwinbot/profiles/sts3215-12v.yaml`, describes the documented build: Feetech STS3215 12 V servos, a 3S LiPo, an ESP32, PLA links and TPU feet.
+A hardware profile is a **kit**: a small YAML file that names one component for each of five sections. The default kit, `darwinbot/profiles/kits/default.yaml`, describes the documented build: Feetech STS3215 12 V servos, a 3S LiPo, an ESP32, PLA links and TPU feet.
 
-## What a profile holds
-
-- `servo`: no-load speed, stall torque, the load that reads as `N = 1`, mass, bracket mass, idle and stall current, joint friction, armature and gain, wheel gain, the simulation box, and the housing and horn measures that `parts.py` and the exporter use (body size, output axis offset, clearance, tapped holes, bolt circle).
-- `battery`: capacity, C rating and voltage.
-- `electronics`: mass, current and footprint of the board and pack.
-- `material`: densities, PLA strength, the safety factor on link bending and the friction factor of hard plastic on the floor.
-- `printer`: the largest part that fits the bed.
-
-A missing or unknown key stops the program with a message that names it.
-
-## Using another profile
-
-```bash
-cp darwinbot/profiles/sts3215-12v.yaml my-servo.yaml     # edit the numbers
-python experiments/train.py --profile my-servo.yaml --preset steer
-python tools/kaggle/islands.py ... --profile my-servo.yaml
+```yaml
+servo: sts3215-12v
+battery: 3s-1200mah
+electronics: esp32
+material: pla-tpu
+printer: bed-220mm
 ```
 
-`DARWINBOT_PROFILE=my-servo.yaml` does the same for any command.
+## Components
+
+Each component is a YAML file with the keys of its section, and the numbers carry their source in comments. The shipped ones live in `darwinbot/profiles/<section plural>/`.
+
+- `servos/`: no-load speed, stall torque, the load that reads as `N = 1`, mass, bracket mass, idle and stall current, joint friction, armature and gain, wheel gain, the simulation box, and the housing and horn measures that `parts.py` and the exporter use (body size, output axis offset, clearance, tapped holes, bolt circle).
+- `batteries/`: capacity, C rating and voltage.
+- `electronics/`: mass, current and footprint of the board and pack.
+- `materials/`: densities, PLA strength, the safety factor on link bending and the friction factor of hard plastic on the floor.
+- `printers/`: the largest part that fits the bed.
+
+A kit entry may be:
+
+- a component name, looked up first in a folder of that section next to the kit file (`./servos/<name>.yaml`), then in the shipped folder;
+- a path to a component file, relative to the kit file (`servo: parts/my-servo.yaml`);
+- an inline mapping with the whole section, which is how profiles were written when they were a single file, so an old profile still loads unchanged.
+
+A missing component, or a component with a missing or unknown key, stops the program with a message that names the section and the file.
+
+## Using another kit
+
+To try another servo, copy the default kit, put the new servo next to it and name it:
+
+```bash
+cp darwinbot/profiles/kits/default.yaml my-kit.yaml
+mkdir servos
+cp darwinbot/profiles/servos/sts3215-12v.yaml servos/my-servo.yaml   # edit the numbers
+sed -i 's/^servo: .*/servo: my-servo/' my-kit.yaml
+
+python experiments/train.py --profile my-kit.yaml --preset steer
+python tools/kaggle/islands.py ... --profile my-kit.yaml
+```
+
+`DARWINBOT_PROFILE=my-kit.yaml` does the same for any command. The kit's name (its file name without the extension) is what the logs show. The islands tool resolves the kit locally and sends the whole resolved profile to the Kaggle kernels, so the components next to your kit reach them.
 
 ## The archive remembers it
 

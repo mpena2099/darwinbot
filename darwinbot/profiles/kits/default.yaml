@@ -1,0 +1,8 @@
+# Default hardware kit: one component per section. A component is a name
+# (looked up in a folder next to this file, then in darwinbot/profiles/), a
+# path to a YAML file, or an inline mapping. docs/hardware-profiles.md.
+servo: sts3215-12v
+battery: 3s-1200mah
+electronics: esp32
+material: pla-tpu
+printer: bed-220mm

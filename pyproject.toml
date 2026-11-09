@@ -29,4 +29,4 @@ where = ["."]
 include = ["darwinbot*"]
 
 [tool.setuptools.package-data]
-darwinbot = ["profiles/*.yaml"]
+darwinbot = ["profiles/*/*.yaml"]

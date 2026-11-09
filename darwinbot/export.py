@@ -21,7 +21,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from darwinbot import builder, power
+from darwinbot import builder, hardware, power
 from darwinbot import morphology as morpho
 from darwinbot.control_file import make_control_file, write_control_file
 from darwinbot.controller import Controller
@@ -73,9 +73,9 @@ def has_elbows(elbow):
 
 # Servo and cradle measures, equal to parts.SERVO_* and parts.CRADLE_T
 # (parts needs build123d, the bill of materials does not).
-SERVO_BODY = (45.4, 24.8, 30.7)       # length, width, body height
-SERVO_AXIS_X = 12.5
-CRADLE_SLACK = 0.4 + 2.5              # servo clearance plus cradle wall
+SERVO_BODY = (hardware.SERVO.length, hardware.SERVO.width, hardware.SERVO.body_height)      # length, width, body height
+SERVO_AXIS_X = hardware.SERVO.axis_x
+CRADLE_SLACK = hardware.SERVO.clearance + 2.5              # servo clearance plus cradle wall
 MIN_FIN = 1.0                         # thinnest link tip fin left under a tongue
 
 

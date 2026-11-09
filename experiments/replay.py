@@ -16,6 +16,7 @@ import time
 
 import mujoco
 
+from darwinbot import hardware
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
@@ -33,6 +34,7 @@ def open_archive(path):
     except ValueError as e:
         raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
                          f"(or pass --archive with a newer one).")
+    hardware.require(archive.profile)    # re-runs the command under the archive's hardware
     archive.activate()
     return archive
 

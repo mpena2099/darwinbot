@@ -32,7 +32,7 @@ from typing import Tuple
 
 import numpy as np
 
-from darwinbot import ablate
+from darwinbot import ablate, hardware
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
@@ -47,11 +47,11 @@ from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   link_tip, plate_thick, segment_box,
                                   spring_stiffness)
 
-SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
-LIMB_DENSITY   = 300.0
-LINK_DENSITY   = 1240.0  # kg/m^3, solid PLA printed link
-PAYLOAD_MASS   = 0.17    # kg: ESP32 + 3S LiPo + regulator
-SERVO_MASS     = 0.060 + 0.015   # kg: the servo plus its printed bracket (~15 g of PLA)
+SHELL_DENSITY  = hardware.MATERIAL.shell_density   # kg/m^3, printed shell with infill
+LIMB_DENSITY   = hardware.MATERIAL.limb_density
+LINK_DENSITY   = hardware.MATERIAL.link_density    # kg/m^3, solid PLA printed link
+PAYLOAD_MASS   = hardware.ELECTRONICS.mass         # kg: ESP32 + 3S LiPo + regulator
+SERVO_MASS     = hardware.SERVO.mass + hardware.SERVO.bracket_mass   # kg: the servo plus its printed bracket
 ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
@@ -61,11 +61,11 @@ JOINT_RANGE = {"yaw": 0.9, "pitch": 1.3, "roll": 0.9}   # +/- rad
 # topped out at 2.3 rad/s, under half the real one, and any stride faster than
 # that turned into saturated torque reversals.
 JOINT_DAMPING  = SERVO_TORQUE / SERVO_SPEED
-JOINT_FRICTION = 0.068
-JOINT_ARMATURE = 0.027
-JOINT_KP       = 13.37
+JOINT_FRICTION = hardware.SERVO.joint_friction
+JOINT_ARMATURE = hardware.SERVO.joint_armature
+JOINT_KP       = hardware.SERVO.joint_kp
 SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
-WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
+WHEEL_KV       = hardware.SERVO.wheel_kv          # N*m per rad/s, saturates at SERVO_TORQUE
 WHEEL_DAMPING  = JOINT_DAMPING  # same motor: torque falls to zero at the no-load speed
 CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
@@ -78,7 +78,7 @@ SPIKE_FACTOR = 1.5
 # Hard printed or moulded plastic (servo housings, PLA links, elbows, torso,
 # tail, caster fork) on the floor: about 0.3 to 0.4, against 1.0 for the TPU
 # feet and wheels. Without it a servo housing grips like a foot.
-PLASTIC_FACTOR = 0.35
+PLASTIC_FACTOR = hardware.MATERIAL.plastic_factor
 
 
 def plastic_factor() -> float:

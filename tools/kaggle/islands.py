@@ -33,6 +33,9 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
+import yaml   # noqa: E402
+
+from darwinbot import hardware   # noqa: E402
 from darwinbot.evolve import merge   # noqa: E402
 
 KERNEL = os.path.join(ROOT, "tools", "kaggle", "train_kernel.py")
@@ -60,7 +63,8 @@ def push_island(work, i, a, start_dataset):
     src = set_constant(src, "TOKEN_DATASET", a.token_dataset.split("/")[-1])
     src = set_constant(src, "RESUME_DATASET", start_dataset or "")
     if a.profile:    # the kernel carries the profile text and passes --profile
-        src = set_constant(src, "PROFILE_YAML", open(a.profile).read())
+        src = set_constant(src, "PROFILE_YAML", yaml.safe_dump(
+            hardware.load(a.profile), sort_keys=False))
     with open(os.path.join(d, "train_kernel.py"), "w") as f:
         f.write(src)
     sources = [a.code_dataset, a.token_dataset] + ([start_dataset] if start_dataset else [])

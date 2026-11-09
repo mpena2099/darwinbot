@@ -59,7 +59,12 @@ To train for your own limits (no wheels, at most N servos, a number of legs,
 a smaller printer) without writing the command by hand, fill in the
 [command builder](https://mpena2099.github.io/darwinbot/command-builder/); the
 options are described in
-[Your robot](https://mpena2099.github.io/darwinbot/your-robot/).
+[Your robot](https://mpena2099.github.io/darwinbot/your-robot/). For other
+servos, another battery or a different printer, copy the default
+[hardware profile](https://mpena2099.github.io/darwinbot/hardware-profiles/)
+and pass it with `--profile`. To start from a robot you drew yourself, write
+it as YAML and seed an archive with `experiments/seed.py`
+([Starting from your own design](https://mpena2099.github.io/darwinbot/own-design/)).
 
 To watch the showcase robots without training, download their archive from
 the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):

@@ -136,27 +136,19 @@ on them.
 
 ## Later
 
-- **Hardware profiles: the default kit, or your own**: today the parts kit is
-  fixed in the code (STS3215 12 V servos, 3S LiPo, ESP32, PLA and TPU, the
-  wheel range). A profile file would describe it instead, with the current kit
-  as the default and alternatives to pick from: the servo (torque, speed, mass,
-  housing measures, horn pattern, voltage, idle and stall current, whether it
-  reports load), the battery (cells, capacity, mass, discharge limit), the
-  board (mass, box size), the material (density, allowed stress, plastic and
-  TPU friction), the print bed, wheel and foot limits within the genome's
-  ranges, parametric terrains (step height, rubble size, slope, ground
-  friction) and part prices for the bill of materials. Each profile says
-  whether its numbers are measured or datasheet only, and the export and
-  `validate.py` reports repeat it. The archive stores its profile, as it stores
-  the score rules and body limits; `merge_archives.py` refuses to mix
-  profiles, and `BODY_MODEL` stays, since the genes keep their meaning.
-  Choosing goes through a hardware tab in the command builder page, which
-  writes the profile file next to the `train.py` command, in the browser with
-  nothing to install; a local app (Streamlit) could later also start the run
-  and show the archive filling. In steps:
-  1. A profile of what are constants today, for servos of the same housing
-     (the STS3215 family), plus parametric terrains and prices; the hardware
-     tab. No retraining of existing archives.
+- **Hardware profiles: the default kit, or your own**: the parts kit is a
+  [profile file](hardware-profiles.md) (servo, battery, electronics, material,
+  print bed) that the archive stores and `train.py --profile` picks. What is
+  left: wheel and foot limits within the genome's ranges, parametric terrains
+  (step height, rubble size, slope, ground friction), part prices for the bill
+  of materials, and a flag saying whether a profile's numbers are measured or
+  datasheet only, repeated in the export and `validate.py` reports. Choosing
+  would go through a hardware tab in the command builder page, which writes
+  the profile file next to the `train.py` command, in the browser with nothing
+  to install; a local app (Streamlit) could later also start the run and show
+  the archive filling. In steps:
+  1. Limits, parametric terrains, prices and the measured flag in the
+     profile; the hardware tab.
   2. Servos without a load sensor (common PWM servos): the load feedback gain
      is held at zero and the firmware reads no load.
   3. A parametric servo housing (box, shaft position, screw holes), so the

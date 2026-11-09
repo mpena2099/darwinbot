@@ -1986,6 +1986,23 @@ def graft(genes: np.ndarray, donor: np.ndarray,
     return encode(fit_clashes(fit_rules(prune(morph))))
 
 
+def keeps_locked(child: np.ndarray, parent: np.ndarray, locked) -> bool:
+    """True when every locked node of `parent` is still in `child`, unchanged
+    and on the same parent and slot. Node 0 locks the torso: its length,
+    width and contour. The rest of the body may change around them."""
+    if not locked:
+        return True
+    a, b = decode(child), decode(parent)
+    for i in locked:
+        if i == 0:
+            if (a.body_length, a.body_width, a.contour) != (
+                    b.body_length, b.body_width, b.contour):
+                return False
+        elif i in b.nodes and a.nodes.get(i) != b.nodes[i]:
+            return False
+    return True
+
+
 # --------------------------------------------------------------------------
 # Summary
 # --------------------------------------------------------------------------

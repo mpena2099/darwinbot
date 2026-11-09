@@ -160,6 +160,7 @@ class Archive:
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body:     str = ""         # body_options limits, as given to train.py --body
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
+    locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -295,6 +296,7 @@ class Archive:
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
         self.__dict__.setdefault("body", "")          # nor body options
+        self.__dict__.setdefault("locked", ())        # nor locked parts
         if "profile" not in state:                    # nor hardware profiles
             self.__dict__["profile"] = hardware.default_profile()
 
@@ -312,7 +314,7 @@ class Archive:
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
-              "rules", "body", "profile")
+              "rules", "body", "profile", "locked")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -388,6 +390,7 @@ def _init_worker(ablations=(), score_rules=(), body=""):
 
 
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
+LOCK_TRIES = 8          # offspring drawn until one keeps the archive's locked parts
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
 
@@ -480,17 +483,24 @@ def run(
         parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
-            if rng.random() < random_frac:
+            # A random body would not carry the locked parts.
+            if not archive.locked and rng.random() < random_frac:
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
                               device, popsize, archive.variants, None,
                               archive.task, archive.payload))
             else:
-                if rng.random() < GRAFT_P:        # crossover with another elite
-                    donor = parents["solution"][(i + 1) % batch_size]
-                    child = morpho.graft(parents["solution"][i], donor, rng)
-                else:
-                    child = morpho.mutate(parents["solution"][i], rng)
+                parent = parents["solution"][i]
+                for _ in range(LOCK_TRIES):
+                    if rng.random() < GRAFT_P:        # crossover with another elite
+                        donor = parents["solution"][(i + 1) % batch_size]
+                        child = morpho.graft(parent, donor, rng)
+                    else:
+                        child = morpho.mutate(parent, rng)
+                    if morpho.keeps_locked(child, parent, archive.locked):
+                        break
+                else:                    # same body, its controller searched again
+                    child = np.array(parent)
                 tasks.append((child, parents["ctrl"][i], terrains,
                               budget_child, 0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,

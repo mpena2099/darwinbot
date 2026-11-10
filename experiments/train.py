@@ -19,8 +19,8 @@ import argparse
 import os
 import pickle
 
-from darwinbot import ablate, body_options, evolve, hardware, rules
-from darwinbot.fitness import TASKS
+from darwinbot import ablate, body_options, evolve, hardware, plugins, rules
+from darwinbot.fitness import task_names
 from darwinbot.morphology import decode, summary
 
 PRESETS = {
@@ -33,6 +33,18 @@ PRESETS = {
 
 
 def main():
+    # --plugin must load before the parser checks --task and --terrains, which
+    # the plugin may add to.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--plugin", default=None, metavar="FILE.py")
+    early, _ = pre.parse_known_args()
+    record = None
+    if early.plugin:
+        try:
+            record = plugins.load(early.plugin)
+        except OSError as e:
+            raise SystemExit(str(e))
+
     p = argparse.ArgumentParser(description="darwinbot: evolve bodies and gaits")
     p.add_argument("--terrains", default="flat",
                    help="preset (flat, terrain, all) or comma list of terrain names")
@@ -60,7 +72,7 @@ def main():
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
-    p.add_argument("--task", choices=TASKS, default="steer",
+    p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
                         "turning in place (ignored on --resume)")
@@ -70,6 +82,9 @@ def main():
     p.add_argument("--profile", default=None, metavar="PATH",
                    help="hardware profile YAML (default: the built-in STS3215 12 V one; "
                         "stored in the archive; see docs/hardware-profiles.md)")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains to load; stored in the archive "
+                        "(see docs/plugins.md)")
     p.add_argument("--preset", default=None,
                    help="comma list of ready tasks run in sequence: "
                         + ", ".join(PRESETS) + " (each in checkpoints/<preset>)")
@@ -101,13 +116,14 @@ def main():
         hardware.require(wanted)        # re-runs this command under that profile
 
     def check_profile(path):
-        """A run that resumes an archive trains on the archive's hardware."""
+        """A run that resumes an archive trains on the archive's hardware and plugin."""
         with open(path, "rb") as f:
-            stored = pickle.load(f).profile
-        if wanted is not None and stored != wanted:
+            stored = pickle.load(f)
+        if wanted is not None and stored.profile != wanted:
             raise SystemExit(f"{path} was trained on another hardware profile than "
                              f"--profile {a.profile}; drop --profile to keep the archive's")
-        hardware.require(stored)
+        plugins.require(stored, a.plugin)
+        hardware.require(stored.profile)
 
     if a.resume:
         check_profile(a.resume)
@@ -129,7 +145,7 @@ def main():
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
                   parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
-                  body=a.body)
+                  body=a.body, plugin=record)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

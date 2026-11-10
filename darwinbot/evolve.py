@@ -39,10 +39,10 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, hardware, rules
+from darwinbot import ablate, body_options, hardware, plugins, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
-from darwinbot.fitness import TASKS
+from darwinbot.fitness import task_names
 from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
@@ -161,6 +161,7 @@ class Archive:
     body:     str = ""         # body_options limits, as given to train.py --body
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
+    plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -297,6 +298,7 @@ class Archive:
         self.__dict__.setdefault("rules", ())         # nor optional score rules
         self.__dict__.setdefault("body", "")          # nor body options
         self.__dict__.setdefault("locked", ())        # nor locked parts
+        self.__dict__.setdefault("plugin", {})        # nor plugins
         if "profile" not in state:                    # nor hardware profiles
             self.__dict__["profile"] = hardware.default_profile()
 
@@ -314,7 +316,7 @@ class Archive:
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
-              "rules", "body", "profile", "locked")
+              "rules", "body", "profile", "locked", "plugin")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -380,13 +382,14 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=(), score_rules=(), body=""):
+def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=()):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations, optional score rules and body options."""
+    carry the run's ablations, optional score rules, body options and plugins."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
     rules.set_active(score_rules)
     body_options.set_active(body)
+    plugins.load_all(plugin_paths)
 
 
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
@@ -438,11 +441,12 @@ def run(
     ablations: tuple = (),
     score_rules: tuple = (),
     body: str = "",
+    plugin: Optional[dict] = None,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
-    if task not in TASKS:
-        raise ValueError(f"task must be one of {TASKS}")
+    if task not in task_names():
+        raise ValueError(f"task must be one of {task_names()}")
     if device == "gpu" and variants > 0 and not resume:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     os.makedirs(out_dir, exist_ok=True)
@@ -464,7 +468,8 @@ def run(
                           variants=variants, task=task, payload=payload,
                           ablate=ablate.normalise(ablations),
                           rules=rules.normalise(score_rules),
-                          body=body_options.parse(body).to_string())
+                          body=body_options.parse(body).to_string(),
+                          plugin=plugin or {})
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
     rules.set_active(archive.rules)             # and its score rules
     body_options.set_active(archive.body)       # and its body limits
@@ -515,7 +520,8 @@ def run(
           + (f" rules={list(archive.rules)}" if archive.rules else "")
           + (f" body={archive.body}" if archive.body else ""))
     pool = None if device == "gpu" else multiprocessing.Pool(
-        workers, _init_worker, (archive.ablate, archive.rules, archive.body))
+        workers, _init_worker,
+        (archive.ablate, archive.rules, archive.body, plugins.loaded()))
     path = os.path.join(out_dir, "archive.pkl")
     code = code_version()
     print(f"[darwinbot] code {code}")

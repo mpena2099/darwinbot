@@ -34,7 +34,7 @@ from typing import List, NamedTuple, Tuple
 import numpy as np
 
 from darwinbot import morphology as morpho
-from darwinbot import ablate, body_options, power, rules, randomize
+from darwinbot import ablate, body_options, plugins, power, rules, randomize
 from darwinbot.fitness import commands
 from darwinbot.sim import Episode
 from darwinbot.terrain import SEEDED, TERRAINS, get_terrains
@@ -133,7 +133,7 @@ def run_rows(elite, archive, terrains, n, seed, workers) -> List[Row]:
               (archive.ablate, archive.rules, archive.body))
              for i, t in enumerate(terrains) for c in commands(archive.task)]
     if workers > 1:
-        with multiprocessing.Pool(workers) as pool:
+        with multiprocessing.Pool(workers, plugins.load_all, (plugins.loaded(),)) as pool:
             return pool.map(validate_terrain, tasks)
     return [validate_terrain(t) for t in tasks]
 
@@ -168,6 +168,8 @@ def report(title: str, rows: List[Row]) -> bool:
 def main():
     p = argparse.ArgumentParser(description="darwinbot: validate an elite on randomised models")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--type", dest="cell", default=None,
                    help="robot type, e.g. 6legs-2wheels-14servos (default: best overall)")
     p.add_argument("--n", type=int, default=50, help="variants per terrain")
@@ -177,7 +179,7 @@ def main():
                    help="also check the terrains the archive was not trained on")
     a = p.parse_args()
 
-    archive, elite = load(a.archive, a.cell)
+    archive, elite = load(a.archive, a.cell, a.plugin)
     morph = morpho.decode(elite.morph)
     print(morpho.summary(morph))
     units = {"turn": "|yaw| in rad", "steer": "straight: dx in m, left/right: "

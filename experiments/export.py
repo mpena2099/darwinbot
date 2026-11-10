@@ -24,6 +24,8 @@ from darwinbot.export import export_robot  # noqa: E402
 def main():
     p = argparse.ArgumentParser(description="darwinbot: export an evolved robot")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--type", dest="cell", default=None,
                    help="robot type from replay.py --list (default: best robot overall)")
     p.add_argument("--out", default=None, help="output folder (default: exports/<type>/)")
@@ -32,7 +34,7 @@ def main():
                         "optimisation) to parts_organic/; slower, unvalidated")
     a = p.parse_args()
 
-    archive, elite = load(a.archive, a.cell)
+    archive, elite = load(a.archive, a.cell, a.plugin)
     name = archive.names()[cell_of(elite.behaviour)]
     out = a.out or os.path.join("exports", name)
     info = export_robot(elite, out, name, payload=archive.payload,

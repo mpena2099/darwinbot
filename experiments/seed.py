@@ -23,10 +23,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import mujoco  # noqa: E402
 
-from darwinbot import ablate, body_options, evolve, hardware, rules  # noqa: E402
+from darwinbot import ablate, body_options, evolve, hardware, plugins, rules  # noqa: E402
 from darwinbot import morphology as morpho  # noqa: E402
 from darwinbot import robot_file  # noqa: E402
-from darwinbot.fitness import TASKS  # noqa: E402
+from darwinbot.fitness import task_names  # noqa: E402
 from darwinbot.inner import optimise_controller  # noqa: E402
 from darwinbot.sim import Episode  # noqa: E402
 from darwinbot.terrain import get_terrains  # noqa: E402
@@ -62,22 +62,35 @@ def check_buildable(label, morph, terrains, seconds, payload):
 
 def dump(a):
     from replay import load
-    archive, elite = load(a.archive, a.type)
+    archive, elite = load(a.archive, a.type, a.plugin)
     name = archive.names()[evolve.cell_of(elite.behaviour)]
     print(robot_file.dump(morpho.decode(elite.morph), archive.locked, name=name), end="")
 
 
 def main():
+    # --plugin must load before the parser checks --task and --terrains.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--plugin", default=None, metavar="FILE.py")
+    early, _ = pre.parse_known_args()
+    record = None
+    if early.plugin:
+        try:
+            record = plugins.load(early.plugin)
+        except OSError as e:
+            raise SystemExit(str(e))
+
     p = argparse.ArgumentParser(description="darwinbot: seed an archive with a hand-written robot")
     p.add_argument("--robot", nargs="+", metavar="YAML", help="robot files")
     p.add_argument("--out", help="folder for archive.pkl (must not hold one yet)")
     p.add_argument("--terrains", default="flat")
-    p.add_argument("--task", choices=TASKS, default="steer")
+    p.add_argument("--task", choices=task_names(), default="steer")
     p.add_argument("--payload", type=float, default=0.0, metavar="KG")
     p.add_argument("--seconds", type=float, default=5.0)
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain (default 2)")
     p.add_argument("--profile", default=None, metavar="PATH", help="hardware profile YAML")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains to load; stored in the archive")
     p.add_argument("--body", default="", metavar="A,B", help="body limits, as in train.py")
     p.add_argument("--budget", type=int, default=400,
                    help="CMA-ES evaluations (scaled with the joint count)")
@@ -133,7 +146,8 @@ def main():
                              task=a.task, payload=a.payload,
                              ablate=ablate.normalise(()), rules=rules.normalise(()),
                              body=body, profile=hardware.PROFILE,
-                             locked=robots[0][2] if len(robots) == 1 else ())
+                             locked=robots[0][2] if len(robots) == 1 else (),
+                             plugin=record or {})
     t0 = time.time()
     names = []
     for k, (f, morph, _) in enumerate(robots):
@@ -158,7 +172,8 @@ def main():
         pickle.dump(archive, fh)
     print(f"wrote {path}"
           + (f" (locked nodes {list(archive.locked)})" if archive.locked else ""))
-    print(f"continue with: python experiments/train.py --resume {path} --batches 30")
+    plug = f" --plugin {a.plugin}" if a.plugin else ""
+    print(f"continue with: python experiments/train.py --resume {path} --batches 30{plug}")
 
 
 if __name__ == "__main__":

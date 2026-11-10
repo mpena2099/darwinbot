@@ -168,7 +168,19 @@ TERRAINS = {
     "slope": slope, "slippery": slippery, "rubble": rubble, "ledges": ledges,
     "soft": soft, "downhill": downhill, "steep": steep,
 }
-SEEDED = ("rough", "rubble")    # terrains drawn anew for every body in training
+SEEDED = ["rough", "rubble"]    # terrains drawn anew for every body in training
+
+
+def register_terrain(name: str, factory, seeded: bool = False):
+    """Register an external terrain, loaded by a run's --plugin file. A built-in
+    name cannot be replaced. `seeded` terrains take a seed in training."""
+    if name in TERRAINS:
+        raise ValueError(f"cannot overwrite terrain '{name}'")
+    TERRAINS[name] = factory
+    if seeded:
+        SEEDED.append(name)         # in place: other modules import the list
+    return factory
+
 
 PRESETS: Dict[str, List[str]] = {
     "flat":    ["flat"],

@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np   # noqa: E402
 
-from darwinbot import morphology as morpho, randomize   # noqa: E402
+from darwinbot import morphology as morpho, plugins, randomize   # noqa: E402
 from darwinbot.evolve import Archive, Elite   # noqa: E402
 from darwinbot.fitness import UNSTABLE_SCORE   # noqa: E402
 from darwinbot.inner import evaluate   # noqa: E402
@@ -49,7 +49,7 @@ def rescore(archive: Archive, workers: int, seed: int = 0,
     cells = list(archive.cells.values())
     jobs = [(e.morph, e.ctrl, archive.terrains, archive.seconds, archive.variants,
              archive.task, archive.payload, seed) for e in cells]
-    with Pool(workers) as pool:
+    with Pool(workers, plugins.load_all, (plugins.loaded(),)) as pool:
         results = pool.map(_score, jobs)
     out = pickle.loads(pickle.dumps(archive))
     out._grid = None
@@ -66,6 +66,8 @@ def main():
     p = argparse.ArgumentParser(description="darwinbot: rescore an archive")
     p.add_argument("archive")
     p.add_argument("--out", required=True)
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--workers", type=int, default=os.cpu_count())
     p.add_argument("--seed", type=int, default=0, help="seed of the randomised variants")
     p.add_argument("--note", default="scoring rules changed",
@@ -73,6 +75,7 @@ def main():
     a = p.parse_args()
     with open(a.archive, "rb") as f:
         archive = pickle.load(f)
+    plugins.require(archive, a.plugin)
     before = archive.stats()
     out = rescore(archive, a.workers, a.seed, a.note)
     after = out.stats()

@@ -76,7 +76,8 @@ LATERAL_W    = 0.5
 ENERGY_W     = 0.05
 FALL_PENALTY = 0.5
 TURN_DRIFT_W = 0.5
-TASKS        = ("forward", "turn", "steer")
+BUILTIN_TASKS = ("forward", "turn", "steer")
+TASKS        = BUILTIN_TASKS   # known task names; register_task() keeps it updated
 SPEED_ASKED  = 0.5     # speed command of the slow episode of the steer task
 COMMANDS     = {"steer": ((0.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (0.0, SPEED_ASKED))}
 STRAIGHT     = ((0.0, 1.0),)   # other tasks: one straight episode, full speed
@@ -88,6 +89,32 @@ SLIP_W         = 0.2   # m per m/s of summed foot sliding speed (rule `slip`)
 SERVO_GROUND_W = 0.1   # m per share of ticks a servo housing is on the ground (rule `servo_ground`)
 UNSTABLE_SCORE = -5.0
 G = 9.81
+
+_TASK_SCORES: dict = {}      # name -> score_fn of a registered plugin task
+_TASK_COMMANDS: dict = {}    # name -> commands of a registered plugin task
+
+
+def task_names() -> tuple:
+    """Every known task: the built-ins first, then the registered plugins."""
+    return BUILTIN_TASKS + tuple(_TASK_SCORES)
+
+
+def register_task(name, score_fn=None, commands=STRAIGHT):
+    """Register an external task, loaded by a run's --plugin file.
+
+    Use as `register_task("name", fn)` or as a decorator `@register_task("name")`.
+    score_fn takes one Metrics, or the list of Metrics (one per command) when
+    the task runs more than one command. A built-in name cannot be replaced.
+    """
+    def add(fn):
+        if name in BUILTIN_TASKS:
+            raise ValueError(f"cannot overwrite built-in task '{name}'")
+        _TASK_SCORES[name] = fn
+        _TASK_COMMANDS[name] = tuple(commands)
+        global TASKS
+        TASKS = task_names()
+        return fn
+    return add if score_fn is None else add(score_fn)
 
 
 def up(v: float, m: Metrics) -> float:
@@ -112,6 +139,8 @@ def score(m: Metrics, task: str = "forward") -> float:
         raise ValueError(f"unknown task '{task}', expected one of {TASKS}")
     if m.unstable:
         return UNSTABLE_SCORE
+    if task not in BUILTIN_TASKS:
+        return float(_TASK_SCORES[task](m))
     cost = ENERGY_W * m.energy / (m.mass * G) + rule_cost(m)
     if task == "turn":
         s = up(abs(m.yaw), m) - TURN_DRIFT_W * math.hypot(m.dx, m.dy) - cost
@@ -124,13 +153,20 @@ def score(m: Metrics, task: str = "forward") -> float:
 
 def commands(task: str):
     """(steering, speed) commands every evaluation runs, in order."""
-    return COMMANDS.get(task, STRAIGHT)
+    return _TASK_COMMANDS.get(task, COMMANDS.get(task, STRAIGHT))
 
 
 def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
     """Score of one terrain from the episodes run under commands(task)."""
+    if task not in TASKS:
+        raise ValueError(f"unknown task '{task}', expected one of {TASKS}")
     if task != "steer":
-        return score(ms[0], task)
+        if task in BUILTIN_TASKS:
+            return score(ms[0], task)
+        if any(m.unstable for m in ms):
+            return UNSTABLE_SCORE
+        fn = _TASK_SCORES[task]
+        return float(fn(ms) if len(commands(task)) > 1 else fn(ms[0]))
     if any(m.unstable for m in ms):
         return UNSTABLE_SCORE
     turns = []

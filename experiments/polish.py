@@ -25,7 +25,7 @@ from multiprocessing import Pool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from darwinbot import morphology as morpho   # noqa: E402
+from darwinbot import morphology as morpho, plugins   # noqa: E402
 from darwinbot.evolve import Archive, cell_of, scaled_budget, type_name   # noqa: E402
 from darwinbot.inner import cpu_evaluator, optimise_controller   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
@@ -39,7 +39,9 @@ _score = None   # a population worker's cpu_evaluator
 
 def _init_population_worker(args):
     global _score
-    _score = cpu_evaluator(*args)[1]
+    init, plugin_paths = args
+    plugins.load_all(plugin_paths)
+    _score = cpu_evaluator(*init)[1]
 
 
 def _score_one(ctrl):
@@ -56,7 +58,8 @@ def polish_elite(job, workers=1):
               seconds=a.seconds, variants=a.variants, task=a.task, payload=a.payload)
     if workers > 1:
         init = (m, terrains, a.seconds, a.payload, a.variants, seed, a.task)
-        with Pool(workers, _init_population_worker, (init,)) as pool:
+        with Pool(workers, _init_population_worker,
+                  ((init, plugins.loaded()),)) as pool:
             r = optimise_controller(m, terrains, map_many=lambda cs: pool.map(_score_one, cs), **kw)
     else:
         r = optimise_controller(m, terrains, **kw)
@@ -90,12 +93,14 @@ def picks(a, types, gaits):
 def _new_archive(a) -> Archive:
     return Archive(terrains=a.terrains, batch=a.batch, seconds=a.seconds,
                    variants=a.variants, task=a.task, payload=a.payload,
-                   body=a.body)
+                   body=a.body, plugin=a.plugin)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--archive", required=True)
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     choose = p.add_mutually_exclusive_group(required=True)
     choose.add_argument("--types", help="comma-separated type names, as in replay.py --list")
     choose.add_argument("--per-gait", help="comma-separated gaits: " + ", ".join(GAITS))
@@ -114,14 +119,14 @@ def main():
         bad = [g for g in gaits if g not in GAITS]
         if bad:
             sys.exit(f"unknown gait(s) {', '.join(bad)}; pick from {', '.join(GAITS)}")
-    a: Archive = open_archive(args.archive)
+    a: Archive = open_archive(args.archive, args.plugin)
     cells = picks(a, args.types.split(",") if args.types else None, gaits)
     jobs = [(c, a.cells[c], a, args.budget, args.sigma, args.seed) for c in cells]
     if args.workers > 1 and len(jobs) < args.workers:
         # fewer robots than workers: one robot at a time, its generations in parallel
         results = [polish_elite(job, args.workers) for job in jobs]
     elif args.workers > 1:
-        with Pool(args.workers) as pool:
+        with Pool(args.workers, plugins.load_all, (plugins.loaded(),)) as pool:
             results = pool.map(polish_elite, jobs)
     else:
         results = [polish_elite(job) for job in jobs]

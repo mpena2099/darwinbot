@@ -23,6 +23,7 @@ import numpy as np
 
 from darwinbot import builder, hardware, power
 from darwinbot import morphology as morpho
+from darwinbot import urdf
 from darwinbot.control_file import make_control_file, write_control_file
 from darwinbot.controller import Controller
 from darwinbot.sim import Episode
@@ -866,6 +867,7 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False,
                                     payload=payload)
     with open(os.path.join(out_dir, "robot.xml"), "w") as f:
         f.write(xml)
+    urdf.write_urdf(morph, os.path.join(out_dir, "robot.urdf"), payload)
 
     ctl = make_control_file(name, elite.fitness, layout, Controller(elite.ctrl, layout).params,
                             _layout_ranges(morph, layout), signs=servo_signs(morph, layout))

@@ -57,6 +57,29 @@ nodes (the torso counts) and a field that does not belong to the kind are
 refused as well. Finally the file must survive `decode(encode(body))` unchanged:
 that catches the limits of 16 servos, depth 5 and the segment count.
 
+## Seeing your robot
+
+To check the shape while you write the file, open it in the viewer. It stands
+still on the ground, with every joint at the middle of its range and the wheels
+stopped, since it has no controller yet:
+
+```bash
+python experiments/replay.py --robot examples/robots/small-walker.yaml
+```
+
+It prints a summary of the body and any printing rule it breaks or parts that
+overlap at the start (`seed.py` lists which ones). `--terrain` picks the ground
+and `--record out.mp4` saves a video instead of opening the window.
+
+To see it move, give it a controller first: a short `seed.py` run is enough for
+a first look, then replay the robot from the archive it wrote:
+
+```bash
+python experiments/seed.py --robot examples/robots/small-walker.yaml --budget 50 --out checkpoints/walker
+python experiments/replay.py --archive checkpoints/walker/archive.pkl --list
+python experiments/replay.py --archive checkpoints/walker/archive.pkl --type <type from the list>
+```
+
 ## Slots
 
 A slot is a place on the parent where a child attaches.

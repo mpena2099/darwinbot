@@ -122,3 +122,17 @@ def test_run_on_a_seeded_archive_keeps_locked_wheels(tmp_path):
         for i in (1, 2):
             assert m.nodes[i] == morph.nodes[i]
         assert m.body_length == pytest.approx(morph.body_length)
+
+
+def test_replay_robot_stands_still():
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "experiments"))
+    import replay
+    from darwinbot.sim import Episode
+    from darwinbot.terrain import get_terrains
+    morph, _ = rf.load(os.path.join(os.path.dirname(__file__), "..", "examples",
+                                    "robots", "two-wheel-car.yaml"))
+    ep = Episode(morph, get_terrains("flat")[0], 2.0)
+    m = ep.run(replay.standing(morph))
+    assert ep.buildable and not m.fell
+    assert abs(m.dx) < 0.01 and abs(m.yaw) < 0.02

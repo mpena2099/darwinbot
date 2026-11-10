@@ -7,6 +7,7 @@ Replay an evolved body and gait from an archive checkpoint.
   python experiments/replay.py --list                       # robot types found
   python experiments/replay.py --type 8servos-low-crawl --terrain rough
   python experiments/replay.py --record out.mp4 --seconds 8
+  python experiments/replay.py --robot my_robot.yaml         # a hand-written body, standing
 """
 
 import argparse
@@ -15,8 +16,10 @@ import signal
 import time
 
 import mujoco
+import numpy as np
 
-from darwinbot import hardware, plugins
+from darwinbot import hardware, plugins, robot_file
+from darwinbot import controller as ctl
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
@@ -202,11 +205,42 @@ def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0):
         print("stopped")
 
 
+def standing(morph) -> np.ndarray:
+    """A controller that holds every joint at its middle and every wheel still:
+    no amplitude, offsets at the middle of their range."""
+    ctrl = np.zeros(ctl.CTRL_LENGTH)
+    for act in morph.layout():
+        ctrl[ctl.node_base(act.slot) + ctl.OFFSET] = 0.5
+    return ctrl
+
+
+def show_robot(a):
+    """Open a hand-written robot file in the viewer, with no archive."""
+    if a.plugin:
+        plugins.load(a.plugin)
+    morph, _ = robot_file.load(a.robot)
+    print(morpho.summary(morph))
+    problems = morpho.violations(morph)
+    for p in problems:
+        print(f"  not buildable: {p}")
+    terrain = get_terrains(a.terrain)[0]
+    episode = Episode(morph, terrain)
+    if not episode.buildable:
+        print("  parts overlap at the start; seed.py lists them")
+    print(f"terrain {terrain.name}, standing still (no controller yet)")
+    if a.record:
+        record(episode, standing(morph), a.record, a.seconds)
+    else:
+        watch(episode, standing(morph), a.speed)
+
+
 def main():
     p = argparse.ArgumentParser(description="darwinbot: replay an evolved robot")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
     p.add_argument("--plugin", default=None, metavar="FILE.py",
                    help="external tasks and terrains the archive was trained with")
+    p.add_argument("--robot", default=None, metavar="FILE.yaml",
+                   help="show a hand-written robot file standing, without an archive")
     p.add_argument("--snapshot", default=None, metavar="FILE",
                    help="play a snapshot from experiments/snapshot.py without the archive")
     p.add_argument("--type", dest="cell", default=None,
@@ -229,6 +263,9 @@ def main():
                    help="print every archive cell with its fitness, duty, height and servos, then exit")
     a = p.parse_args()
 
+    if a.robot:
+        show_robot(a)
+        return
     if a.snapshot:
         snap = open_snapshot(a.snapshot)
         robots = snap["robots"]

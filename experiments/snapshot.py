@@ -15,17 +15,18 @@ import pickle
 
 import numpy as np
 
-from darwinbot import ablate, hardware
+from darwinbot import ablate, hardware, plugins
 from darwinbot import evolve
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
 
-def load_archive(path):
+def load_archive(path, plugin=None):
     try:
         with open(path, "rb") as f:
             archive = pickle.load(f)
+        plugins.require(archive, plugin)
         hardware.require(archive.profile)
         return archive
     except FileNotFoundError:
@@ -49,6 +50,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(
         description="darwinbot: record archive robots into a code-independent snapshot")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--types", default=None,
                    help="comma-separated robot types from replay.py --list (default: all)")
     p.add_argument("--seconds", type=float, default=8.0)
@@ -62,7 +65,7 @@ def main(argv=None):
     if os.path.exists(out):
         raise SystemExit(f"{out} exists: pick another --out")
 
-    archive = load_archive(a.archive)
+    archive = load_archive(a.archive, a.plugin)
     if not archive.cells:
         raise SystemExit(f"{a.archive} has no elites")
     ablate.set_active(archive.ablate)      # the robots were trained with these rules off

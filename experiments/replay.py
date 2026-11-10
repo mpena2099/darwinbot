@@ -16,14 +16,14 @@ import time
 
 import mujoco
 
-from darwinbot import hardware
+from darwinbot import hardware, plugins
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
 
-def open_archive(path):
+def open_archive(path, plugin=None):
     """Unpickle an archive, turning the usual failures into a plain message, and
     turn on the ablations, score rules and body limits it was trained with."""
     try:
@@ -34,13 +34,14 @@ def open_archive(path):
     except ValueError as e:
         raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
                          f"(or pass --archive with a newer one).")
+    plugins.require(archive, plugin)
     hardware.require(archive.profile)    # re-runs the command under the archive's hardware
     archive.activate()
     return archive
 
 
-def load(path, cell):
-    archive = open_archive(path)
+def load(path, cell, plugin=None):
+    archive = open_archive(path, plugin)
     if not archive.cells:
         raise SystemExit(f"{path} has no elites")
     if cell is None:
@@ -204,6 +205,8 @@ def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0):
 def main():
     p = argparse.ArgumentParser(description="darwinbot: replay an evolved robot")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--snapshot", default=None, metavar="FILE",
                    help="play a snapshot from experiments/snapshot.py without the archive")
     p.add_argument("--type", dest="cell", default=None,
@@ -243,7 +246,7 @@ def main():
         return
 
     if a.list:
-        archive = open_archive(a.archive)
+        archive = open_archive(a.archive, a.plugin)
         names = archive.names()
         if archive.task != "forward" or archive.payload:
             print(f"task: {archive.task}, payload {archive.payload:g} kg")
@@ -254,7 +257,7 @@ def main():
                   f"{int(servos):6d}  {int(legs):4d}  {cot:5.1f}")
         return
 
-    archive, elite = load(a.archive, a.cell)
+    archive, elite = load(a.archive, a.cell, a.plugin)
     morph = morpho.decode(elite.morph)
     print(morpho.summary(morph))
     print(f"fitness {elite.fitness:.3f}  (task {archive.task}, payload {archive.payload:g} kg)")

@@ -100,9 +100,29 @@ removes material from the middle, keeping a rim along every edge and a solid
 boss at both ends, so holes and outline are unchanged. Parts typically keep 50
 to 90% of their material, and each takes about 10 s.
 
+The export then re-simulates the robot with the hollow masses, on the archive's
+terrains, task and payload, and prints the two scores, for example:
+
+```
+organic check: solid 1.204, hollow 1.151 (-4%)
+```
+
+If the hollow score falls more than 10% below the solid one, the export warns
+and prints the command that re-tunes the controller on the lighter body:
+
+```bash
+python experiments/polish.py --archive checkpoints/archive.pkl --types <type> --organic --out <type>-organic.pkl
+```
+
+`polish.py --organic` hollows each chosen robot the same way (into a temporary
+folder) and runs its longer controller search on those masses, its baseline
+included, so the saved archive scores the hollow robot. The check and the
+polish use the simulation, not the print: a hollow part is weighed by its
+density, and its stiffness is not modelled.
+
 Two cautions: the load case is in-plane only (out-of-plane bending is carried by
-the rim, not optimised), and the hollowed robot is lighter than the one
-evolution scored. Nothing here has been printed yet.
+the rim, not optimised), and the score is simulated, not measured. Nothing here
+has been printed yet.
 
 Servo dimensions in `darwinbot/parts.py` (horn and mounting holes, body size)
 come from the SO-ARM100 STEP model of the STS3215, not from a caliper

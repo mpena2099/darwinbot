@@ -27,8 +27,9 @@ A body whose
 geoms already touch at spawn is not buildable (see sim.is_buildable).
 """
 
+import contextlib
 import re
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 
@@ -236,6 +237,29 @@ def _box_geom(name: str, centre, half, contact: str, rgba: str = LINK_RGBA,
             f'size="{_f(*half)}" {PART_ONLY} rgba="{rgba}" {contact}/>')
 
 
+# Mass factor of a printed plate, by ("link", node id) or ("elbow", child id):
+# the share of material a hollowed part keeps (export --organic). Empty, the
+# default, leaves every density as it is and the model text unchanged.
+_MASS_FACTOR: Dict[Tuple[str, int], float] = {}
+
+
+@contextlib.contextmanager
+def mass_factors(factors):
+    """Build every model inside the block with these plates lightened:
+    {("link", id): ratio, ("elbow", child id): ratio}."""
+    global _MASS_FACTOR
+    saved, _MASS_FACTOR = _MASS_FACTOR, dict(factors or {})
+    try:
+        yield
+    finally:
+        _MASS_FACTOR = saved
+
+
+def _plate_density(kind: str, node_id: int):
+    f = _MASS_FACTOR.get((kind, node_id), 1.0)
+    return LINK_DENSITY if f == 1.0 else LINK_DENSITY * f
+
+
 def _link_geoms(node, rgba: str = LINK_RGBA, contact: str = ROBOT_GEOM,
                 tip_cap: bool = True) -> str:
     """One box geom per piece of the link path; the last piece carries the
@@ -254,7 +278,7 @@ def _link_geoms(node, rgba: str = LINK_RGBA, contact: str = ROBOT_GEOM,
         out.append(f'<geom name="{name}" type="box" pos="{_f(*((a + b) / 2))}" '
                    f'{_xyaxes(rot)} '
                    f'size="{_f(np.linalg.norm(d) / 2, node.width / 2, plate_thick(node) / 2)}" '
-                   f'density="{LINK_DENSITY}" rgba="{rgba}" {contact}/>')
+                   f'density="{_plate_density("link", node.id)}" rgba="{rgba}" {contact}/>')
     for k, p in enumerate(pts):
         if (k == 0 and node.kind == "joint") or (k == len(pts) - 1 and not tip_cap):
             continue
@@ -299,7 +323,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
         end = max(at + 0.002, d - 0.0381)
         centre = tip + rot @ np.array([0.0, side * (at + end) / 2, 0.0])
         # the strut keeps the mass of the plate it replaces
-        mass = LINK_DENSITY * w * (d - near) * plate_thick(parent)
+        mass = _plate_density("elbow", child.id) * w * (d - near) * plate_thick(parent)
         strut = _box_geom(f"strut{child.id}", centre,
                           (STRUT_HALF_W, max(1e-4, (end - at) / 2), hz), plastic, rot=rot)
         strut = strut.replace(PART_ONLY, f'mass="{mass:.6f}"')
@@ -312,7 +336,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
     return (f'<geom name="elbow{child.id}" type="box" '
             f'pos="{_f(*pos)}" {_xyaxes(rot)} '
             f'size="{_f(w / 2, (d - near) / 2, plate_thick(parent) / 2)}" '
-            f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {plastic}/>')
+            f'density="{_plate_density("elbow", child.id)}" rgba="{LINK_RGBA}" {plastic}/>')
 
 
 def _foot_shape_geoms(node, friction: float = 1.0) -> str:

@@ -50,6 +50,24 @@ Ready sets:
 | `terrain` | flat, rough, steps, rubble |
 | `all` | all of the above except `step` |
 
+### Changing an environment's measures
+
+Every environment is a function with keyword arguments, and the command line
+can set them: a colon after the name, then `key=value` pairs separated by
+colons, with commas between environments.
+
+```bash
+python experiments/train.py --terrains "steps:rise=0.08:run=0.3,slope:degrees=12"
+python experiments/replay.py --terrain "steps:rise=0.06"
+```
+
+The arguments are the ones in `darwinbot/terrain.py` (for `steps`: `rise` and
+`run` in metres, `count`; for `slope`: `degrees`, `start`, `length`). An
+unknown argument, a value that is not a number or a fraction for a count is
+refused with the list of valid arguments. The archive keeps the whole string,
+so `replay`, `validate` and `export` rebuild the same ground, and the scores
+are labelled with it (`steps:rise=0.08:run=0.3`).
+
 `rough` and `rubble` are random. Training draws new bumps and rocks for every
 body, so a family of robots cannot memorise one layout; `replay` and `validate`
 use one fixed layout, so a robot always meets the same ground there.

@@ -9,6 +9,7 @@
 | `assembly.md` | one row per servo in layout order: id, node slot, parent chain in words (for example `core right-front > joint pitch > joint roll`), axis, link length, sign; mounting direction and calibration step |
 | `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl` (bent links add `_L{deg}` or `_arc{deg}`; a joint's link adds `_u{axis}` for the fork, a tip cradle `_c{axis}`), `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl` (blade, pad and claw feet: `foot_{shape}_{R}.stl`), `wheel_{R}x{W}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `cradle_{axis}.stl` (variants `_w{deg}`, `_back`, `_free`) with `wedge_{deg}.stl`, `segment_plate_{L}x{W}.stl` for each spine segment, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
 | `robot.xml` | the MuJoCo model, for inspection |
+| `robot.urdf` | the same robot as a URDF file (see [URDF](#urdf)) |
 
 The export walks the module tree: every joint, link and spring needs a link of
 its own length and section, every elbow an elbow plate for its distance and
@@ -16,6 +17,19 @@ angle, every servo one cradle, every wheel, caster, tail, skid, spike and foot
 (explicit, or the free tip of a limb) one print. Links, elbows, feet and springs
 get one STL per distinct size. Springs and spikes are printed in TPU, the rest in
 PLA. The bill of materials counts everything from the tree.
+
+## URDF
+
+`robot.urdf` describes the same robot for ROS tools (rviz, Gazebo) and other
+simulators. It is a plain file, not a ROS package. It is built from the MuJoCo
+model of `robot.xml` on the flat terrain: the torso is the root link, every
+other body is a link with the simulated mass and principal inertia, and every
+servo is a revolute joint with its limits (wheels and casters are continuous,
+springs revolute). Collision and visual are simple shapes (box, cylinder,
+sphere; a capsule is a cylinder), not the STLs: the torso plates are drawn as
+their bounding boxes, and the massless helpers of the assembly check (cradles, bosses,
+U forks, horn discs) are skipped too. The file is for seeing and testing the
+kinematics, not for printing.
 
 ## Power estimate
 

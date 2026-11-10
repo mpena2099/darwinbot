@@ -18,6 +18,7 @@ holds an archive is resumed, so the same command run again trains further.
 import argparse
 import os
 import pickle
+import sys
 
 from darwinbot import ablate, body_options, evolve, hardware, plugins, rules
 from darwinbot.fitness import task_names
@@ -30,6 +31,19 @@ PRESETS = {
     "step":    dict(task="steer", terrains="step", payload=0.0),
     "payload": dict(task="steer", terrains="terrain", payload=0.3),
 }
+
+
+def check_kit_profile(path):
+    """Sanity-check a --profile kit before the run; warnings are printed and
+    errors stop it (tools/check_kit.py)."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+    from check_kit import check
+    errors, warnings, _ = check(path)
+    for message in warnings:
+        print(f"[kit] warning: {message}")
+    if errors:
+        raise SystemExit("hardware profile check failed:\n  " +
+                         "\n  ".join(errors))
 
 
 def main():
@@ -109,6 +123,7 @@ def main():
 
     wanted = None
     if a.profile:
+        check_kit_profile(a.profile)
         try:
             wanted = hardware.load(a.profile)
         except (OSError, ValueError) as e:

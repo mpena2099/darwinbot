@@ -44,6 +44,16 @@ python tools/kaggle/islands.py ... --profile my-kit.yaml
 
 `DARWINBOT_PROFILE=my-kit.yaml` does the same for any command. The kit's name (its file name without the extension) is what the logs show. The islands tool resolves the kit locally and sends the whole resolved profile to the Kaggle kernels, so the components next to your kit reach them.
 
+## Checking a kit
+
+Before a run, check the numbers:
+
+```bash
+python tools/check_kit.py my-kit.yaml
+```
+
+It reports every missing or unknown field, and every value outside a plausible range for its unit: a mass or a speed of zero, a body length given in metres (`length: 0.045`) or a simulation box given in millimetres (`box: 45`). The cross checks catch a stall current below the idle one, a servo box that disagrees with the housing length or width, and a battery voltage far from the 12 V the servo name suggests. It also prints the fields that differ from the default kit (old -> new) and the derived numbers: usable torque, runtime at idle and at 30 % of stall, the mass of an 8-servo robot and the bending stress of the longest link. Warnings are unusual but possible; errors exit with code 1, and `train.py --profile` prints the warnings and refuses to start on an error.
+
 ## The archive remembers it
 
 An archive stores the profile it was trained on. `train.py --resume`, `replay.py`, `validate.py`, `export.py`, `snapshot.py`, `polish.py` and `prune.py` read it back and, when it differs from the active one, restart themselves under the archive's profile. Archives from before profiles count as the default profile. `merge_archives.py` refuses archives with different profiles, and `train.py --resume` refuses a `--profile` that differs from the archive's.

@@ -16,8 +16,9 @@ body, so a lineage cannot memorise one set of bumps; replay and validation use
 the fixed default, so the same robot always sees the same ground there.
 """
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+import inspect
+from dataclasses import dataclass, replace
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -190,18 +191,52 @@ PRESETS: Dict[str, List[str]] = {
 }
 
 
-def get_terrains(spec: str, seed: Optional[int] = None) -> List[Terrain]:
-    """Terrains from a preset name or a comma list. With a seed, the random
-    terrains (SEEDED) are drawn from it; without, they use their fixed default."""
-    names = PRESETS.get(spec, [n.strip() for n in spec.split(",")])
-    unknown = [n for n in names if n not in TERRAINS]
-    if unknown:
-        raise ValueError(f"Unknown terrain(s) {unknown}. "
-                         f"Available: {list(TERRAINS)}; presets: {list(PRESETS)}")
+def parse_spec(spec: str) -> List[Tuple[str, Dict[str, float]]]:
+    """(name, keyword arguments) of every terrain in a preset name or a comma
+    list, where each item may set its factory's arguments after colons:
+    "steps:rise=0.08:run=0.3,slope:degrees=12". Unknown terrains, unknown
+    arguments and values that are not numbers are refused."""
+    items = PRESETS.get(spec, [n.strip() for n in spec.split(",")])
     out = []
-    for k, n in enumerate(names):
+    for item in items:
+        name, *args = [x.strip() for x in item.split(":")]
+        if name not in TERRAINS:
+            raise ValueError(f"Unknown terrain {name!r}. "
+                             f"Available: {list(TERRAINS)}; presets: {list(PRESETS)}")
+        params = inspect.signature(TERRAINS[name]).parameters
+        kwargs = {}
+        for arg in args:
+            key, eq, value = arg.partition("=")
+            key = key.strip()
+            if not eq or key not in params or key == "seed":
+                allowed = [k for k in params if k != "seed"]
+                raise ValueError(f"terrain {name!r}: bad argument {arg!r}, "
+                                 f"expected key=value with key in {allowed}")
+            try:
+                v = float(value)
+            except ValueError:
+                raise ValueError(f"terrain {name!r}: {key}={value!r} is not a number")
+            if isinstance(params[key].default, int):
+                if v != int(v):
+                    raise ValueError(f"terrain {name!r}: {key} must be a whole number")
+                v = int(v)
+            kwargs[key] = v
+        out.append((name, kwargs))
+    return out
+
+
+def get_terrains(spec: str, seed: Optional[int] = None) -> List[Terrain]:
+    """Terrains from a preset name or a comma list (see parse_spec). With a
+    seed, the random terrains (SEEDED) are drawn from it; without, they use
+    their fixed default. A terrain built with arguments is named after its
+    item, e.g. "steps:rise=0.08"."""
+    out = []
+    for k, (n, kwargs) in enumerate(parse_spec(spec)):
         if seed is not None and n in SEEDED:
-            out.append(TERRAINS[n](seed=(seed + 7919 * k) % 2**31))
+            t = TERRAINS[n](seed=(seed + 7919 * k) % 2**31, **kwargs)
         else:
-            out.append(TERRAINS[n]())
+            t = TERRAINS[n](**kwargs)
+        if kwargs:
+            t = replace(t, name=":".join([n] + [f"{a}={v:g}" for a, v in kwargs.items()]))
+        out.append(t)
     return out

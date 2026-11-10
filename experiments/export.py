@@ -31,7 +31,7 @@ def main():
                    help="robot type from replay.py --list (default: best robot overall)")
     p.add_argument("--out", default=None, help="output folder (default: exports/<type>/)")
     p.add_argument("--organic", action="store_true",
-                   help="also write hollowed links and elbow plates (topology "
+                   help="also write hollowed links (topology "
                         "optimisation) to parts_organic/; slower, unvalidated")
     a = p.parse_args()
 

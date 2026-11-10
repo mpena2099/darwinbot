@@ -764,9 +764,9 @@ def _write_assembly(morph, ctl, layout, out_dir):
 
 
 def _write_organic(morph, out_dir) -> dict:
-    """Hollowed links and elbow plates in parts_organic/ (organic.hollow);
-    returns {file name: volume ratio}. Parts with a fork or a printed cradle
-    are left solid."""
+    """Hollowed links in parts_organic/ (organic.hollow); returns {file name:
+    volume ratio}. Parts with a fork or a printed cradle are left solid, and
+    every elbow plate carries a servo cradle, so elbows stay solid too."""
     from darwinbot import organic, parts
     d = os.path.join(out_dir, "parts_organic")
     os.makedirs(d, exist_ok=True)

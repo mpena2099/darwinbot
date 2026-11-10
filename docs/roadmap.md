@@ -191,10 +191,10 @@ on them.
   legs, cost of transport) are chosen by hand. Axes learned from recorded
   behaviour could separate gait styles nobody listed. More experimental.
 - **Organic parts on export, beyond flat plates**: `export.py --organic`
-  hollows links and elbow plates with 2D topology optimisation. Still to do:
-  the torso tiles (many mounts, no single clamp), a 3D optimisation for
-  out-of-plane loads, and scoring the lighter robot in simulation before
-  trusting it.
+  hollows links and elbow plates with 2D topology optimisation, re-simulates
+  the lighter robot and reports its score, and `polish.py --organic` re-tunes
+  the controller on those masses. Still to do: the torso tiles (many mounts, no
+  single clamp) and a 3D optimisation for out-of-plane loads.
 - **Elastic tendons across joints**: printed TPU tendons that span one or two
   joints and store energy, as a kangaroo bounces on its tendons and a
   hamstring moves hip and knee together (MuJoCo simulates tendons natively).

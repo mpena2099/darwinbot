@@ -26,6 +26,8 @@ from darwinbot import morphology as morpho
 from darwinbot import urdf
 from darwinbot.control_file import make_control_file, write_control_file
 from darwinbot.controller import Controller
+from darwinbot.fitness import UNSTABLE_SCORE
+from darwinbot.inner import cpu_evaluator
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
@@ -886,3 +888,52 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False,
     if stl and organic:
         info["organic"] = _write_organic(morph, out_dir)
     return info
+
+
+def organic_ratios(morph, out_dir) -> dict:
+    """Hollow the plates of morph into out_dir/parts_organic/ and return
+    {file name: kept-material ratio}, as export_robot(organic=True) does."""
+    return _write_organic(morph, out_dir)
+
+
+def organic_factors(morph, ratios: dict) -> dict:
+    """builder.mass_factors keys for the hollowed parts in ratios (from
+    organic_ratios): ("link", node id) for each printed link whose STL is
+    hollowed, ("elbow", child id) for each elbow plate that is. Parts are named
+    as _write_organic names them, so a part it leaves solid keeps its density."""
+    cm = morph.child_map()
+    factors = {}
+    for i, n in morph.nodes.items():
+        if n.kind not in ("joint", "link", "spring"):
+            continue
+        if print_owner(morph, i) == i:
+            length, width, thick, profile, bend, axis, foot, tip, elbow = link_args(morph, i)
+            name = f"{link_name(profile, bend, length, width, thick)}.stl"
+            if not (axis or foot or tip or has_elbows(elbow)) and name in ratios:
+                factors[("link", n.id)] = ratios[name]
+        for slot, c in sorted(cm.get(i, {}).items()):
+            if not slot:
+                continue
+            dist, angle, width, thick, axis = elbow_args(morph, i, c)
+            name = f"{elbow_name(dist, angle, width, thick)}.stl"
+            if axis is None and name in ratios:
+                factors[("elbow", morph.nodes[c].id)] = ratios[name]
+    return factors
+
+
+def organic_check(morph, ctrl, ratios: dict, terrains: str, seconds: float,
+                  task: str = "forward", payload: float = 0.0, variants: int = 0):
+    """(solid score, hollow score) of one controller on the terrains of an
+    archive: the same evaluation as training, once with the printed masses and
+    once inside builder.mass_factors with the hollowed ones."""
+    def run():
+        episodes, score = cpu_evaluator(morph, get_terrains(terrains), seconds,
+                                        payload, variants, 0, task)
+        if not episodes[0].buildable:
+            return UNSTABLE_SCORE
+        return float(score(ctrl)[0])
+
+    solid = run()
+    with builder.mass_factors(organic_factors(morph, ratios)):
+        hollow = run()
+    return solid, hollow

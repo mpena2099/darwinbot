@@ -5,13 +5,16 @@ Replay an evolved body and gait from an archive checkpoint.
 
   python experiments/replay.py                              # best elite, flat, viewer
   python experiments/replay.py --list                       # robot types found
+  python experiments/replay.py --list --where "wheels=0,legs>=4"   # only the matching ones
   python experiments/replay.py --type 8servos-low-crawl --terrain rough
   python experiments/replay.py --record out.mp4 --seconds 8
   python experiments/replay.py --robot my_robot.yaml         # a hand-written body, standing
 """
 
 import argparse
+import operator
 import pickle
+import re
 import signal
 import time
 
@@ -24,6 +27,40 @@ from darwinbot.controller import Params
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
+
+
+WHERE_FIELDS = ("fitness", "duty", "height", "servos", "legs", "cot",
+                "wheels", "feet", "segments", "passive", "nodes")
+WHERE_OPS = {"=": operator.eq, "!=": operator.ne, "<": operator.lt,
+             "<=": operator.le, ">": operator.gt, ">=": operator.ge}
+PASSIVE_KINDS = ("spring", "tail", "skid", "spike", "caster")
+
+
+def parse_where(expr):
+    """Turn 'field OP number, ...' into (field, op, value) triples. Every
+    condition must hold; a bad one stops with a message naming the fields."""
+    conds = []
+    for part in expr.split(","):
+        m = re.fullmatch(r"\s*(\w*)\s*(!=|<=|>=|=|<|>)\s*(.*?)\s*", part)
+        if not m:
+            raise SystemExit(f"--where: bad condition {part.strip()!r}, expected "
+                             f"field OP number, e.g. legs>=4 (fields: "
+                             f"{', '.join(WHERE_FIELDS)}; OP: {' '.join(WHERE_OPS)})")
+        field, op, text = m.groups()
+        if field not in WHERE_FIELDS:
+            raise SystemExit(f"--where: unknown field {field!r} (fields: "
+                             f"{', '.join(WHERE_FIELDS)})")
+        try:
+            value = float(text)
+        except ValueError:
+            raise SystemExit(f"--where: {text!r} in {part.strip()!r} is not a number")
+        conds.append((field, op, value))
+    return conds
+
+
+def matches(row, conds):
+    """True when the row (field name to value) meets every condition."""
+    return all(WHERE_OPS[op](row[field], value) for field, op, value in conds)
 
 
 def open_archive(path, plugin=None):
@@ -260,8 +297,14 @@ def main():
                    help="speed command from 0 (slowest) to 1 (full, as evolved); in "
                         "the viewer page up and page down change it")
     p.add_argument("--list", action="store_true",
-                   help="print every archive cell with its fitness, duty, height and servos, then exit")
+                   help="print every archive cell with its fitness, behaviour and body parts, then exit")
+    p.add_argument("--where", default=None, metavar="EXPR",
+                   help="with --list, keep the robots that match, e.g. "
+                        "\"wheels=0,legs>=4,fitness>0.3\" (fields: " + ", ".join(WHERE_FIELDS) + ")")
     a = p.parse_args()
+    if a.where and not a.list:
+        raise SystemExit("--where needs --list")
+    conds = parse_where(a.where) if a.where else []
 
     if a.robot:
         show_robot(a)
@@ -270,6 +313,8 @@ def main():
         snap = open_snapshot(a.snapshot)
         robots = snap["robots"]
         if a.list:
+            if conds:
+                raise SystemExit("--where works on the archive list, not on --snapshot")
             print("type                       fitness  frames")
             for name, r in sorted(robots.items(), key=lambda kv: -kv[1]["fitness"]):
                 print(f"{name:26s} {r['fitness']:7.2f}  {len(r['qpos']):6d}")
@@ -287,11 +332,25 @@ def main():
         names = archive.names()
         if archive.task != "forward" or archive.payload:
             print(f"task: {archive.task}, payload {archive.payload:g} kg")
-        print("type                       fitness  duty  height  servos  legs    cot")
+        print("type                       fitness  duty  height  servos  legs    cot"
+              "  wheels  feet  segments  passive  nodes")
+        shown = 0
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
             duty, height, servos, _, cot, legs = e.behaviour
+            morph = morpho.decode(e.morph)
+            kinds = [n.kind for n in morph.nodes.values()]
+            row = dict(fitness=e.fitness, duty=duty, height=height, servos=int(servos),
+                       legs=int(legs), cot=cot, wheels=morph.n_wheels,
+                       feet=kinds.count("foot"), segments=morph.n_segments,
+                       passive=sum(k in PASSIVE_KINDS for k in kinds), nodes=len(kinds))
+            if not matches(row, conds):
+                continue
+            shown += 1
             print(f"{names[cell]:26s} {e.fitness:7.2f}  {duty:4.2f}  {height:6.2f}  "
-                  f"{int(servos):6d}  {int(legs):4d}  {cot:5.1f}")
+                  f"{int(servos):6d}  {int(legs):4d}  {cot:5.1f}  {row['wheels']:6d}  "
+                  f"{row['feet']:4d}  {row['segments']:8d}  {row['passive']:7d}  "
+                  f"{row['nodes']:5d}")
+        print(f"{shown} of {len(archive.cells)} robots")
         return
 
     archive, elite = load(a.archive, a.cell, a.plugin)

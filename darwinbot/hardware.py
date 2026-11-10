@@ -35,7 +35,8 @@ class Servo:
     stall_torque: float
     load_full_scale: float
     mass: float
-    bracket_mass: float
+    cradle_mass_plate: float
+    cradle_mass_link: float
     current_idle: float
     current_stall: float
     joint_friction: float

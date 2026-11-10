@@ -278,10 +278,10 @@ def _axis_roll(spec):
 
 
 def _u_root(axis: str, width_mm: float, thick_mm: float):
-    """U link fork that clasps both horns of the servo at the link root, plus
-    the bridge into the link plate. Returns (solid, x of the plate start).
-    The arms lie on the two horn faces, outside the cradle caps, and carry the
-    horn hole pattern on the output axis."""
+    """U link fork at the link root, plus the bridge into the link plate.
+    Returns (solid, x of the plate start). The arms lie on the horn faces,
+    outside the cradle caps, and carry the horn hole pattern on the output
+    axis. A link about X (roll) has one arm, on the main horn face only."""
     d = SERVO_BODY_H / 2 + HORN_T + ARM_GAP
     hw = max(ARM_W, width_mm / 2 + 1.0)
     front = BRIDGE_X + BRIDGE_T
@@ -312,14 +312,11 @@ def _u_root(axis: str, width_mm: float, thick_mm: float):
         add(_boxc(BRIDGE_X, front, -(d + ARM_T), d + ARM_T,
                   -thick_mm / 2, thick_mm / 2))
     else:
-        # about X: the arms sit fore and aft of the servo, joined by a strap
-        # over its far end at the radius the plate clears (BRIDGE_X); the plate
-        # runs on from the fore arm, along the output axis
-        z = BRIDGE_X
-        for s in (-1, 1):
-            add(_boxc(s * d, s * (d + ARM_T), -hw, hw, -hw, z + ARM_T))
-            part -= horn(s)
-        add(_boxc(-(d + ARM_T), d + ARM_T, -hw, hw, z, z + ARM_T))
+        # about X: one arm, on the main horn face; the far end of the servo is
+        # where the parent holds it, so the link carries no strap there. The
+        # plate runs on from this arm, along the output axis
+        add(_boxc(d, d + ARM_T, -hw, hw, -hw, BRIDGE_X + ARM_T))
+        part -= horn(1)
         front = d + ARM_T / 2
     return part, front
 

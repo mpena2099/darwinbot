@@ -52,7 +52,7 @@ SHELL_DENSITY  = hardware.MATERIAL.shell_density   # kg/m^3, printed shell with 
 LIMB_DENSITY   = hardware.MATERIAL.limb_density
 LINK_DENSITY   = hardware.MATERIAL.link_density    # kg/m^3, solid PLA printed link
 PAYLOAD_MASS   = hardware.ELECTRONICS.mass         # kg: ESP32 + 3S LiPo + regulator
-SERVO_MASS     = hardware.SERVO.mass + hardware.SERVO.bracket_mass   # kg: the servo plus its printed bracket
+SERVO_MASS     = hardware.SERVO.mass   # kg, the servo alone; its cradle is added per mount (_servo_mass)
 ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
@@ -176,9 +176,18 @@ def _frame_attrs(morph: Morphology, node) -> str:
     return f'pos="{_f(*off)}" xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
 
 
-def _servo_box(i: int, axis: str, friction: float = 1.0) -> str:
+def _servo_mass(morph: Morphology, node) -> float:
+    """kg of a servo and the printed cradle it sits in. The cradle is printed
+    on the torso or a segment plate (its own part, with a foot) or at a link
+    tip or on an elbow, which the cradle's volume depends on."""
+    plate = morph.nodes[node.parent].kind in ("core", "segment")
+    cradle = hardware.SERVO.cradle_mass_plate if plate else hardware.SERVO.cradle_mass_link
+    return SERVO_MASS + cradle
+
+
+def _servo_box(i: int, axis: str, mass: float, friction: float = 1.0) -> str:
     half, centre = servo_box(axis)
-    return (f'<geom name="servo{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" '
+    return (f'<geom name="servo{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" mass="{mass:.6f}" rgba="0.15 0.15 0.15 1" '
             f'{_special_geom(plastic_factor(), friction)}/>')
 
 
@@ -193,7 +202,7 @@ HORN_RADIUS, HORN_THICK = 0.011, 0.003
 
 def _cradle_geom(i: int, axis: str, friction: float = 1.0) -> str:
     """The printed cradle around the servo, a collision shape without mass of
-    its own (SERVO_MASS already counts the printed holder). It lives next to
+    its own (_servo_mass already counts the printed holder). It lives next to
     the servo box, in the part the servo is bolted to."""
     half, centre = cradle_box(axis)
     return (f'<geom name="cradle{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" '
@@ -451,7 +460,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-SERVO_SPEED} {SERVO_SPEED}" '
             f'forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "wheel", "wheel"))
-        inner = f"""{_servo_box(i, "yaw", friction)}
+        inner = f"""{_servo_box(i, "yaw", _servo_mass(morph, node), friction)}
           {_cradle_geom(i, "yaw", friction)}
           <body name="{name}" pos="{_f(*hub)}">
             <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{WHEEL_DAMPING}"/>
@@ -509,7 +518,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     mount = ""
     if node.kind in ("joint", "segment"):
         mount = (f'\n      <frame {_frame_attrs(morph, node)}>\n        '
-                 f'{_servo_box(i, node.axis, friction)}\n        {_cradle_geom(i, node.axis, friction)}\n        {_servo_dress(node.axis)}\n      </frame>')
+                 f'{_servo_box(i, node.axis, _servo_mass(morph, node), friction)}\n        {_cradle_geom(i, node.axis, friction)}\n        {_servo_dress(node.axis)}\n      </frame>')
     return f"""{mount}
       <body name="n{i}" {_frame_attrs(morph, node)}>
         {inner}{below}

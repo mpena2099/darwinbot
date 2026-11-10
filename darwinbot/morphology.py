@@ -177,7 +177,9 @@ def cradle_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
 def fork_boxes(axis: str, width: float, thick: float) -> List[Tuple[np.ndarray, np.ndarray]]:
     """(centre, half extents) boxes, in the module frame, of the U fork at the
     root of a joint's link: one arm on each horn face of the servo and the
-    bridge across its front (parts._u_root)."""
+    bridge across its front (parts._u_root). A roll joint's link has only the
+    arm on the main horn face: the other side is the servo's far end, where
+    the parent holds the servo."""
     d = PRINT_BODY_H / 2 + FORK_HORN_T + FORK_ARM_GAP
     hw = max(FORK_ARM_HALF_W, width / 2 + 0.001)
     t, bx = FORK_ARM_T, FORK_BRIDGE_X
@@ -185,11 +187,8 @@ def fork_boxes(axis: str, width: float, thick: float) -> List[Tuple[np.ndarray, 
     out = []
     if axis == "roll":
         z1 = bx + t
-        for s in (-1.0, 1.0):
-            out.append((np.array([s * (d + t / 2), 0.0, (z1 - hw) / 2]),
-                        np.array([t / 2, hw, (z1 + hw) / 2])))
-        out.append((np.array([0.0, 0.0, bx + t / 2]), np.array([d + t, hw, t / 2])))
-        return out
+        return [(np.array([d + t / 2, 0.0, (z1 - hw) / 2]),
+                 np.array([t / 2, hw, (z1 + hw) / 2]))]
     for s in (-1.0, 1.0):
         arm_c = np.array([(front - hw) / 2, 0.0, 0.0])
         arm_h = np.array([(front + hw) / 2, hw, hw])
@@ -1544,21 +1543,23 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
 
 def template(n_pairs: int = 2, wheels: bool = False, yaw: bool = False,
              thigh: float = 0.10, shin: float = 0.10, wheel_rad: float = 0.05,
-             body_length: float = 0.40, body_width: float = 0.20) -> Morphology:
+             body_length: float = 0.40, body_width: float = 0.20,
+             axes: Tuple[str, str] = ("pitch", "pitch")) -> Morphology:
     """
     Mirrored leg pairs on the core sides, like the old fixed genome:
-    [yaw joint] -> hip pitch (thigh) -> elbow -> knee pitch (shin) -> [wheel].
+    [yaw joint] -> hip joint (thigh) -> elbow -> knee joint (shin) -> [wheel].
     The right leg is a mirror copy of the left one; pairs beyond MAX_NODES or
-    MAX_SERVOS are left out. Positive pitch lifts the
-    thigh and swings the shin outward, positive yaw swings the foot forward.
+    MAX_SERVOS are left out. The hip and knee axes are `axes` (pitch by
+    default). Positive pitch lifts the thigh and swings the shin outward,
+    positive yaw swings the foot forward.
     """
     morph = Morphology(body_length, body_width, {0: Node(0, "core")})
     wheels = wheels and _body_options().allow_wheels
     chain = []                       # (kind, slot on the parent, fields)
     if yaw:
         chain.append(("joint", 0, dict(axis="yaw", length=0.07)))
-    chain.append(("joint", 0, dict(axis="pitch", length=thigh, flip=True)))
-    chain.append(("joint", 1, dict(axis="pitch", length=shin, flip=True,
+    chain.append(("joint", 0, dict(axis=axes[0], length=thigh, flip=True)))
+    chain.append(("joint", 1, dict(axis=axes[1], length=shin, flip=True,
                                    offset=ELBOW_OFFSET)))
     if wheels:
         chain.append(("wheel", 0, dict(wheel_rad=wheel_rad)))
@@ -1591,7 +1592,8 @@ def _random_seed(rng: np.random.Generator) -> Morphology:
     n_pairs = int(rng.integers(1, 4))
     while n_pairs > 1 and 2 * n_pairs * (2 + yaw + wheels) > _max_servos():
         n_pairs -= 1
-    morph = template(n_pairs, wheels, yaw,
+    axes = tuple(str(rng.choice(AXES, p=[0.6, 0.25, 0.15])) for _ in range(2))
+    morph = template(n_pairs, wheels, yaw, axes=axes,
                      thigh=round(float(rng.uniform(*LENGTH_RANGE)), 6),
                      shin=round(float(rng.uniform(*LENGTH_RANGE)), 6),
                      wheel_rad=round(float(rng.uniform(0.03, 0.05)), 6),

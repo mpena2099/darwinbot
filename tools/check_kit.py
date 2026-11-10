@@ -35,7 +35,8 @@ SPEC = {
         "stall_torque":       ("N*m", 0.001, 50.0, 0.05, 10.0),
         "load_full_scale":    ("fraction of stall", 0.001, 1.0, 0.1, 1.0),
         "mass":               ("kg", 0.001, 5.0, 0.005, 1.0),
-        "bracket_mass":       ("kg", 0.0, 5.0, 0.0, 0.5),
+        "cradle_mass_plate":  ("kg", 0.0, 5.0, 0.0, 0.5),
+        "cradle_mass_link":   ("kg", 0.0, 5.0, 0.0, 0.5),
         "current_idle":       ("A", 0.0, 100.0, 0.001, 5.0),
         "current_stall":      ("A", 0.001, 500.0, 0.05, 50.0),
         "joint_friction":     ("N*m", 0.0, 100.0, 0.0, 10.0),
@@ -209,13 +210,13 @@ def _derived(parts, report):
                 f"({N_SERVOS} servos, {board:.2f} A electronics)")
 
     mass = _number(parts, "servo", "mass")
-    bracket = _number(parts, "servo", "bracket_mass")
+    cradle = _number(parts, "servo", "cradle_mass_plate")   # the heavier cradle: an upper bound
     board_mass = _number(parts, "electronics", "mass")
-    if None not in (mass, bracket, board_mass):
-        total = N_SERVOS * (mass + bracket) + board_mass
+    if None not in (mass, cradle, board_mass):
+        total = N_SERVOS * (mass + cradle) + board_mass
         report.append(f"{N_SERVOS}-servo mass: {total:.2f} kg "
-                      f"({N_SERVOS} x {mass:.3f} kg + {N_SERVOS} x {bracket:.3f} kg "
-                      f"brackets + {board_mass:.3f} kg electronics incl. pack)")
+                      f"({N_SERVOS} x {mass:.3f} kg + {N_SERVOS} x {cradle:.3f} kg "
+                      f"cradles on plates + {board_mass:.3f} kg electronics incl. pack)")
 
     pla = _number(parts, "material", "pla_strength")
     safety = _number(parts, "material", "strength_safety")

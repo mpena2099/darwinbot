@@ -17,7 +17,9 @@ def test_default_values_are_the_old_literals():
     assert controller.SERVO_SPEED == 4.71
     assert controller.LOAD_FULL_SCALE == 0.7
     assert controller.SERVO_TORQUE == 2.94 * 0.7
-    assert builder.SERVO_MASS == 0.060 + 0.015
+    assert builder.SERVO_MASS == 0.060
+    assert hardware.SERVO.cradle_mass_plate == 0.0227
+    assert hardware.SERVO.cradle_mass_link == 0.0173
     assert builder.PAYLOAD_MASS == 0.17
     assert builder.LINK_DENSITY == 1240.0
     assert builder.SHELL_DENSITY == 300.0
@@ -43,7 +45,7 @@ def test_default_kit_resolves_to_the_old_single_file_profile():
     assert list(d) == ["servo", "battery", "electronics", "material", "printer"]
     assert d == hardware.PROFILE and hardware.NAME == "default"
     assert d["servo"]["speed"] == 4.71 and d["servo"]["tap_x"] == [5.0, -19.5]
-    assert d["servo"]["box"] == [0.045, 0.025, 0.035] and len(d["servo"]) == 30
+    assert d["servo"]["box"] == [0.045, 0.025, 0.035] and len(d["servo"]) == 31
     assert d["battery"] == {"capacity_ah": 1.2, "c_rating": 20.0, "volts": 11.1}
     assert d["electronics"] == {"mass": 0.17, "current_a": 0.15, "box": [0.10, 0.06]}
     assert d["material"] == {"link_density": 1240.0, "shell_density": 300.0,
@@ -124,7 +126,7 @@ def test_changed_profile_changes_constants(tmp_path):
              "print(controller.SERVO_SPEED, builder.SERVO_MASS)")
     assert r.returncode == 0, r.stderr
     assert r.stdout.split()[0] == "5.5"
-    assert float(r.stdout.split()[1]) == 0.07 + 0.015
+    assert float(r.stdout.split()[1]) == 0.07
 
 
 def test_missing_and_unknown_keys_name_the_key(tmp_path):

@@ -14,7 +14,7 @@ printer: bed-220mm
 
 Each component is a YAML file with the keys of its section, and the numbers carry their source in comments. The shipped ones live in `darwinbot/profiles/<section plural>/`.
 
-- `servos/`: no-load speed, stall torque, the load that reads as `N = 1`, mass, bracket mass, idle and stall current, joint friction, armature and gain, wheel gain, the simulation box, and the housing and horn measures that `parts.py` and the exporter use (body size, output axis offset, clearance, tapped holes, bolt circle).
+- `servos/`: no-load speed, stall torque, the load that reads as `N = 1`, mass, cradle masses (on a plate and at a link), idle and stall current, joint friction, armature and gain, wheel gain, the simulation box, and the housing and horn measures that `parts.py` and the exporter use (body size, output axis offset, clearance, tapped holes, bolt circle).
 - `batteries/`: capacity, C rating and voltage.
 - `electronics/`: mass, current and footprint of the board and pack.
 - `materials/`: densities, PLA strength, the safety factor on link bending and the friction factor of hard plastic on the floor.

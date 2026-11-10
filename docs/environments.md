@@ -56,15 +56,44 @@ use one fixed layout, so a robot always meets the same ground there.
 
 ## Make your own environment
 
-An environment is a function in `darwinbot/terrain.py` that returns a
-`Terrain`: a name, the MuJoCo XML of the world (boxes, cylinders, meshes,
-anything MuJoCo loads), the ground friction and the ground height at the spawn.
-Add it to `TERRAINS` and train on it:
+An environment is a function that returns a `Terrain`: a name, the MuJoCo XML
+of the world (boxes, cylinders, meshes, anything MuJoCo loads), the ground
+friction and the ground height at the spawn. Write it in a file of your own,
+register it with `terrain.register_terrain`, and pass the file with `--plugin`
+([Plugins](plugins.md)):
 
 ```bash
-python experiments/train.py --terrains tunnel          # only the new one
-python experiments/train.py --terrains flat,tunnel     # mixed with others
+python experiments/train.py --plugin tunnel.py --terrains tunnel          # only the new one
+python experiments/train.py --plugin tunnel.py --terrains flat,tunnel     # mixed with others
 ```
+
+### Worked example: a staircase that grows to a house step
+
+`examples/plugins/progressive_stairs.py` adds `progressive-stairs`: four steps
+on 28 cm treads whose risers grow from 4 to 8, 12 and 17 cm, the height of a
+house step, with the first riser at x = 0.6 m. The low first step lets
+evolution get a foothold; each next one filters out the bodies that cannot
+lift that high, so the score says how far up a robot gets.
+
+Start from your own walker (see [Starting from your own design](own-design.md)),
+then let evolution take over. Episodes of 10 s give a slow climber the time to
+reach the top step, and the `forward` task scores distance only, with no turning
+episodes:
+
+```bash
+python experiments/seed.py --robot examples/robots/small-walker.yaml \
+    --plugin examples/plugins/progressive_stairs.py \
+    --terrains flat,progressive-stairs --task forward --seconds 10 --out checkpoints/stairs
+python experiments/train.py --resume checkpoints/stairs/archive.pkl --batches 30 \
+    --plugin examples/plugins/progressive_stairs.py
+python experiments/replay.py --archive checkpoints/stairs/archive.pkl --list \
+    --plugin examples/plugins/progressive_stairs.py
+```
+
+With `flat` in the set a body still earns for walking on level ground before
+it can climb, which keeps the early batches from scoring only stalls. Most
+evolved robots carry their torso lower than the top risers, so the 17 cm step
+is a real limit, not a formality.
 
 Evolution then keeps the bodies and gaits that do best there. A few things
 decide whether the result is what you expect:

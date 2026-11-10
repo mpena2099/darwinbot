@@ -11,6 +11,16 @@ python experiments/replay.py --list
 python experiments/replay.py --type 8servos-mid-trot
 ```
 
+`--list --where` keeps only the robots that match every condition, separated by
+commas. The fields are `fitness`, `duty`, `height`, `servos`, `legs`, `cot`,
+`wheels`, `feet`, `segments`, `passive` (springs, tails, skids, spikes and
+casters) and `nodes`; the operators are `= != < <= > >=`. For example, robots
+without wheels, with at least four legs and a fitness above 0.3:
+
+```bash
+python experiments/replay.py --list --where "wheels=0,legs>=4,fitness>0.3"
+```
+
 ## All commands
 
 ```bash
@@ -41,6 +51,7 @@ python experiments/replay.py
 
 # List the robot types found so far, then open one of them
 python experiments/replay.py --list
+python experiments/replay.py --list --where "wheels=0,legs>=4"   # only the matching robots
 python experiments/replay.py --type 8servos-mid-trot --terrain rough
 
 # Record a video instead of opening a window (needs the video extra)
@@ -105,11 +116,12 @@ Step 1, see which types the run has found, best first:
 
 ```
 $ python experiments/replay.py --list
-type                       fitness  duty  height  servos    cot
-8servos-mid-trot              0.11  0.34    0.45       8    6.2
-12servos-low-trot            -0.03  0.41    0.28      12   21.4
-12servos-low-walk-133        -0.03  0.52    0.33      12   18.7
+type                       fitness  duty  height  servos  legs    cot  wheels  feet  segments  passive  nodes
+8servos-mid-trot              0.11  0.34    0.45       8     4    6.2       0     4         0        0     13
+12servos-low-trot            -0.03  0.41    0.28      12     4   21.4       0     2         0        1     17
+12servos-low-walk-133        -0.03  0.52    0.33      12     4   18.7       0     4         0        0     17
 ...
+3 of 3 robots
 ```
 
 Step 2, open one in the 3D viewer (or add `--record name.mp4` for a video):

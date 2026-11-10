@@ -20,7 +20,7 @@ pytest tests -q                               # tests, ~1 min; GPU tests skip th
 python experiments/train.py --terrains terrain --batches 30 --workers 3
 python experiments/train.py --parent-selection uniform   # default: novelty
 python experiments/train.py --body "no-wheels,max-servos=8,legs=4..6"   # limits on the bodies evolution may build
-python experiments/replay.py --list           # robot types in the archive, with duty, height, servos and cost of transport (cot)
+python experiments/replay.py --list           # robot types in the archive, with duty, height, servos, cost of transport (cot), wheels, feet, segments, passive; --where "wheels=0,legs>=4" filters and nodes; --where "wheels=0,legs>=4" filters them
 python experiments/replay.py --type 12servos-high-trot --speed 0.5
 python experiments/snapshot.py --archive <archive.pkl> --types a,b   # code-independent recording for later playback
 python experiments/replay.py --snapshot a.snap.pkl --type <type>   # play a snapshot without the archive's code

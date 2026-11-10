@@ -191,7 +191,7 @@ on them.
   legs, cost of transport) are chosen by hand. Axes learned from recorded
   behaviour could separate gait styles nobody listed. More experimental.
 - **Organic parts on export, beyond flat plates**: `export.py --organic`
-  hollows links and elbow plates with 2D topology optimisation, re-simulates
+  hollows plain links with 2D topology optimisation, re-simulates
   the lighter robot and reports its score, and `polish.py --organic` re-tunes
   the controller on those masses. Still to do: the torso tiles (many mounts, no
   single clamp) and a 3D optimisation for out-of-plane loads.

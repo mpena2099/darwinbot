@@ -93,11 +93,11 @@ the parts before slicing.
 ## Hollowed parts (optional)
 
 `experiments/export.py --type <type> --organic` also writes `parts_organic/`:
-the links and elbow plates hollowed by 2D topology optimisation
+the plain links hollowed by 2D topology optimisation
 (`darwinbot/organic.py`), with the horn end clamped and the stall load at the
 far end. Evolution chose each part's size and interfaces; the optimisation only
 removes material from the middle, keeping a rim along every edge and a solid
-boss at both ends, so holes and outline are unchanged. Parts typically keep 50
+boss at both ends, so holes and outline are unchanged. Only plain links are hollowed: a link with a servo fork, a printed cradle, a foot or an elbow at its tip stays solid, and so do the elbow plates, which all carry a servo cradle. Parts typically keep 50
 to 90% of their material, and each takes about 10 s.
 
 The export then re-simulates the robot with the hollow masses, on the archive's

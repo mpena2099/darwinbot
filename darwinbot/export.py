@@ -21,7 +21,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from darwinbot import builder, hardware, power
+from darwinbot import builder, dims, hardware, power
 from darwinbot import morphology as morpho
 from darwinbot import urdf
 from darwinbot.control_file import make_control_file, write_control_file
@@ -268,14 +268,14 @@ def foot_name(shape, radius):
 
 # Stack-up constants, equal to parts.WALL, parts.PLATE_T (parts needs build123d,
 # the bill of materials does not).
-FLOOR_T = 3.0            # cradle foot, under the servo on a torso tab
-PLATE_T = 6.0            # torso plate and splice strip
-CRADLE_BACK = 38.1       # parts.CRADLE_BACK: cradle back wall behind the axis
-WEDGE_T = 2.0            # thinnest edge of a rolled-mount wedge
-WEDGE_W = 23.0           # wedge side (parts.MOUNT_SIDE + 2 * parts.WALL + 2)
-BACK_FOOT_X = 31.0       # M3 pattern of a back foot behind the axis (parts.BACK_FOOT_X)
+FLOOR_T = dims.MOUNT_FOOT_T_MM            # cradle foot, under the servo on a torso tab
+PLATE_T = dims.PLATE_T_MM            # torso plate and splice strip
+CRADLE_BACK = dims.CRADLE_BACK_MM       # parts.CRADLE_BACK: cradle back wall behind the axis
+WEDGE_T = dims.WEDGE_T_MM            # thinnest edge of a rolled-mount wedge
+WEDGE_W = dims.WEDGE_W_MM           # wedge side (parts.MOUNT_SIDE + 2 * parts.WALL + 2)
+BACK_FOOT_X = dims.BACK_FOOT_X_MM       # M3 pattern of a back foot behind the axis (parts.BACK_FOOT_X)
 MOUNT_MIN_DROP = 12.0    # shortest cradle foot: it merges into the sleeve below
-TONGUE_T = 0.45          # elbow tongue lapped on a link tip (parts.TONGUE_T)
+TONGUE_T = dims.TONGUE_T_MM          # elbow tongue lapped on a link tip (parts.TONGUE_T)
 NUT_T = 2.4              # M3 nut
 M3_LENGTHS = (6, 8, 10, 12, 16, 20, 25, 30)
 

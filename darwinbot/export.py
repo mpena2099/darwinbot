@@ -444,7 +444,7 @@ def part_counts(morph):
             for slot, child in sorted(cm.get(i, {}).items()):
                 if slot and servo_axis(morph, child):
                     elbows[elbow_args(morph, i, child)] += 1
-            if i not in cm:
+            if i not in cm and n.kind != "spring":
                 feet[("sphere", _mm(morpho.section_radius(n)))] += 1
         mount = torso_mount(morph, i)
         if mount:

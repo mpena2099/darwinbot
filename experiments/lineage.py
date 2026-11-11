@@ -73,6 +73,8 @@ def plot_overview(rows):
 def main():
     p = argparse.ArgumentParser(description="darwinbot: family tree of the archive")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--type", help="robot type from replay.py --list")
     p.add_argument("--out", default="checkpoints", help="output directory")
     a = p.parse_args()
@@ -81,7 +83,7 @@ def main():
     matplotlib.use("Agg")
     from replay import open_archive   # same directory; shared error messages
 
-    archive = open_archive(a.archive)
+    archive = open_archive(a.archive, a.plugin)
     if not archive.lineage:
         raise SystemExit("this archive has no lineage records (trained before "
                          "lineage was added); retrain to get a family tree")

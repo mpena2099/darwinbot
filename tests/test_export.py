@@ -10,7 +10,7 @@ from darwinbot import controller as co
 from darwinbot import morphology as mo
 from darwinbot.control_file import read_control_file
 from darwinbot.evolve import Elite
-from darwinbot.export import (bom_rows, export_robot, mount_positions_mm,
+from darwinbot.export import (bom_rows, export_robot, link_args, mount_positions_mm,
                               parent_chain, part_counts, servo_signs)
 
 
@@ -203,6 +203,18 @@ def test_spring_stl_and_bom_use_the_same_key():
     rows = {item: q for item, q, _ in bom_rows(m)}
     assert rows["spring_20x4.stl"] == 2          # two lengths, one printed part
     assert not any(k.startswith("spring_") and k != "spring_20x4.stl" for k in rows)
+
+
+def test_free_spring_tip_has_no_spigot_and_no_foot():
+    m = _tree()
+    first = max(m.nodes) + 1
+    m.nodes[first] = mo.Node(first, "spring", 0, 4, 0, axis="pitch",
+                             length=0.14, width=0.031, thick=0.006)
+    assert link_args(m, first)[6] is None        # the plate's tip has no foot radius
+    radius = int(round(mo.section_radius(m.nodes[first]) * 1000))
+    assert part_counts(m)[2].get(("sphere", radius), 0) == 0
+    rows = {item: q for item, q, _ in bom_rows(m)}
+    assert f"foot_{radius}.stl" not in rows
 
 
 def test_bom_lists_screw_lengths_nuts_and_the_placeholder_board():

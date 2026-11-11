@@ -26,6 +26,7 @@ STAGES = ("polish", "prune", "validate", "assembly", "snapshot")
 FILES = {"polish": "polished.pkl", "prune": "pruned.pkl",
          "validate": "validate.txt", "assembly": "assembly.txt",
          "snapshot": "showcase.snap.pkl"}
+PLUGIN_STAGES = ("polish", "prune", "validate", "snapshot")
 
 
 def plan(skip=()):
@@ -33,8 +34,15 @@ def plan(skip=()):
     return [s for s in STAGES if s not in skip]
 
 
-def command(stage, archive, types, out, workers=1, budget=1200):
+def command(stage, archive, types, out, workers=1, budget=1200, plugin=None):
     """argv of one stage, sys.executable first. Pure: nothing is read or run."""
+    argv = _stage_argv(stage, archive, types, out, workers, budget)
+    if plugin and stage in PLUGIN_STAGES:
+        argv += ["--plugin", plugin]
+    return argv
+
+
+def _stage_argv(stage, archive, types, out, workers, budget):
     py = sys.executable
     paths = {k: os.path.join(out, v) for k, v in FILES.items()}
     if stage == "polish":
@@ -105,6 +113,8 @@ def main(argv=None):
     p.add_argument("--workers", type=int, default=1, help="workers for polish and validate")
     p.add_argument("--budget", type=int, default=1200,
                    help="polish's CMA-ES evaluations per robot")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--skip", default="",
                    help="comma list of stages to leave out: " + ", ".join(STAGES))
     a = p.parse_args(argv)
@@ -129,7 +139,7 @@ def main(argv=None):
     for stage in run:
         if stage in ("polish", "prune"):
             _run(stage, command(stage, src, names if stage == "prune" else types,
-                                a.out, a.workers, a.budget))
+                                a.out, a.workers, a.budget, a.plugin))
             src = os.path.join(a.out, FILES[stage])
             rows = _ordered(src, len(types))
             names = [n for _, n in rows]
@@ -138,7 +148,8 @@ def main(argv=None):
             fit_prune = [f for f, _ in rows]
         elif stage in ("validate", "assembly"):
             for i, name in enumerate(names):
-                text = _run(stage, command(stage, src, [name], a.out, a.workers),
+                text = _run(stage, command(stage, src, [name], a.out, a.workers,
+                                           plugin=a.plugin),
                             os.path.join(a.out, FILES[stage]))
                 if stage == "validate":
                     m = re.findall(r"\): (PASS|FAIL)", text)
@@ -147,7 +158,7 @@ def main(argv=None):
                     m = re.search(r"(\d+) clash", text)
                     clashes[i] = int(m.group(1)) if m else "?"
         else:
-            _run(stage, command(stage, src, names, a.out))
+            _run(stage, command(stage, src, names, a.out, plugin=a.plugin))
 
     lines = [f"{'type':<24} {'before':>8} {'polished':>9} {'pruned':>8} "
              f"{'validate':>9} {'clashes':>8}"]

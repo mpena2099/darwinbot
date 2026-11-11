@@ -119,6 +119,8 @@ old one, which is kept when nothing better is found. A body that is no longer
 buildable is dropped. Cells are recomputed, history and lineage are kept, and
 the script prints one table: elites in, dropped, cells out, how many changed
 cell, and mean and best fitness before and after. It never overwrites `--out`.
+`--seconds S` re-evaluates every elite with episodes of S seconds and stores S in
+the result, so a later `train.py --resume` keeps using it.
 
 An archive trained on the default hardware takes the current default profile, so
 a change to it (the servo mass, say) applies; a custom kit is kept, with a

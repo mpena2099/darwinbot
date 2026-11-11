@@ -84,6 +84,25 @@ def test_migrate_keeps_settings_and_adds_history(tiny, tmp_path, monkeypatch):
         assert uid in out.lineage
 
 
+def test_seconds_overrides_the_episode_length(tiny, tmp_path, monkeypatch):
+    monkeypatch.setitem(evolve.MIGRATIONS, OLD, lambda m, c: (m, c))
+    old = _load(_stale_file(tiny, tmp_path))
+    old.activate()
+    used = []
+    real = ma.optimise_controller
+
+    def spy(*args, **kwargs):
+        used.append(kwargs["seconds"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ma, "optimise_controller", spy)
+    new_seconds = tiny.seconds + 1.0
+    out, summary = ma.migrate(old, workers=1, budget=4, seconds=new_seconds)
+    assert out.seconds == new_seconds and set(used) == {new_seconds}
+    assert summary["seconds_before"] == tiny.seconds
+    assert summary["seconds_after"] == new_seconds
+
+
 def test_unbuildable_elite_is_dropped(tiny, tmp_path, monkeypatch):
     monkeypatch.setitem(evolve.MIGRATIONS, OLD, lambda m, c: (m, c))
     old = _load(_stale_file(tiny, tmp_path))

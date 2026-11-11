@@ -82,7 +82,7 @@ def _migrate_one(job):
     return genes, res.ctrl, res, False
 
 
-def migrate(archive: Archive, workers: int = 1, budget: int = 60) -> tuple:
+def migrate(archive: Archive, workers: int = 1, budget: int = 60, seconds: float = None) -> tuple:
     """(new archive at the current BODY_MODEL, summary dict). `archive` must be
     active (archive.activate()) and loaded with evolve.loading_stale()."""
     version = archive.body_model
@@ -90,6 +90,9 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60) -> tuple:
     if steps is None:
         raise ValueError(f"no migration from body model {version} to {evolve.BODY_MODEL}")
     old = sorted(archive.cells.items())
+    seconds_before = archive.seconds
+    if seconds is not None:
+        archive.seconds = seconds
     jobs = []
     for _, e in old:
         seed = int(elite_id(e.morph, e.ctrl), 16) % 2**31       # fixed per elite
@@ -103,6 +106,7 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60) -> tuple:
         results = [_migrate_one(j) for j in jobs]
 
     out = archive.like()
+    out.seconds = archive.seconds
     out.lineage = dict(archive.lineage)
     dropped = failed = changed = 0
     before = [e.fitness for _, e in old]
@@ -122,7 +126,8 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60) -> tuple:
         raise ValueError("no elite survived the migration")
     after = [e.fitness for e in out.cells.values()]
     summary = {"from": version, "elites": len(old), "dropped": dropped,
-               "failed": failed, "cells": len(after), "changed_cell": int(changed),
+               "failed": failed, "seconds_before": seconds_before,
+               "seconds_after": archive.seconds, "cells": len(after), "changed_cell": int(changed),
                "mean_before": float(np.mean(before)), "mean_after": float(np.mean(after)),
                "best_before": max(before), "best_after": max(after)}
     s = out.stats()
@@ -135,6 +140,7 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60) -> tuple:
 
 def print_summary(s: dict) -> None:
     print(f"migrated from body model {s['from']} to {evolve.BODY_MODEL}")
+    print(f"episode length: {s['seconds_before']} s before, {s['seconds_after']} s after")
     print(f"{'elites in':>10} {'dropped':>8} {'cells out':>10} {'changed cell':>13} "
           f"{'mean before':>12} {'mean after':>11} {'best before':>12} {'best after':>11}")
     print(f"{s['elites']:>10} {s['dropped']:>8} {s['cells']:>10} {s['changed_cell']:>13} "
@@ -153,6 +159,9 @@ def main():
     p.add_argument("--workers", type=int, default=os.cpu_count())
     p.add_argument("--budget", type=int, default=60,
                    help="CMA-ES evaluations per elite before the joint-count scaling")
+    p.add_argument("--seconds", type=float, default=None,
+                   help="episode length for the new evaluation, stored in the result "
+                        "(default: the archive's own)")
     p.add_argument("--profile", choices=("auto", "default", "keep"), default="auto",
                    help="hardware profile of the result: auto takes the current default "
                         "when the archive was trained on the default kit and keeps a custom kit")
@@ -172,7 +181,7 @@ def main():
     check_keys(archive.profile)
     hardware.require(archive.profile)         # may re-run this command under that profile
     archive.activate()
-    out, summary = migrate(archive, a.workers, a.budget)
+    out, summary = migrate(archive, a.workers, a.budget, a.seconds)
     with open(a.out + ".tmp", "wb") as f:
         pickle.dump(out, f)
     os.replace(a.out + ".tmp", a.out)

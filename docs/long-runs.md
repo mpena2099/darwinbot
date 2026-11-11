@@ -4,7 +4,7 @@
 
 A run on the `terrain` preset with 3 workers and the default 2 variants takes
 roughly 30 to 40 min for the initial batch and 6 to 8 min for each later batch
-(5 s episodes, 0.004 s physics step, 120 CMA-ES evaluations per child; see
+(8 s episodes, 0.004 s physics step, 120 CMA-ES evaluations per child; see
 `--seconds`, `--variants`, `--budget-init` and `--budget-child`). The archive is saved after
 every batch; stopping mid-batch loses only that batch. Keep the machine awake
 and the process alive when the terminal closes:

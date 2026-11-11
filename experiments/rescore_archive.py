@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np   # noqa: E402
 
-from darwinbot import morphology as morpho, plugins, randomize   # noqa: E402
+from darwinbot import hardware, morphology as morpho, plugins, randomize   # noqa: E402
 from darwinbot.evolve import Archive, Elite   # noqa: E402
 from darwinbot.fitness import UNSTABLE_SCORE   # noqa: E402
 from darwinbot.inner import evaluate   # noqa: E402
@@ -76,6 +76,8 @@ def main():
     with open(a.archive, "rb") as f:
         archive = pickle.load(f)
     plugins.require(archive, a.plugin)
+    hardware.require(archive.profile)
+    archive.activate()
     before = archive.stats()
     out = rescore(archive, a.workers, a.seed, a.note)
     after = out.stats()

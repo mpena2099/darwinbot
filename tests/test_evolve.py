@@ -9,6 +9,7 @@ import pickle
 import numpy as np
 import pytest
 
+from darwinbot import ablate, rules
 from darwinbot import controller as co
 from darwinbot import evolve
 from darwinbot import morphology as mo
@@ -43,6 +44,18 @@ def test_insert_keeps_best_per_cell():
     assert len(archive.cells) == 1
     # the behaviour vector survives the round trip through the ribs archive
     assert np.allclose(archive.cells[cell].behaviour, behaviour)
+
+
+def test_like_keeps_run_settings_but_no_cells():
+    a = evolve.Archive(terrains="flat", ablate=(ablate.NAMES[0],), rules=(rules.NAMES[0],),
+                       locked=(0,), plugin={"name": "p.py", "sha256": "abc"})
+    assert a.insert(_elite(1.0, [0.9, 0.3, 8, 0.0, 1.0, 2]))
+    b = a.like()
+    assert b.cells == {}
+    assert b.terrains == "flat"
+    assert b.ablate == a.ablate and b.rules == a.rules and b.locked == a.locked
+    assert b.profile == a.profile and b.profile is not a.profile
+    assert b.plugin == a.plugin and b.plugin is not a.plugin
 
 
 def test_run_writes_archive(tmp_path):

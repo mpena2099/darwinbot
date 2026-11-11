@@ -35,6 +35,7 @@ python tools/check_assembly.py --archive <archive.pkl> --type <type>    # printe
 python experiments/showcase.py --archive <archive.pkl> --types a,b --out showcase/   # polish, prune, validate, assembly check and snapshot in one go
 python experiments/prune.py --archive <archive.pkl> --types a,b --out pruned.pkl   # cut parts the robot does not need
 python experiments/polish.py --archive <archive.pkl> --types a,b --out polished.pkl   # longer controller search for chosen robots
+python experiments/migrate_archive.py old.pkl --out new.pkl   # bring an archive of an older BODY_MODEL up to date
 python experiments/merge_archives.py a.pkl b.pkl --out merged.pkl   # islands: best elite per cell
 python tools/kaggle/islands.py --user <you> --code-dataset <you>/darwinbot-code   # islands on Kaggle
 ```
@@ -76,7 +77,7 @@ The plan is in `docs/roadmap.md` (Next, Later, and the ROS 2 extension). Notes f
 ## Conventions and pitfalls
 
 - The score and the terrains say what a robot must achieve, never how it should look or move: no rewards for symmetry or for familiar shapes. Fix a score rule that can be cheated so it measures its intent; fix the simulator when it allows what the real world does not. Accept a scoring change only after a short run against the current rule shows it does not shrink the archive's variety (cells, body types). Before changing a rule or an archive axis, check whether an earlier decision relied on it.
-- An incompatible change to the genome or the physics: bump `BODY_MODEL` in `evolve.py`; old archives are then refused with a clear message.
+- An incompatible change to the genome or the physics: bump `BODY_MODEL` in `evolve.py`; old archives are then refused with a clear message. Also add a `MIGRATIONS` entry for the old version in `evolve.py` (identity when only the physics or the printed parts changed; a genome change decodes with the old constants and encodes with the new ones, new genes neutral), so `experiments/migrate_archive.py` can bring archives up to date; leave the entry out only when no translation exists.
 - Hardware values come from `docs/hardware-dados.md`. The servo measures in `parts.py` come from the SO-ARM100 STEP model of the STS3215, not from a caliper, until someone measures a real servo.
 - `.scratch/` is a scratch area outside git; `checkpoints/`, `exports/` and `*.mp4` stay out too.
 - Commit messages and pull request descriptions carry no AI attribution.

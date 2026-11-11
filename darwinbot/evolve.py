@@ -24,6 +24,7 @@ optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
 
+import contextlib
 import copy
 import hashlib
 import multiprocessing
@@ -54,6 +55,37 @@ CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
 PARENT_SELECTIONS = ("novelty", "uniform")
+
+# from-version -> function translating one elite's (morph, ctrl) genes to the
+# next version. Identity when only the physics or the printed parts changed. A
+# version with no entry cannot be migrated: its archives are refused. A genome
+# change adds its entry: decode with the old constants (kept next to the
+# function as a small frozen dict) and encode with the new ones; new genes get
+# the neutral value.
+MIGRATIONS = {22: lambda morph, ctrl: (morph, ctrl)}
+_stale_ok = False                   # set by loading_stale()
+
+
+def migration_path(version) -> Optional[List[int]]:
+    """Versions whose MIGRATIONS entries take an archive from `version` to
+    BODY_MODEL, or None when one is missing (or the archive is newer)."""
+    if not isinstance(version, int) or version > BODY_MODEL:
+        return None
+    path = list(range(version, BODY_MODEL))
+    return path if all(v in MIGRATIONS for v in path) else None
+
+
+@contextlib.contextmanager
+def loading_stale():
+    """Let pickle.load return an archive of an older body model. Such an
+    archive carries its old body_model and must go through
+    experiments/migrate_archive.py before it is trained, scored or replayed."""
+    global _stale_ok
+    _stale_ok = True
+    try:
+        yield
+    finally:
+        _stale_ok = False
 
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
@@ -291,8 +323,14 @@ class Archive:
 
     def __setstate__(self, state):
         grid = state.get("_grid")
-        if (state.get("body_model") != BODY_MODEL or "cells" in state
-                or (grid is not None and not isinstance(grid, CVTArchive))):
+        old = state.get("body_model")
+        if "cells" in state or (grid is not None and not isinstance(grid, CVTArchive)):
+            raise ValueError("archive from an older body model, retrain")
+        if old != BODY_MODEL and not _stale_ok:
+            if migration_path(old):
+                raise ValueError(
+                    f"archive from body model {old}, this code is {BODY_MODEL}: "
+                    "run experiments/migrate_archive.py to bring it up to date")
             raise ValueError("archive from an older body model, retrain")
         if grid is not None and grid.measure_dim != N_DESCRIPTORS:
             raise ValueError(

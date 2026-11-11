@@ -27,7 +27,7 @@ is the stable slot id of the node. A block is
 | `flip` | joint axis reversed (how a mirrored copy keeps the same signal) |
 | `width` | link section width 12 - 30 mm; for a wheel, its width along the axle 10 - 60 mm (10 mm holds the horn screws and the tyre groove) |
 | `thick` | link section thickness 3 - 10 mm; for a spring, the TPU blade 2 - 8 mm |
-| `offset` | on the core: mount position along the torso edge (on a top or bottom face, across the torso); on a link side slot: elbow distance 25 - 80 mm |
+| `offset` | on the core: mount position along the torso edge (on a top or bottom face, across the torso); on a link side slot: elbow distance 45 - 80 mm |
 | `angle` | on the core: mount yaw up to +/-60 degrees (on a face, yaw about the vertical, +/-180); on a link side slot: elbow angle 30 - 150 degrees |
 | `profile` | link, joint or spring path: straight, L (two pieces) or arc (three pieces); ignored by other modules |
 | `bend` | signed bend of an L or arc profile, -90 to +90 degrees |
@@ -35,7 +35,7 @@ is the stable slot id of the node. A block is
 Passive module physics: a spring is a hinge whose stiffness follows from the TPU
 blade thickness (see "Mola de TPU" in [hardware-dados.md](hardware-dados.md)); a tail is a bar
 with a counterweight at the tip; a skid has low friction (0.15), a spike high
-friction (1.6); a caster is a free wheel on a passive hinge. None has a servo.
+friction (1.5); a caster is a free wheel on a passive hinge. None has a servo.
 
 For the core block, `length` and `wheel` hold the torso length (0.15 - 0.40 m)
 and width (0.10 - 0.25 m), and the unused genes hold the contour factors (0.4 to

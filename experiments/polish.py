@@ -107,12 +107,6 @@ def picks(a, types, gaits):
     return [best[g][0] for g in gaits]
 
 
-def _new_archive(a) -> Archive:
-    return Archive(terrains=a.terrains, batch=a.batch, seconds=a.seconds,
-                   variants=a.variants, task=a.task, payload=a.payload,
-                   body=a.body, plugin=a.plugin)
-
-
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--archive", required=True)
@@ -154,7 +148,7 @@ def main():
     # One archive per collision group: every polished robot is kept, and an
     # archive still holds at most one elite per cell.
     base, ext = os.path.splitext(args.out)
-    groups = [[_new_archive(a), set(), args.out]]
+    groups = [[a.like(), set(), args.out]]
     for cell, e in results:
         c = cell_of(e.behaviour)
         group = next((g for g in groups if c not in g[1]), None)
@@ -162,7 +156,7 @@ def main():
             n = len(groups) + 1
             while os.path.exists(f"{base}-{n}{ext}"):
                 n += 1
-            group = [_new_archive(a), set(), f"{base}-{n}{ext}"]
+            group = [a.like(), set(), f"{base}-{n}{ext}"]
             groups.append(group)
         group[1].add(c)
         group[0].insert(e)

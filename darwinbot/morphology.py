@@ -63,7 +63,7 @@ gene picks the foot shape. OFFSET and ANGLE are attachment fractions in
     of the edge to the next or previous vertex and ANGLE yaws it by up to
     +/-60 degrees; face slots: see core above;
   * joint/link tip: OFFSET and ANGLE are ignored;
-  * joint/link sides (elbow): OFFSET sets the elbow distance (25..80 mm) and
+  * joint/link sides (elbow): OFFSET sets the elbow distance (45..80 mm) and
     ANGLE the elbow angle (30..150 degrees), so 0.5 is a 90 degree elbow.
 
 decode() accepts any vector and always returns a body that respects
@@ -1128,20 +1128,20 @@ def _drop_subtree(morph: Morphology, root: int):
 
 def _ensure_servo(morph: Morphology):
     """A body without servos is a brick: hang a default joint on the core. If
-    every core slot is taken, the first core child (and what hangs from it) is
+    every contour slot is taken, the first core child (and what hangs from it) is
     dropped; if every node id is used, one passive leaf is."""
     if morph.n_servos:
         return
     taken = morph.child_map().get(0, {})
-    if len(taken) == N_SLOTS["core"]:
-        _drop_subtree(morph, taken[min(taken)])
+    if all(s in taken for s in range(8)):
+        _drop_subtree(morph, taken[min(s for s in taken if s < 8)])
         taken = morph.child_map().get(0, {})
     if _free_id(morph) is None:
         parents = {n.parent for n in morph.nodes.values()}
         _drop_subtree(morph, max(k for k in morph.nodes if k != 0 and k not in parents))
         taken = morph.child_map().get(0, {})
     i = _free_id(morph)
-    slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1, 8, 9, 10, 11) if s not in taken)
+    slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1) if s not in taken)
     morph.nodes[i] = Node(i, "joint", 0, slot, 3 * np.pi / 2)
 
 
@@ -1344,7 +1344,7 @@ def _drop_disallowed(morph: Morphology) -> None:
             n.length = float(np.clip(n.length, *LENGTH_RANGE))
             n.width = float(np.clip(n.width, *LINK_WIDTH_RANGE))
             for s, c in list(morph.child_map().get(i, {}).items()):
-                if s >= N_SLOTS["joint"]:
+                if s >= N_SLOTS["joint"] or morph.nodes[c].kind == "segment":
                     _drop_subtree(morph, c)
         else:
             _to_link(n)
@@ -1857,7 +1857,8 @@ def _op_type(morph, rng):
     morph.nodes[i] = new
     kids = morph.child_map().get(i, {})
     bad = [c for s, c in kids.items()
-           if (s == 1 if kind == "segment" else s >= N_SLOTS[kind])]
+           if (s == 1 if kind == "segment" else s >= N_SLOTS[kind])
+           or (kind != "segment" and morph.nodes[c].kind == "segment")]
     for c in bad:
         _drop_subtree(morph, c)
 

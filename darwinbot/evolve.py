@@ -193,6 +193,14 @@ class Archive:
                     data["behaviour"][i])
                 for i in range(len(data["solution"]))}
 
+    def like(self) -> "Archive":
+        """Empty archive with this run's settings, but no cells, history or lineage."""
+        return Archive(terrains=self.terrains, batch=self.batch, evals=self.evals,
+                       seconds=self.seconds, variants=self.variants, task=self.task,
+                       payload=self.payload, ablate=self.ablate, rules=self.rules,
+                       body=self.body, profile=copy.deepcopy(self.profile),
+                       locked=self.locked, plugin=dict(self.plugin))
+
     def activate(self) -> None:
         """Turn on the ablations, score rules and body limits this archive was
         trained with; scripts that score, decode or build its robots call this."""
@@ -218,7 +226,9 @@ class Archive:
         base, index = parse_cell_name(name)
         names = self.names()
         if index is not None:
-            if names.get(index, "").rsplit("-", 1)[0] != base:
+            stored = names.get(index, "")
+            # a unique name carries no cell suffix, so both spellings name the cell
+            if stored != base and stored.rsplit("-", 1)[0] != base:
                 raise ValueError(f"no {name} robot in the archive")
             return index
         hits = [c for c, n in names.items() if n == base]

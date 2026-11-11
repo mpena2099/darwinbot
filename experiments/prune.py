@@ -104,8 +104,7 @@ def main():
             for t in args.types.split(",")]
     with Pool(args.workers, plugins.load_all, (plugins.loaded(),)) as pool:
         elites = pool.map(prune_elite, jobs)
-    out = Archive(terrains=a.terrains, seconds=a.seconds, variants=a.variants,
-                  task=a.task, payload=a.payload, body=a.body, plugin=a.plugin)
+    out = a.like()
     for t, e in zip(args.types.split(","), elites):
         if not out.insert(e):
             print(f"warning: {t} landed in a cell already taken by a better pruned robot")

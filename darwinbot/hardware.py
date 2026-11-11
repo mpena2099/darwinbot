@@ -17,6 +17,7 @@ the same command with `DARWINBOT_PROFILE` set; the experiment scripts call it
 right after loading an archive.
 """
 
+import hashlib
 import os
 import pathlib
 import sys
@@ -202,9 +203,17 @@ def require(profile):
     DARWINBOT_PROFILE set, so every module reads the same values."""
     if profile == PROFILE:
         return
-    fd, path = tempfile.mkstemp(prefix="darwinbot-profile-", suffix=".yaml")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        yaml.safe_dump(profile, f, sort_keys=False)
+    text = yaml.safe_dump(profile, sort_keys=False)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    path = os.path.join(tempfile.gettempdir(), f"darwinbot-profile-{digest}.yaml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            same = f.read() == text
+    except FileNotFoundError:
+        same = False
+    if not same:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
     os.environ[ENV] = path
     print(f"[darwinbot] hardware profile differs: restarting with {path}", flush=True)
     os.execv(sys.executable, [sys.executable, *sys.argv])

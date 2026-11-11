@@ -77,13 +77,12 @@ on them.
     time a servo housing touches the ground). Each enters the run only if its
     own short run, over three seeds, passes against the current score
     without shrinking the archive's variety.
-- **Assemble every export virtually, then build one**: no robot has been
-  assembled yet, even on screen. A script that places every exported part and
-  a servo model in the spawn pose would check that holes and screws line up,
-  that no two printed parts intersect, and that the printed parts match the
-  shapes the simulator used, and write the assembled robot as one 3D file to
-  inspect. In parallel, measure a real STS3215, correct `parts.py`, and print
-  one bracket, link and horn adapter to test the fit before a whole robot.
+- **Build one robot**: every export is already assembled on screen
+  (`tools/check_assembly.py` reports clashes and horn holes,
+  `tools/render_assembled.py` shows the printed parts standing and walking),
+  but nothing has been printed. Measure a real STS3215, correct `parts.py`,
+  and print one bracket, link and horn adapter to test the fit before a whole
+  robot.
 - **A search that learns where to mutate** (CMA-ME / CMA-MAE): bodies come
   from random mutations today. In these MAP-Elites variants a CMA-ES learns
   which directions in the genome fill new cells or improve old ones; the body
@@ -282,10 +281,10 @@ ROS 2 already has that layer (Nav2 for routes and obstacles, perception,
 task state machines), so the idea is to plug a finished robot into it rather
 than evolve missions. What it would take:
 
-- **URDF export**: write each evolved robot as URDF next to the STLs (every
-  module a `<link>` with its mesh, every servo a `<joint>`), so it opens in
-  RViz, Gazebo, MoveIt and the rest of the ROS 2 tools. The body is already a
-  tree of links and joints, so this is a direct translation.
+- **URDF export**: done as `robot.urdf` in every export (see
+  [Exporting](exporting.md#urdf)), with simple collision and visual shapes.
+  Still to do: point the visuals at the exported STL meshes, so RViz and
+  Gazebo show the printed robot rather than boxes and cylinders.
 - **Speed command**: Nav2 sends a `Twist` with forward and turning speed.
   The robot takes a turn command and a speed command from 0 to 1 (two gene
   pairs per joint, trained by a half-speed episode); the node maps the

@@ -18,8 +18,8 @@ Per node slot `s`, with base `b = 1 + 10 * s`:
 | +2 | `offset` | -0.6 - 0.6 rad | joint centre (for a wheel: signed speed, -4.71 - 4.71 rad/s) |
 | +3, +4 | `amp2`, `phase2` | 0 - 0.8 rad, 0 - 2*pi | second harmonic |
 | +5 | `sigma` | -3 - 3 rad/s | load feedback gain (Tegotae) |
-| +6, +7 | `steer_gain`, `steer_shift` | -1 - 1, -0.4 - 0.4 rad | effect of the steering command `c` in [-1, 1]: amplitudes times `1 + c * steer_gain`, offset plus `c * steer_shift` (a wheel: speed plus `c * steer_shift`, in rad/s) |
-| +8, +9 | `speed_gain`, `speed_shift` | -1 - 1, -0.4 - 0.4 rad | effect of the speed command `s` in [0, 1], `d = 1 - s`: amplitudes times `1 - d * speed_gain`, offset plus `d * speed_shift` (a wheel: speed plus `d * speed_shift`, in rad/s) |
+| +6, +7 | `steer_gain`, `steer_shift` | -1 - 1, -0.4 - 0.4 rad (a wheel: -4.71 - 4.71 rad/s) | effect of the steering command `c` in [-1, 1]: amplitudes times `1 + c * steer_gain`, offset plus `c * steer_shift` (a wheel: speed plus `c * steer_shift`, in rad/s) |
+| +8, +9 | `speed_gain`, `speed_shift` | -1 - 1, -0.4 - 0.4 rad (a wheel: -4.71 - 4.71 rad/s) | effect of the speed command `s` in [0, 1], `d = 1 - s`: amplitudes times `1 - d * speed_gain`, offset plus `d * speed_shift` (a wheel: speed plus `d * speed_shift`, in rad/s) |
 
 Every joint has its own phase oscillator, driven by its servo load:
 

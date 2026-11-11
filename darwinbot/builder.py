@@ -746,6 +746,8 @@ class AssemblyRules:
 
 SWEEP_STEP = np.radians(3.0)
 SWEEP_MARGIN = np.radians(8.0)   # kept clear of the first clashing angle
+BLOCKED_SPAN = 0.001             # rad each side of a joint that cannot move; a 0 0
+                                 # range reads as "no limit" to MuJoCo
 _RANGES: dict = {}
 
 
@@ -807,6 +809,8 @@ def joint_ranges(morph: Morphology) -> dict:
                         lo = mid
                 reach = max(0.0, lo - SWEEP_MARGIN)
             ends.append(sign * reach)
+        if ends[0] == 0.0 and ends[1] == 0.0:
+            ends = [BLOCKED_SPAN, -BLOCKED_SPAN]
         out[i] = (float(ends[1]), float(ends[0]))
     out = {i: (round(lo, 4), round(hi, 4)) for i, (lo, hi) in out.items()}
     if len(_RANGES) > 4096:

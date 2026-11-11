@@ -132,3 +132,15 @@ def test_load_full_scale_field(tmp_path):
     d["load_full_scale"] = 1.5
     with pytest.raises(ValueError, match="load_full_scale"):
         write_control_file(d, tmp_path / "c.json")
+
+
+def test_servo_speed_field(tmp_path):
+    d = _make()
+    assert d["format"] == 4 and d["servo_speed"] == 4.71
+    del d["servo_speed"]                     # optional: older files lack it
+    write_control_file(d, tmp_path / "c.json")
+    assert read_control_file(tmp_path / "c.json")["servo_speed"] == 4.71
+    for bad in (0, -1.0, "4.71", True):
+        d["servo_speed"] = bad
+        with pytest.raises(ValueError, match="servo_speed"):
+            write_control_file(d, tmp_path / "c.json")

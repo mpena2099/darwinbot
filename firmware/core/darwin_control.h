@@ -47,12 +47,13 @@ struct ServoParams {
 class Controller {
 public:
     static constexpr int kSubsteps = 5;       // 4 ms each at 50 Hz
-    static constexpr float kServoSpeed = 4.71f;
+    static constexpr float kServoSpeed = 4.71f;     // control.json default
     static constexpr float kLoadFullScale = 0.7f;   // control.json default
 
     Controller(float frequency, float ramp_time, float control_hz,
                std::vector<ServoParams> servos,
-               float load_full_scale = kLoadFullScale);
+               float load_full_scale = kLoadFullScale,
+               float servo_speed = kServoSpeed);
 
     // One control period: targets from the current phases at t, then
     // kSubsteps explicit-Euler phase steps under the same loads.
@@ -80,6 +81,7 @@ private:
     float ramp_time_;
     float dt_;
     float load_full_scale_;
+    float servo_speed_;
     float time_ = 0.0f;
     float command_ = 0.0f;
     float speed_ = 1.0f;

@@ -32,6 +32,7 @@ import pickle
 import re
 import signal
 import time
+import traceback
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
@@ -434,16 +435,25 @@ def scaled_budget(budget: int, morph) -> int:
 
 
 def _work(job):
-    """Pool worker: optimise one body's controller. Runs in a subprocess."""
+    """Pool worker: optimise one body's controller. Runs in a subprocess.
+    An exception in one body (a compile error, a numerical failure) must not end
+    a long run: it is printed with a short id of the body and the result comes
+    back with evals == 0 and the failed flag set, which the loop counts."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
      device, popsize, variants, parent, task, payload) = job
-    morph = morpho.decode(morph_genes)
-    res = optimise_controller(morph, get_terrains(terrains, seed=seed), x0=x0,
-                              budget=scaled_budget(budget, morph), sigma0=sigma0, seed=seed,
-                              seconds=seconds, device=device, popsize=popsize,
-                              variants=variants, task=task, payload=payload)
+    try:
+        morph = morpho.decode(morph_genes)
+        res = optimise_controller(morph, get_terrains(terrains, seed=seed), x0=x0,
+                                  budget=scaled_budget(budget, morph), sigma0=sigma0,
+                                  seed=seed, seconds=seconds, device=device,
+                                  popsize=popsize, variants=variants, task=task,
+                                  payload=payload)
+    except Exception:
+        body = hashlib.sha1(np.asarray(morph_genes, float).tobytes()).hexdigest()[:8]
+        print(f"body {body} failed:\n{traceback.format_exc()}", flush=True)
+        return (morph_genes, x0, -np.inf, [], 0, None, parent, True)
     return (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
-            res.behaviour, parent)
+            res.behaviour, parent, False)
 
 
 def run(
@@ -575,16 +585,19 @@ def run(
             else:
                 seeding_tries += 1
             t0 = time.time()
-            added = 0
+            added = failed = 0
             tasks = make_batch()
             results = ([_work(t) for t in tasks] if pool is None
                        else pool.imap_unordered(_work, tasks))
-            for genes, ctrl, fit, scores, evals, behaviour, parent in results:
+            for genes, ctrl, fit, scores, evals, behaviour, parent, bad in results:
                 archive.evals += evals
+                failed += bad
                 if evals == 0:      # unbuildable: it would only occupy a cell
                     continue
                 added += archive.insert(Elite(genes, ctrl, fit, scores,
                                               archive.batch, behaviour), parent)
+            if tasks and failed == len(tasks):     # a systematic bug, not one odd body
+                raise RuntimeError(f"all {failed} bodies of the batch failed")
             if not archive.cells:
                 print("batch with no buildable body, drawing a new random one",
                       flush=True)
@@ -594,8 +607,8 @@ def run(
             archive.history.append(s)
             print(f"batch {s['batch']:3d}  cells {s['cells']:3d}  +{added:2d}  "
                   f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "
-                  f"nov {s['novelty']:.3f}  evals {s['evals']}  {s['seconds']}s",
-                  flush=True)
+                  f"nov {s['novelty']:.3f}  evals {s['evals']}  {s['seconds']}s"
+                  + (f"  failed {failed}" if failed else ""), flush=True)
             archive.batch += 1
             with open(path + ".tmp", "wb") as f:
                 pickle.dump(archive, f)

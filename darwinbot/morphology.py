@@ -1464,6 +1464,7 @@ def fit_rules(morph: Morphology) -> Morphology:
                 for k in group[1:]:
                     if k in morph.nodes and morph.nodes[k].kind == "link":
                         _drop_subtree(morph, k)
+                cm = morph.child_map()      # the dropped nodes are gone from the map
     _ensure_servo(morph)
     _fit_legs(morph)
     return morph

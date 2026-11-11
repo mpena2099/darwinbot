@@ -45,7 +45,8 @@ from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   SPRING_DAMPING, TAIL_BAR_SIZE, TAIL_TIP_RADIUS,
                                   TORSO_HEIGHT, FACE_SLOTS, SERVO_AXIS_OFFSET, Actuator, ActuatorLayout,
                                   Morphology, elbow_angle, elbow_distance, link_path, section_radius,
-                                  link_tip, plate_thick, segment_box,
+                                  link_tip, plate_thick, segment_box, plate_drop, elbow_trim,
+                                  servo_roll, _mm,
                                   spring_stiffness)
 
 SHELL_DENSITY  = hardware.MATERIAL.shell_density   # kg/m^3, printed shell with infill
@@ -124,10 +125,9 @@ def _torso(morph: Morphology, friction: float = 1.0) -> Tuple[str, str]:
     each with the mass of its own volume of shell. The prisms meet the terrain
     only; the printed plate (a sheet of the same contour below the joint
     plane) and a tab under every mount meet the limbs."""
-    from darwinbot import export
     poly = morph.torso_polygon()
     h = TORSO_HEIGHT / 2
-    drop = export.plate_drop(morph) / 1000.0
+    drop = plate_drop(morph) / 1000.0
     top, bottom = -drop, -(drop + PLATE_THICK)
     areas = [abs(a[0] * b[1] - b[0] * a[1]) / 2
              for a, b in zip(poly, poly[1:] + poly[:1])]
@@ -323,10 +323,9 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
     plastic = _special_geom(plastic_factor(), friction)
     near, w = -ELBOW_BOSS_R, max(parent.width, 2 * ELBOW_BOSS_R)
     if child.kind in ("joint", "segment", "wheel"):
-        from darwinbot import export
         axis = "yaw" if child.kind == "wheel" else child.axis
-        at = export.elbow_trim(export._mm(d), int(round(np.degrees(elbow_angle(child)))),
-                               axis, export.servo_roll(morph, child.id, int(side)))[0] / 1000.0
+        at = elbow_trim(_mm(d), int(round(np.degrees(elbow_angle(child)))),
+                               axis, servo_roll(morph, child.id, int(side)))[0] / 1000.0
         hz = _strut_height(morph, child)
         # the strut stops at the back wall of the cradle it carries
         end = max(at + 0.002, d - 0.0381)

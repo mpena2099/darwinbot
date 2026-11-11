@@ -24,6 +24,7 @@ optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
 
+import contextlib
 import copy
 import hashlib
 import multiprocessing
@@ -54,6 +55,54 @@ CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
 PARENT_SELECTIONS = ("novelty", "uniform")
+
+# from-version -> function translating one elite's (morph, ctrl) genes to the
+# next version. Identity when only the physics or the printed parts changed. A
+# version with no entry cannot be migrated: its archives are refused. A genome
+# change adds its entry: decode with the old constants (kept next to the
+# function as a small frozen dict) and encode with the new ones; new genes get
+# the neutral value.
+MIGRATIONS = {22: lambda morph, ctrl: (morph, ctrl)}
+_stale_ok = False                   # set by loading_stale()
+
+
+def migration_path(version) -> Optional[List[int]]:
+    """Versions whose MIGRATIONS entries take an archive from `version` to
+    BODY_MODEL, or None when one is missing (or the archive is newer)."""
+    if not isinstance(version, int) or version > BODY_MODEL:
+        return None
+    path = list(range(version, BODY_MODEL))
+    return path if all(v in MIGRATIONS for v in path) else None
+
+
+@contextlib.contextmanager
+def loading_stale():
+    """Let pickle.load return an archive of an older body model. Such an
+    archive carries its old body_model and must go through
+    experiments/migrate_archive.py before it is trained, scored or replayed."""
+    global _stale_ok
+    _stale_ok = True
+    try:
+        yield
+    finally:
+        _stale_ok = False
+
+def load_archive(path, stale: bool = False):
+    """Open an archive pickle. A missing file or an archive of another body model
+    stops with a plain message; stale=True returns an archive of an older body
+    model instead (for experiments/migrate_archive.py)."""
+    try:
+        with open(path, "rb") as f:
+            if stale:
+                with loading_stale():
+                    return pickle.load(f)
+            return pickle.load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"{path} not found: train first with experiments/train.py")
+    except ValueError as e:
+        raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
+                         f"(or pass --archive with a newer one).")
+
 
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
@@ -219,9 +268,6 @@ class Archive:
             count[n] = count.get(n, 0) + 1
         return {c: n if count[n] == 1 else f"{n}-{c}" for c, n in base.items()}
 
-    def cell_name(self, cell: Cell) -> str:
-        return self.names()[cell]
-
     def find(self, name: str) -> Cell:
         """Cell of a name printed by names(); ValueError when absent or ambiguous."""
         base, index = parse_cell_name(name)
@@ -291,8 +337,14 @@ class Archive:
 
     def __setstate__(self, state):
         grid = state.get("_grid")
-        if (state.get("body_model") != BODY_MODEL or "cells" in state
-                or (grid is not None and not isinstance(grid, CVTArchive))):
+        old = state.get("body_model")
+        if "cells" in state or (grid is not None and not isinstance(grid, CVTArchive)):
+            raise ValueError("archive from an older body model, retrain")
+        if old != BODY_MODEL and not _stale_ok:
+            if migration_path(old):
+                raise ValueError(
+                    f"archive from body model {old}, this code is {BODY_MODEL}: "
+                    "run experiments/migrate_archive.py to bring it up to date")
             raise ValueError("archive from an older body model, retrain")
         if grid is not None and grid.measure_dim != N_DESCRIPTORS:
             raise ValueError(
@@ -499,8 +551,7 @@ def run(
         workers = workers or max(1, multiprocessing.cpu_count() - 1)
 
     if resume:
-        with open(resume, "rb") as f:
-            archive: Archive = pickle.load(f)
+        archive: Archive = load_archive(resume)
         terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:

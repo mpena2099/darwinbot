@@ -103,6 +103,33 @@ Archives from any runs of the same setup can also be merged by hand:
 python experiments/merge_archives.py run1/archive.pkl run2/archive.pkl --out merged.pkl
 ```
 
+## Resuming after a code change
+
+A change to the genome or the physics bumps `BODY_MODEL`, and `train.py --resume`
+refuses an archive of an older one. When `evolve.MIGRATIONS` has a path from its
+version, the archive can be brought up to date instead of retrained:
+
+```bash
+python experiments/migrate_archive.py old/archive.pkl --out migrated.pkl --workers 4
+python experiments/train.py --resume migrated.pkl --batches 30
+```
+
+Each elite's genes are translated (a change that only touches the physics or the
+printed parts leaves them as they are), its body is checked again, and its
+controller is searched for `--budget` evaluations (default 60) starting from the
+old one, which is kept when nothing better is found. A body that is no longer
+buildable is dropped. Cells are recomputed, history and lineage are kept, and
+the script prints one table: elites in, dropped, cells out, how many changed
+cell, and mean and best fitness before and after. It never overwrites `--out`.
+`--seconds S` re-evaluates every elite with episodes of S seconds and stores S in
+the result, so a later `train.py --resume` keeps using it.
+
+An archive trained on the default hardware takes the current default profile, so
+a change to it (the servo mass, say) applies; a custom kit is kept, with a
+warning (`--profile default` replaces it, `--profile keep` keeps it silently).
+The migrated archive carries the old run's bias: its elites hold the cells, so
+an A/B between two rule versions still needs equal seeds from scratch.
+
 ## From an archive to a showcase
 
 Training tunes each controller only long enough to judge its body, so the

@@ -8,8 +8,8 @@ score = up(progress) - LATERAL_W * |dy| - HEADING_W * |yaw| - ENERGY_W * energy 
 progress counts only the second half of the episode, scaled by 2:
 2 * (x_end - x_mid) along the heading axis (Metrics.progress). A steady gait
 keeps its distance, while a one-time drop of the torso early on is mostly
-ignored. If the episode ends before the half-way step (a fall), the distance
-covered so far counts. dy, yaw, energy, the upright factor and the fall
+ignored. If the episode ends in a fall before the half-way step, progress is
+0. A fall after the mark keeps 2 * (x_fall - x_mid). dy, yaw, energy, the upright factor and the fall
 penalty use the whole episode.
 
 up(v) is the progress v times the mean cosine of the torso tilt over the

@@ -22,6 +22,7 @@ import mujoco
 import numpy as np
 
 from darwinbot import hardware, plugins, robot_file
+from darwinbot.evolve import load_archive
 from darwinbot import controller as ctl
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
@@ -66,14 +67,7 @@ def matches(row, conds):
 def open_archive(path, plugin=None):
     """Unpickle an archive, turning the usual failures into a plain message, and
     turn on the ablations, score rules and body limits it was trained with."""
-    try:
-        with open(path, "rb") as f:
-            archive = pickle.load(f)
-    except FileNotFoundError:
-        raise SystemExit(f"{path} not found: train first with experiments/train.py")
-    except ValueError as e:
-        raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
-                         f"(or pass --archive with a newer one).")
+    archive = load_archive(path)
     plugins.require(archive, plugin)
     hardware.require(archive.profile)    # re-runs the command under the archive's hardware
     archive.activate()
@@ -266,7 +260,7 @@ def show_robot(a):
         print("  parts overlap at the start; seed.py lists them")
     print(f"terrain {terrain.name}, standing still (no controller yet)")
     if a.record:
-        record(episode, standing(morph), a.record, a.seconds)
+        record(episode, standing(morph), a.record, a.seconds or 8.0)
     else:
         watch(episode, standing(morph), a.speed)
 
@@ -286,8 +280,8 @@ def main():
     p.add_argument("--terrain", default="flat")
     p.add_argument("--record", default=None, metavar="OUT.mp4",
                    help="render offscreen instead of opening the viewer")
-    p.add_argument("--seconds", type=float, default=8.0,
-                   help="recording length")
+    p.add_argument("--seconds", type=float, default=None,
+                   help="recording length (default: the episode length the archive was scored with)")
     p.add_argument("--speed", type=float, default=1.0,
                    help="viewer playback speed, e.g. 0.25 for slow motion")
     p.add_argument("--command", type=float, default=0.0,
@@ -361,10 +355,10 @@ def main():
         print(f"  {terrain.name:9s} {s:+.3f}")
 
     terrain = get_terrains(a.terrain)[0]
-    episode = Episode(morph, terrain, payload=archive.payload)
+    episode = Episode(morph, terrain, seconds=archive.seconds, payload=archive.payload)
     print(f"terrain {terrain.name}")
     if a.record:
-        record(episode, elite.ctrl, a.record, a.seconds, command=a.command,
+        record(episode, elite.ctrl, a.record, a.seconds or archive.seconds, command=a.command,
                speed_command=a.speed_command)
     else:
         watch(episode, elite.ctrl, a.speed, a.command, a.speed_command)

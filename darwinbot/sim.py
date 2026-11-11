@@ -61,8 +61,9 @@ class Metrics:
     def __post_init__(self):
         # progress = 2 * (x_end - x_mid): only the second half of the episode
         # counts, so a one-time drop of the torso is mostly ignored and a steady
-        # gait keeps its dx. An episode that ended before the half-way step
-        # (a fall) counts the distance covered so far, which is dx.
+        # gait keeps its dx. An episode that ended in a fall before the
+        # half-way step has no progress (the simulators set 0); a Metrics built
+        # without one takes dx.
         if self.progress is None:
             self.progress = self.dx
 
@@ -86,11 +87,6 @@ def cost_of_transport(m: "Metrics", task: str = "forward") -> float:
 def wrap_angle(a):
     """Angle wrapped to [-pi, pi). Works on floats and on JAX arrays."""
     return (a + np.pi) % (2.0 * np.pi) - np.pi
-
-
-def heading(xmat):
-    """Torso yaw about world Z from a flattened 3x3 rotation matrix."""
-    return np.arctan2(xmat[3], xmat[0])
 
 
 def control_hold(timestep: float) -> int:
@@ -335,7 +331,7 @@ class Episode:
         return Metrics(
             dx=float(x - x0) if not unstable else 0.0,
             dy=float(y - y0) if not unstable else 0.0,
-            progress=(0.0 if unstable else
+            progress=(0.0 if unstable or (x_mid is None and fell) else
                       float(x - x0) if x_mid is None else 2.0 * float(x - x_mid)),
             energy=energy, fell=fell, unstable=unstable,
             duration=float(d.time), mass=self.mass,

@@ -18,10 +18,10 @@ holds an archive is resumed, so the same command run again trains further.
 
 import argparse
 import os
-import pickle
 import sys
 
 from darwinbot import ablate, body_options, evolve, hardware, plugins, rules
+from darwinbot.evolve import load_archive
 from darwinbot.fitness import task_names
 from darwinbot.morphology import decode, summary
 
@@ -160,8 +160,7 @@ def main():
 
     def check_profile(path):
         """A run that resumes an archive trains on the archive's hardware and plugin."""
-        with open(path, "rb") as f:
-            stored = pickle.load(f)
+        stored = load_archive(path)
         if wanted is not None and stored.profile != wanted:
             raise SystemExit(f"{path} was trained on another hardware profile than "
                              f"--profile {a.profile}; drop --profile to keep the archive's")

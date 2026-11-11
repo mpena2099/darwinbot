@@ -474,7 +474,9 @@ def test_terminal_helpers_include_the_module(kind):
     point = next((p, r) for j, p, r in m.terminal_points() if j == 2)
     p, rad = point
     assert m.max_reach >= np.linalg.norm(p) + rad
-    low = {"tail": mo.TAIL_TIP_RADIUS, "skid": mo.SKID_SIZE[2] / 2,
+    rot = m.frames()[2][1]
+    low = {"tail": mo.TAIL_TIP_RADIUS,
+           "skid": float(abs(rot[2]) @ (np.array(mo.SKID_SIZE) / 2)),   # its real orientation
            "spike": mo.SPIKE_RADIUS}[kind]
     assert m.lowest_z() == pytest.approx(p[2] - low)
 

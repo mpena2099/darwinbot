@@ -15,7 +15,6 @@ count). --skip leaves stages out, --budget is polish's CMA-ES budget.
 
 import argparse
 import os
-import pickle
 import re
 import subprocess
 import sys
@@ -65,8 +64,8 @@ def _stage_argv(stage, archive, types, out, workers, budget):
 
 
 def _load(path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
+    from darwinbot.evolve import load_archive
+    return load_archive(path)
 
 
 def _fitnesses(path, types):

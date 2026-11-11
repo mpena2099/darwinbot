@@ -13,7 +13,7 @@ from darwinbot import fitness
 from darwinbot import morphology as mo
 from darwinbot import randomize
 from darwinbot import terrain as te
-from darwinbot.sim import Episode, Metrics, cost_of_transport, heading, wrap_angle
+from darwinbot.sim import Episode, Metrics, cost_of_transport, wrap_angle
 
 
 LEGS = mo.encode(mo.template(2, wheels=False, yaw=True))
@@ -432,7 +432,8 @@ def test_episode_yaw_follows_spin_and_sign(spin):
     m = ep.run(_ctrl(mo.decode(LEGS)))
     assert np.sign(m.yaw) == np.sign(spin) and abs(m.yaw) > np.pi      # crosses +-pi
     # the unwrapped total agrees with the final wrapped heading
-    final = float(heading(ep.data.xmat[ep.torso]))
+    xmat = ep.data.xmat[ep.torso]
+    final = float(np.arctan2(xmat[3], xmat[0]))
     assert float(wrap_angle(m.yaw - final)) == pytest.approx(0.0, abs=1e-6)
 
 

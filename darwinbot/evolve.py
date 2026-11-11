@@ -87,6 +87,23 @@ def loading_stale():
     finally:
         _stale_ok = False
 
+def load_archive(path, stale: bool = False):
+    """Open an archive pickle. A missing file or an archive of another body model
+    stops with a plain message; stale=True returns an archive of an older body
+    model instead (for experiments/migrate_archive.py)."""
+    try:
+        with open(path, "rb") as f:
+            if stale:
+                with loading_stale():
+                    return pickle.load(f)
+            return pickle.load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"{path} not found: train first with experiments/train.py")
+    except ValueError as e:
+        raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
+                         f"(or pass --archive with a newer one).")
+
+
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
 ROLL_SHARE  = 0.5                   # wheel share of contact time above this: roll
@@ -250,9 +267,6 @@ class Archive:
         for n in base.values():
             count[n] = count.get(n, 0) + 1
         return {c: n if count[n] == 1 else f"{n}-{c}" for c, n in base.items()}
-
-    def cell_name(self, cell: Cell) -> str:
-        return self.names()[cell]
 
     def find(self, name: str) -> Cell:
         """Cell of a name printed by names(); ValueError when absent or ambiguous."""
@@ -517,8 +531,7 @@ def run(
         workers = workers or max(1, multiprocessing.cpu_count() - 1)
 
     if resume:
-        with open(resume, "rb") as f:
-            archive: Archive = pickle.load(f)
+        archive: Archive = load_archive(resume)
         terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:

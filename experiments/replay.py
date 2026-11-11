@@ -22,6 +22,7 @@ import mujoco
 import numpy as np
 
 from darwinbot import hardware, plugins, robot_file
+from darwinbot.evolve import load_archive
 from darwinbot import controller as ctl
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
@@ -66,14 +67,7 @@ def matches(row, conds):
 def open_archive(path, plugin=None):
     """Unpickle an archive, turning the usual failures into a plain message, and
     turn on the ablations, score rules and body limits it was trained with."""
-    try:
-        with open(path, "rb") as f:
-            archive = pickle.load(f)
-    except FileNotFoundError:
-        raise SystemExit(f"{path} not found: train first with experiments/train.py")
-    except ValueError as e:
-        raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
-                         f"(or pass --archive with a newer one).")
+    archive = load_archive(path)
     plugins.require(archive, plugin)
     hardware.require(archive.profile)    # re-runs the command under the archive's hardware
     archive.activate()

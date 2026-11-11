@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np   # noqa: E402
 
 from darwinbot import hardware, morphology as morpho, plugins, randomize   # noqa: E402
-from darwinbot.evolve import Archive, Elite   # noqa: E402
+from darwinbot.evolve import Archive, Elite, load_archive   # noqa: E402
 from darwinbot.fitness import UNSTABLE_SCORE   # noqa: E402
 from darwinbot.inner import evaluate   # noqa: E402
 from darwinbot.sim import Episode   # noqa: E402
@@ -73,8 +73,7 @@ def main():
     p.add_argument("--note", default="scoring rules changed",
                    help="label of the rescoring in the progress plot")
     a = p.parse_args()
-    with open(a.archive, "rb") as f:
-        archive = pickle.load(f)
+    archive = load_archive(a.archive)
     plugins.require(archive, a.plugin)
     hardware.require(archive.profile)
     archive.activate()

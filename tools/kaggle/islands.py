@@ -36,7 +36,7 @@ sys.path.insert(0, ROOT)
 import yaml   # noqa: E402
 
 from darwinbot import hardware   # noqa: E402
-from darwinbot.evolve import merge   # noqa: E402
+from darwinbot.evolve import load_archive, merge   # noqa: E402
 
 KERNEL = os.path.join(ROOT, "tools", "kaggle", "train_kernel.py")
 SETTLE = 180        # s for the last progress version to finish processing
@@ -166,8 +166,7 @@ def main():
             except RuntimeError as err:
                 print(f"  island {i} left out: {err}", flush=True)
                 continue
-            with open(path, "rb") as f:
-                archives.append(pickle.load(f))
+            archives.append(load_archive(path))
         if not archives:
             raise SystemExit("no island produced an archive")
         merged = merge(archives)

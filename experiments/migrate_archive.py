@@ -168,8 +168,7 @@ def main():
     a = p.parse_args()
     if os.path.exists(a.out):
         raise SystemExit(f"{a.out} exists; the migration never overwrites")
-    with open(a.archive, "rb") as f, evolve.loading_stale():
-        archive = pickle.load(f)
+    archive = evolve.load_archive(a.archive, stale=True)
     if archive.body_model == evolve.BODY_MODEL:
         raise SystemExit("the archive is already at the current body model")
     if evolve.migration_path(archive.body_model) is None:

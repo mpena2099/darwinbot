@@ -21,6 +21,7 @@ aberta) não é mais lido nem gerado.
   "control_hz": 50,
   "ramp_time": 0.5,
   "load_full_scale": 0.7,
+  "servo_speed": 4.71,
   "frequency": 1.31,
   "servos": [
     {"id": 1, "name": "s8_pitch", "mode": "position",
@@ -52,6 +53,7 @@ aberta) não é mais lido nem gerado.
 | `control_hz` | int | frequência do laço de controle; a simulação usa a mesma (50) |
 | `ramp_time` | float, s | tempo da rampa de partida, igual a `controller.RAMP_TIME` |
 | `load_full_scale` | float | opcional, padrão `0.7`: fração do torque máximo do STS3215 que vale `N = 1`; é a `SERVO_TORQUE` da simulação (70% do torque de travamento) |
+| `servo_speed` | float, rad/s | opcional, padrão `4.71`, deve ser positivo: velocidade sem carga do servo do kit (`hardware.SERVO.speed`); o firmware limita a amplitude (`(amp1 + 2 * amp2) * omega <= servo_speed`) e a velocidade das rodas a ela |
 | `frequency` | float, Hz | frequência natural global; `omega = 2π · frequency` |
 | `servos` | lista | um item por servo, na ordem do layout (a ordem do modelo; `id` = posição + 1) |
 
@@ -72,7 +74,7 @@ Por servo:
 | `speed_shift` | position | deslocamento do offset central com o comando de velocidade, `d * speed_shift`, em rad |
 | `min`, `max` | position | limites da junta em radianos; o firmware corta o alvo neles |
 | `speed` | wheel | velocidade base em rad/s (positiva anda para a frente), antes da direção |
-| `steer_shift` | wheel | mudança da velocidade com o comando `c`, em rad/s, cortada em `WHEEL_RANGE` |
+| `steer_shift` | wheel | mudança da velocidade com o comando `c`, em rad/s, cortada em `±servo_speed` (`WHEEL_RANGE`) |
 | `speed_shift` | wheel | mudança da velocidade com o comando de velocidade, `d * speed_shift`, em rad/s; a soma com `steer_shift` é cortada uma vez em `WHEEL_RANGE` |
 | `sign` | todos | `1` ou `-1`: corrige o sentido de montagem do servo |
 | `zero` | position | posição do servo (0 a 4095) que corresponde a 0 rad; vem da calibração |
@@ -120,7 +122,7 @@ amp1    = amp1_base * ganho                       # position, antes do corte de 
 amp2    = amp2_base * ganho
 offset  = offset_base + c * steer_shift + d * speed_shift
 pico    = (amp1 + 2 * amp2) * omega
-k       = min(1, 4.71 / pico)                     # corte pela velocidade do servo
+k       = min(1, servo_speed / pico)                   # corte pela velocidade do servo
 amp1    = amp1 * k
 amp2    = amp2 * k
 
@@ -130,7 +132,7 @@ alvo    = ramp * (offset + amp1 * sin(theta + phase1)
 alvo    = clamp(alvo, min, max)
 passos  = zero + sign * alvo * 4096 / (2π)
 
-speed   = clamp(speed_base + c * steer_shift + d * speed_shift, -4.71, 4.71)   # wheel
+speed   = clamp(speed_base + c * steer_shift + d * speed_shift, -servo_speed, servo_speed)   # wheel
 vel     = ramp * speed * sign                     # wheel
 ```
 
@@ -152,7 +154,7 @@ vel     = ramp * speed * sign                     # wheel
   cada 4 ms, diferença pequena porque a carga varia devagar.
 - O arquivo traz as amplitudes e offsets decodificados, antes da direção, da
   velocidade e do corte de velocidade. O firmware aplica os ganhos e
-  deslocamentos dos dois comandos e só então refaz o corte `(amp1 + 2 * amp2) * omega <= 4,71 rad/s`, com as
+  deslocamentos dos dois comandos e só então refaz o corte `(amp1 + 2 * amp2) * omega <= servo_speed` (padrão 4,71 rad/s), com as
   duas amplitudes reduzidas na mesma proporção quando passam disso.
 - Nas rodas o `steer_shift` é uma mudança de velocidade em rad/s, cortada em
   `WHEEL_RANGE` (a velocidade máxima do servo, com sinal). Rodas ignoram fase e

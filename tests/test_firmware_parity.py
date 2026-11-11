@@ -35,7 +35,7 @@ def _fmt(v):
     return f"{float(v):.9g}"
 
 
-def _write_case(path, ctrl, loads, command=0.0, speed=1.0):
+def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_SPEED):
     """Write a case file; expected targets come from controller.py."""
     c = co.Controller(ctrl, LAYOUT, command, speed)
     p = c.params
@@ -45,7 +45,7 @@ def _write_case(path, ctrl, loads, command=0.0, speed=1.0):
     lines = [" ".join(_fmt(v) for v in
                       (p.omega / (2 * np.pi), co.RAMP_TIME,
                        round(1 / co.CONTROL_DT), n, co.LOAD_FULL_SCALE,
-                       command, speed))]
+                       command, speed, servo_speed))]
     for i, act in enumerate(LAYOUT):
         sign, lim = SIGNS[i], limits[i]
         if act.kind == "wheel":
@@ -81,12 +81,12 @@ def _write_case(path, ctrl, loads, command=0.0, speed=1.0):
     path.write_text("\n".join(lines) + "\n")
 
 
-def _run_case(tmp_path, ctrl, loads, command=0.0, speed=1.0):
+def _run_case(tmp_path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_SPEED):
     compiler = next((c for c in COMPILERS if shutil.which(c)), None)
     if compiler is None:
         pytest.skip("no C++ compiler found")
     case = tmp_path / "case.txt"
-    _write_case(case, ctrl, loads, command, speed)
+    _write_case(case, ctrl, loads, command, speed, servo_speed)
     exe = tmp_path / "parity"
     build = subprocess.run(
         [compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-o", str(exe),
@@ -174,3 +174,22 @@ def test_wheel_speed_signs_reach_the_output(tmp_path):
     assert p.offset[3] > 0 and SIGNS[3] < 0 and SIGNS[4] > 0
     loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
     _run_case(tmp_path, ctrl, loads)
+
+
+def test_parity_with_a_slower_servo(tmp_path, monkeypatch):
+    """The amplitude clip and the wheel clamp follow the control file's servo_speed."""
+    rng, ctrl = _genes(9)
+    ctrl[0] = 1.0
+    for slot in (1, 2, 3):
+        b = co.node_base(slot)
+        ctrl[b + co.AMP1], ctrl[b + co.AMP2] = 1.0, 1.0
+    ctrl[co.node_base(4) + co.OFFSET] = 1.0      # wheels at the end of their range
+    ctrl[co.node_base(5) + co.OFFSET] = 0.0
+    slow = 3.0
+    monkeypatch.setattr(co, "SERVO_SPEED", slow)
+    monkeypatch.setattr(co, "WHEEL_RANGE", (-slow, slow))
+    p = co.Controller(ctrl, LAYOUT, 0.5).params
+    assert np.allclose((p.amp1 + 2 * p.amp2)[[0, 1, 2]] * p.omega, slow)
+    assert np.all(np.abs(p.offset[[3, 4]]) <= slow)
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads, 0.5, 1.0, slow)

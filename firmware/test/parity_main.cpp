@@ -4,7 +4,7 @@
 // Case file (plain text, one record per line, blank lines and lines starting
 // with '#' are ignored):
 //
-//   frequency ramp_time control_hz n_servos [load_full_scale [command [speed]]]
+//   frequency ramp_time control_hz n_servos [load_full_scale [command [speed [servo_speed]]]]
 //   <servo line>                                (n_servos times)
 //   loads (n_servos) expected targets (n_servos) expected wheel speeds (n_servos)
 //                                                    (one line per tick)
@@ -17,7 +17,8 @@
 // offset_base in controller.py). Loads are bus loads over the servo maximum
 // torque (signed, in [-1, 1]); the core divides them by load_full_scale
 // (default 0.7). The optional command is the steering command in [-1, 1] and the optional
-// speed the speed command in [0, 1] (1 if absent).
+// speed the speed command in [0, 1] (1 if absent), the last the servo no-load
+// speed in rad/s (4.71 if absent).
 // Expected targets are radians for position servos and rad/s for wheels
 // (unsigned). Expected wheel speeds are the signed rad/s a wheel servo is
 // commanded, 0 for position servos.
@@ -70,6 +71,7 @@ int main(int argc, char** argv) {
     float load_full_scale = darwinbot::Controller::kLoadFullScale;
     float command = 0.0f;
     float speed_cmd = 1.0f;
+    float servo_speed = darwinbot::Controller::kServoSpeed;
     int n_servos = 0;
     {
         std::istringstream header(lines.empty() ? "" : lines[0]);
@@ -81,6 +83,7 @@ int main(int argc, char** argv) {
         header >> load_full_scale;      // optional, keeps the default if absent
         header >> command;              // optional, 0 (straight) if absent
         header >> speed_cmd;            // optional, 1 (full speed) if absent
+        header >> servo_speed;          // optional, 4.71 if absent
     }
 
     if (lines.size() < static_cast<size_t>(n_servos) + 1) {
@@ -107,7 +110,8 @@ int main(int argc, char** argv) {
     }
 
     darwinbot::Controller controller(frequency, ramp_time, control_hz,
-                                     std::move(servos), load_full_scale);
+                                     std::move(servos), load_full_scale,
+                                     servo_speed);
     controller.set_command(command);
     controller.set_speed(speed_cmd);
     std::vector<float> loads(static_cast<size_t>(n_servos));

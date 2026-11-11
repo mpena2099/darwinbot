@@ -175,6 +175,12 @@ on them.
   opens): publish the showcase archives and the export packages (STLs, bill
   of materials, assembly guide, control file) as a Hugging Face dataset, and
   perhaps a Space that shows the robots walking in the browser.
+- **A change of grip mid-stride** (suggested in
+  [discussion #50](https://github.com/mpena2099/darwinbot/discussions/50)):
+  training varies friction per episode but always over the whole floor. A
+  strip test next to `validate.py` would run a chosen robot with a short
+  low-friction strip at several positions and report how often it stays
+  upright and walks a body length past the far edge.
 - **Migration between islands** (an open idea, not a plan): islands train
   apart and only meet when their archives are merged for the showcase. Merging
   them now and then and letting each resume from the merged archive, with its

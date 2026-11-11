@@ -509,9 +509,10 @@ class WarpBatchEpisode:
             keep = 0.0 if unstable else 1.0
             res.append(Metrics(
                 dx=float(out["dx"][i]) * keep, dy=float(out["dy"][i]) * keep,
-                # Same as Episode.run: 2 * (x_end - x_mid) once half-way was reached.
-                progress=(float(out["dx"][i]) if not out["reached"][i]
-                          else 2.0 * float(out["dx"][i] - out["x_mid"][i])) * keep,
+                # Same as Episode.run: 2 * (x_end - x_mid) once half-way was reached,
+                # 0 after a fall before it.
+                progress=(2.0 * float(out["dx"][i] - out["x_mid"][i]) if out["reached"][i]
+                          else 0.0 if out["fell"][i] else float(out["dx"][i])) * keep,
                 energy=float(out["energy"][i]), fell=bool(out["fell"][i]),
                 unstable=unstable, duration=float(out["duration"][i]),
                 mass=self.mass, duty=duty, height=height, wheel_share=share,

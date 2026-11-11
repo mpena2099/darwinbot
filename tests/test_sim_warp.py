@@ -119,3 +119,25 @@ def test_unbuildable_body():
         assert m.unstable and not m.fell
         assert (m.dx, m.dy, m.energy, m.duration, m.yaw) == (0.0,) * 5
         assert m.mass == batch.mass
+
+
+def test_progress_rule_for_falls():
+    """Metrics.progress as in Episode.run: 2 * (x_end - x_mid) once the half-way
+    step was reached (a fall after it keeps that), 0 for a fall before it, dx
+    for an episode that ended without either. The flags are written into the
+    batch buffers after a normal run, so the rule is checked on its own."""
+    morph = mo.template(2)
+    batch = WarpBatchEpisode(morph, te.get_terrains("flat")[0], seconds=1.0,
+                             device=DEVICE)
+    rng = np.random.default_rng(0)
+    ctrls = np.stack([co.random_controller(rng) for _ in range(3)])
+    n, b = batch.start(ctrls)
+    wp.synchronize()
+    dx = b["dx"].numpy()
+    b["fell"].assign(np.array([1, 1, 0], dtype=np.int32))
+    b["reached"].assign(np.array([0, 1, 0] + [0] * (len(dx) - 3), dtype=np.int32)[:len(dx)])
+    b["x_mid"].assign(np.where(np.arange(len(dx)) == 1, dx - 0.05, 0.0).astype(np.float32))
+    got = batch._metrics(b, n)
+    assert got[0].fell and got[0].progress == 0.0
+    assert got[1].fell and got[1].progress == pytest.approx(0.1, abs=1e-5)
+    assert not got[2].fell and got[2].progress == pytest.approx(dx[2], abs=1e-6)

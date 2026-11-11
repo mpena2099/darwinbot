@@ -35,7 +35,7 @@ staircase); more make a generalist. The choice is saved in the archive, so
 
 **How hard `steps` is.** It is not a house staircase: each step is 3 cm high
 (a house step is 17 to 18 cm, taller than most of these robots) and 50 cm deep.
-In an 8 s episode a good robot covers 1.5 to 2.3 m, so it meets the first two to
+In a 5 s episode a good robot covers 1.5 to 2.3 m, so it meets the first two to
 four steps, at x = 0.6, 1.1, 1.6 and 2.1 m. A wheel climbs an edge up to about
 its own radius, and wheels here are 30 to 100 mm, so a low robot on wheels rolls
 up a 3 cm step; a low body without wheels can push its torso over the edge like
@@ -50,26 +50,73 @@ Ready sets:
 | `terrain` | flat, rough, steps, rubble |
 | `all` | all of the above except `step` |
 
+### Changing an environment's measures
+
+Every environment is a function with keyword arguments, and the command line
+can set them: a colon after the name, then `key=value` pairs separated by
+colons, with commas between environments.
+
+```bash
+python experiments/train.py --terrains "steps:rise=0.08:run=0.3,slope:degrees=12"
+python experiments/replay.py --terrain "steps:rise=0.06"
+```
+
+The arguments are the ones in `darwinbot/terrain.py` (for `steps`: `rise` and
+`run` in metres, `count`; for `slope`: `degrees`, `start`, `length`). An
+unknown argument, a value that is not a number or a fraction for a count is
+refused with the list of valid arguments. The archive keeps the whole string,
+so `replay`, `validate` and `export` rebuild the same ground, and the scores
+are labelled with it (`steps:rise=0.08:run=0.3`).
+
 `rough` and `rubble` are random. Training draws new bumps and rocks for every
 body, so a family of robots cannot memorise one layout; `replay` and `validate`
 use one fixed layout, so a robot always meets the same ground there.
 
 ## Make your own environment
 
-An environment is a function in `darwinbot/terrain.py` that returns a
-`Terrain`: a name, the MuJoCo XML of the world (boxes, cylinders, meshes,
-anything MuJoCo loads), the ground friction and the ground height at the spawn.
-Add it to `TERRAINS` and train on it:
+An environment is a function that returns a `Terrain`: a name, the MuJoCo XML
+of the world (boxes, cylinders, meshes, anything MuJoCo loads), the ground
+friction and the ground height at the spawn. Write it in a file of your own,
+register it with `terrain.register_terrain`, and pass the file with `--plugin`
+([Plugins](plugins.md)):
 
 ```bash
-python experiments/train.py --terrains tunnel          # only the new one
-python experiments/train.py --terrains flat,tunnel     # mixed with others
+python experiments/train.py --plugin tunnel.py --terrains tunnel          # only the new one
+python experiments/train.py --plugin tunnel.py --terrains flat,tunnel     # mixed with others
 ```
+
+### Worked example: a staircase that grows to a house step
+
+`examples/plugins/progressive_stairs.py` adds `progressive-stairs`: four steps
+on 28 cm treads whose risers grow from 4 to 8, 12 and 17 cm, the height of a
+house step, with the first riser at x = 0.6 m. The low first step lets
+evolution get a foothold; each next one filters out the bodies that cannot
+lift that high, so the score says how far up a robot gets.
+
+Start from your own walker (see [Starting from your own design](own-design.md)),
+then let evolution take over. Episodes of 10 s give a slow climber the time to
+reach the top step, and the `forward` task scores distance only, with no turning
+episodes:
+
+```bash
+python experiments/seed.py --robot examples/robots/small-walker.yaml \
+    --plugin examples/plugins/progressive_stairs.py \
+    --terrains flat,progressive-stairs --task forward --seconds 10 --out checkpoints/stairs
+python experiments/train.py --resume checkpoints/stairs/archive.pkl --batches 30 \
+    --plugin examples/plugins/progressive_stairs.py
+python experiments/replay.py --archive checkpoints/stairs/archive.pkl --list \
+    --plugin examples/plugins/progressive_stairs.py
+```
+
+With `flat` in the set a body still earns for walking on level ground before
+it can climb, which keeps the early batches from scoring only stalls. Most
+evolved robots carry their torso lower than the top risers, so the 17 cm step
+is a real limit, not a formality.
 
 Evolution then keeps the bodies and gaits that do best there. A few things
 decide whether the result is what you expect:
 
-- **Episodes are short.** Each test lasts 8 s and good robots cover about
+- **Episodes are short.** Each test lasts 5 s and good robots cover about
   1.5 m, so the challenge has to sit within the first metre or two after the
   spawn (x = 0, robots head towards +x).
 - **The score stays the same.** It rewards distance along x, turning when told

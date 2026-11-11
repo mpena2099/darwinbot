@@ -49,3 +49,19 @@ def test_downhill_spawns_on_the_plateau():
 def test_unknown_terrain_is_refused():
     with pytest.raises(ValueError):
         te.get_terrains("lava")
+
+
+def test_terrain_arguments_on_the_command_line():
+    a, b, c = te.get_terrains("steps:rise=0.08:run=0.3,slope:degrees=12,flat")
+    assert a.name == "steps:rise=0.08:run=0.3" and b.name == "slope:degrees=12"
+    assert a.world == te.steps(rise=0.08, run=0.3).world
+    assert c == te.flat()
+    assert [t.world for t in te.get_terrains("terrain", seed=5)] == \
+           [t.world for t in te.get_terrains("flat,rough,steps,rubble", seed=5)]
+
+
+@pytest.mark.parametrize("spec", ["steps:rise", "steps:height=1", "steps:rise=x",
+                                  "steps:count=2.5", "rough:seed=3", "stairs"])
+def test_bad_terrain_arguments_are_refused(spec):
+    with pytest.raises(ValueError):
+        te.get_terrains(spec)

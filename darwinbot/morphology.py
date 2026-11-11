@@ -63,7 +63,7 @@ gene picks the foot shape. OFFSET and ANGLE are attachment fractions in
     of the edge to the next or previous vertex and ANGLE yaws it by up to
     +/-60 degrees; face slots: see core above;
   * joint/link tip: OFFSET and ANGLE are ignored;
-  * joint/link sides (elbow): OFFSET sets the elbow distance (25..80 mm) and
+  * joint/link sides (elbow): OFFSET sets the elbow distance (45..80 mm) and
     ANGLE the elbow angle (30..150 degrees), so 0.5 is a 90 degree elbow.
 
 decode() accepts any vector and always returns a body that respects
@@ -78,6 +78,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
+
+from darwinbot import hardware
 
 MAX_NODES  = 20
 MAX_SERVOS = 16
@@ -115,12 +117,12 @@ BODY_BOUNDS = [
 ]
 TORSO_HEIGHT = 0.06                       # m
 CONTOUR_RANGE = (0.4, 1.4)                # contour factor of a torso vertex
-ELECTRONICS_BOX = (0.10, 0.06)            # m, ESP32 + LiPo footprint, centred
-SERVO_BOX = (0.045, 0.025, 0.035)   # m, length along the link, width, height
+ELECTRONICS_BOX = tuple(hardware.ELECTRONICS.box)   # m, ESP32 + LiPo footprint, centred
+SERVO_BOX = tuple(hardware.SERVO.box)     # m, length along the link, width, height
 # The STS3215 output axis sits 12.5 mm from the body centre, towards one end
 # (docs/hardware-dados.md): a module frame is the joint axis, so the servo
 # body sits behind it, along local -X, away from the link it drives.
-SERVO_AXIS_OFFSET = 0.0125          # m
+SERVO_AXIS_OFFSET = hardware.SERVO.axis_offset          # m
 SERVO_CENTRE = np.array([-SERVO_AXIS_OFFSET, 0.0, 0.0])   # in the module frame
 
 
@@ -143,7 +145,7 @@ ELBOW_BOSS_R = 0.0155               # m, round end of a printed elbow plate (par
 
 # Printed parts as parts.py draws them (mm there, m here): the simulation
 # collides these shapes, so a body it accepts is a body whose parts assemble.
-PRINT_BODY_H   = 0.0307             # parts.SERVO_BODY_H: servo body along its output axis
+PRINT_BODY_H   = hardware.SERVO.print_body_height   # parts.SERVO_BODY_H: servo body along its output axis
 PRINT_WALL     = 0.0029             # parts.SERVO_CLEARANCE + parts.CRADLE_T: air and wall around the servo
 FORK_ARM_T     = 0.003              # parts.ARM_T: U link arm, one on each horn face
 FORK_ARM_GAP   = 0.0002             # parts.ARM_GAP: air between a cradle cap and an arm
@@ -175,7 +177,9 @@ def cradle_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
 def fork_boxes(axis: str, width: float, thick: float) -> List[Tuple[np.ndarray, np.ndarray]]:
     """(centre, half extents) boxes, in the module frame, of the U fork at the
     root of a joint's link: one arm on each horn face of the servo and the
-    bridge across its front (parts._u_root)."""
+    bridge across its front (parts._u_root). A roll joint's link has only the
+    arm on the main horn face: the other side is the servo's far end, where
+    the parent holds the servo."""
     d = PRINT_BODY_H / 2 + FORK_HORN_T + FORK_ARM_GAP
     hw = max(FORK_ARM_HALF_W, width / 2 + 0.001)
     t, bx = FORK_ARM_T, FORK_BRIDGE_X
@@ -183,11 +187,8 @@ def fork_boxes(axis: str, width: float, thick: float) -> List[Tuple[np.ndarray, 
     out = []
     if axis == "roll":
         z1 = bx + t
-        for s in (-1.0, 1.0):
-            out.append((np.array([s * (d + t / 2), 0.0, (z1 - hw) / 2]),
-                        np.array([t / 2, hw, (z1 + hw) / 2])))
-        out.append((np.array([0.0, 0.0, bx + t / 2]), np.array([d + t, hw, t / 2])))
-        return out
+        return [(np.array([d + t / 2, 0.0, (z1 - hw) / 2]),
+                 np.array([t / 2, hw, (z1 + hw) / 2]))]
     for s in (-1.0, 1.0):
         arm_c = np.array([(front - hw) / 2, 0.0, 0.0])
         arm_h = np.array([(front + hw) / 2, hw, hw])
@@ -208,10 +209,10 @@ SEGMENT_HEIGHT = 0.03                    # m, spine plate thickness
 ELBOW_OFFSET = (0.05 - ELBOW_RANGE[0]) / (ELBOW_RANGE[1] - ELBOW_RANGE[0])
 
 # Printability: a part must print on a common bed and survive the servo stall torque.
-SERVO_STALL = 2.94       # N*m, STS3215 (12 V) stall torque
-PLA_STRENGTH = 50e6      # Pa, printed PLA
-STRENGTH_SAFETY = 0.5    # link bending stress must stay below half of PLA
-BED = 0.22               # m, largest part that fits a common print bed
+SERVO_STALL = hardware.SERVO.stall_torque       # N*m, STS3215 (12 V) stall torque
+PLA_STRENGTH = hardware.MATERIAL.pla_strength   # Pa, printed PLA
+STRENGTH_SAFETY = hardware.MATERIAL.strength_safety   # link bending stress must stay below half of PLA
+BED = hardware.PRINTER.bed               # m, largest part that fits a common print bed
 
 # Spring (see docs/hardware-dados.md, "Mola de TPU"): a TPU blade bending at
 # one end. E is not verified yet.
@@ -1127,20 +1128,20 @@ def _drop_subtree(morph: Morphology, root: int):
 
 def _ensure_servo(morph: Morphology):
     """A body without servos is a brick: hang a default joint on the core. If
-    every core slot is taken, the first core child (and what hangs from it) is
+    every contour slot is taken, the first core child (and what hangs from it) is
     dropped; if every node id is used, one passive leaf is."""
     if morph.n_servos:
         return
     taken = morph.child_map().get(0, {})
-    if len(taken) == N_SLOTS["core"]:
-        _drop_subtree(morph, taken[min(taken)])
+    if all(s in taken for s in range(8)):
+        _drop_subtree(morph, taken[min(s for s in taken if s < 8)])
         taken = morph.child_map().get(0, {})
     if _free_id(morph) is None:
         parents = {n.parent for n in morph.nodes.values()}
         _drop_subtree(morph, max(k for k in morph.nodes if k != 0 and k not in parents))
         taken = morph.child_map().get(0, {})
     i = _free_id(morph)
-    slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1, 8, 9, 10, 11) if s not in taken)
+    slot = next(s for s in (3, 2, 4, 6, 5, 7, 0, 1) if s not in taken)
     morph.nodes[i] = Node(i, "joint", 0, slot, 3 * np.pi / 2)
 
 
@@ -1250,11 +1251,34 @@ def _fit_link(morph: Morphology, n: Node, servo_tip: bool, foot_tip: bool = Fals
         n.length = max(round(n.length * 0.95, 6), LENGTH_RANGE[0])
 
 
+def _turn_torso_wheel(morph: Morphology, k: int) -> bool:
+    """Turn a wheel bolted straight to the torso until its printed parts clear
+    the plate it sits on: the mount angle steps around the slot, each tried
+    with both flat cradle poses, and a pose is kept only where the cradle sits
+    flat and no clash involves the wheel. False (values restored) if none."""
+    from darwinbot import builder
+    n = morph.nodes[k]
+    if n.kind != "wheel" or morph.nodes[n.parent].kind not in ("core", "segment"):
+        return False
+    angle, rot = n.angle, n.rot
+    for a in np.linspace(0.0, 1.0, 9):
+        n.angle = float(a)
+        for r in (0.0, np.pi / 2):
+            n.rot = float(r)
+            _snap_mount_roll(morph, n)
+            if _mount_roll_ok(morph, n) and not any(
+                    k in pair for pair in builder.spawn_clashes(morph)):
+                return True
+    n.angle, n.rot = angle, rot
+    return False
+
+
 def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
     """Cut away what does not assemble: while printed parts clash in the spawn
-    pose, the module (with what hangs from it) that is later in the tree or
-    has the higher id among the first clashing pair is dropped. Slow next to
-    fit_rules (it builds the model), so only the generators call it."""
+    pose, a torso wheel is first turned clear; otherwise the module (with what
+    hangs from it) that is later in the tree or has the higher id among the
+    first clashing pair is dropped. Slow next to fit_rules (it builds the
+    model), so only the generators call it."""
     from darwinbot import builder
     for _ in range(tries):
         try:
@@ -1269,6 +1293,8 @@ def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
             break
         # prefer a leaf-most, highest-id module
         k = max(cand, key=lambda i: (morph.depth(i), i))
+        if _turn_torso_wheel(morph, k):
+            continue
         _drop_subtree(morph, k)
         _ensure_servo(morph)
         fit_rules(morph)
@@ -1318,7 +1344,7 @@ def _drop_disallowed(morph: Morphology) -> None:
             n.length = float(np.clip(n.length, *LENGTH_RANGE))
             n.width = float(np.clip(n.width, *LINK_WIDTH_RANGE))
             for s, c in list(morph.child_map().get(i, {}).items()):
-                if s >= N_SLOTS["joint"]:
+                if s >= N_SLOTS["joint"] or morph.nodes[c].kind == "segment":
                     _drop_subtree(morph, c)
         else:
             _to_link(n)
@@ -1517,21 +1543,23 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
 
 def template(n_pairs: int = 2, wheels: bool = False, yaw: bool = False,
              thigh: float = 0.10, shin: float = 0.10, wheel_rad: float = 0.05,
-             body_length: float = 0.40, body_width: float = 0.20) -> Morphology:
+             body_length: float = 0.40, body_width: float = 0.20,
+             axes: Tuple[str, str] = ("pitch", "pitch")) -> Morphology:
     """
     Mirrored leg pairs on the core sides, like the old fixed genome:
-    [yaw joint] -> hip pitch (thigh) -> elbow -> knee pitch (shin) -> [wheel].
+    [yaw joint] -> hip joint (thigh) -> elbow -> knee joint (shin) -> [wheel].
     The right leg is a mirror copy of the left one; pairs beyond MAX_NODES or
-    MAX_SERVOS are left out. Positive pitch lifts the
-    thigh and swings the shin outward, positive yaw swings the foot forward.
+    MAX_SERVOS are left out. The hip and knee axes are `axes` (pitch by
+    default). Positive pitch lifts the thigh and swings the shin outward,
+    positive yaw swings the foot forward.
     """
     morph = Morphology(body_length, body_width, {0: Node(0, "core")})
     wheels = wheels and _body_options().allow_wheels
     chain = []                       # (kind, slot on the parent, fields)
     if yaw:
         chain.append(("joint", 0, dict(axis="yaw", length=0.07)))
-    chain.append(("joint", 0, dict(axis="pitch", length=thigh, flip=True)))
-    chain.append(("joint", 1, dict(axis="pitch", length=shin, flip=True,
+    chain.append(("joint", 0, dict(axis=axes[0], length=thigh, flip=True)))
+    chain.append(("joint", 1, dict(axis=axes[1], length=shin, flip=True,
                                    offset=ELBOW_OFFSET)))
     if wheels:
         chain.append(("wheel", 0, dict(wheel_rad=wheel_rad)))
@@ -1564,7 +1592,8 @@ def _random_seed(rng: np.random.Generator) -> Morphology:
     n_pairs = int(rng.integers(1, 4))
     while n_pairs > 1 and 2 * n_pairs * (2 + yaw + wheels) > _max_servos():
         n_pairs -= 1
-    morph = template(n_pairs, wheels, yaw,
+    axes = tuple(str(rng.choice(AXES, p=[0.6, 0.25, 0.15])) for _ in range(2))
+    morph = template(n_pairs, wheels, yaw, axes=axes,
                      thigh=round(float(rng.uniform(*LENGTH_RANGE)), 6),
                      shin=round(float(rng.uniform(*LENGTH_RANGE)), 6),
                      wheel_rad=round(float(rng.uniform(0.03, 0.05)), 6),
@@ -1647,8 +1676,19 @@ def _add_segment(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     return i
 
 
+WHEEL_LIMB_P = 0.15   # share of limbs that are a single wheel bolted to the torso
+
+
 def _grow_limb(morph: Morphology, rng, slot: int) -> Optional[int]:
-    """A chain of 1 to 3 joints or links from a core slot, maybe a wheel/foot."""
+    """A chain of 1 to 3 joints or links from a core slot, maybe a wheel/foot,
+    or one wheel bolted straight to the torso."""
+    if (rng.random() < WHEEL_LIMB_P and _body_options().allow_wheels
+            and morph.n_servos < _max_servos()):
+        i = _free_id(morph)
+        if i is not None:
+            morph.nodes[i] = _random_node(rng, "wheel", 0, slot)
+            morph.nodes[i].id = i
+            return i
     parent, sl, first = 0, slot, None
     for step in range(int(rng.integers(1, 4))):
         i = _free_id(morph)
@@ -1817,7 +1857,8 @@ def _op_type(morph, rng):
     morph.nodes[i] = new
     kids = morph.child_map().get(i, {})
     bad = [c for s, c in kids.items()
-           if (s == 1 if kind == "segment" else s >= N_SLOTS[kind])]
+           if (s == 1 if kind == "segment" else s >= N_SLOTS[kind])
+           or (kind != "segment" and morph.nodes[c].kind == "segment")]
     for c in bad:
         _drop_subtree(morph, c)
 
@@ -1946,6 +1987,23 @@ def graft(genes: np.ndarray, donor: np.ndarray,
         if ms != s:
             copy_subtree(morph, new, 0, ms, mirror=True)
     return encode(fit_clashes(fit_rules(prune(morph))))
+
+
+def keeps_locked(child: np.ndarray, parent: np.ndarray, locked) -> bool:
+    """True when every locked node of `parent` is still in `child`, unchanged
+    and on the same parent and slot. Node 0 locks the torso: its length,
+    width and contour. The rest of the body may change around them."""
+    if not locked:
+        return True
+    a, b = decode(child), decode(parent)
+    for i in locked:
+        if i == 0:
+            if (a.body_length, a.body_width, a.contour) != (
+                    b.body_length, b.body_width, b.contour):
+                return False
+        elif i in b.nodes and a.nodes.get(i) != b.nodes[i]:
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------

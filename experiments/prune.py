@@ -21,8 +21,7 @@ from multiprocessing import Pool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np   # noqa: E402
-from darwinbot import morphology as morpho, randomize   # noqa: E402
-from darwinbot import body_options   # noqa: E402
+from darwinbot import hardware, morphology as morpho, plugins, randomize   # noqa: E402
 from darwinbot.evolve import Archive, Elite, scaled_budget   # noqa: E402
 from darwinbot.inner import evaluate, optimise_controller   # noqa: E402
 from darwinbot.sim import Episode   # noqa: E402
@@ -47,7 +46,7 @@ def _score(m, ctrl, a, seed):
 
 def prune_elite(job):
     name, elite, a, budget, tol, seed = job
-    body_options.set_active(a.body)
+    a.activate()
     m = morpho.decode(elite.morph)
     ctrl, scores, beh = elite.ctrl, elite.scores, elite.behaviour
     fit = _score(m, ctrl, a, seed)       # the uncut body, judged like the cuts
@@ -85,6 +84,8 @@ def prune_elite(job):
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--archive", required=True)
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--types", required=True, help="comma-separated type names")
     p.add_argument("--out", required=True)
     p.add_argument("--budget", type=int, default=120, help="CMA-ES evaluations per cut, before scaling")
@@ -96,13 +97,14 @@ def main():
         sys.exit(f"{args.out} exists; pick a new name")
     with open(args.archive, "rb") as f:
         a: Archive = pickle.load(f)
-    body_options.set_active(a.body)
+    plugins.require(a, args.plugin)
+    hardware.require(a.profile)
+    a.activate()
     jobs = [(t, a.cells[a.find(t)], a, args.budget, args.tol, args.seed)
             for t in args.types.split(",")]
-    with Pool(args.workers) as pool:
+    with Pool(args.workers, plugins.load_all, (plugins.loaded(),)) as pool:
         elites = pool.map(prune_elite, jobs)
-    out = Archive(terrains=a.terrains, seconds=a.seconds, variants=a.variants,
-                  task=a.task, payload=a.payload, body=a.body)
+    out = a.like()
     for t, e in zip(args.types.split(","), elites):
         if not out.insert(e):
             print(f"warning: {t} landed in a cell already taken by a better pruned robot")

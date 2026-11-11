@@ -21,10 +21,14 @@ from typing import NamedTuple
 
 import numpy as np
 
-from darwinbot import builder
+from darwinbot import builder, hardware, power
 from darwinbot import morphology as morpho
+from darwinbot import urdf
 from darwinbot.control_file import make_control_file, write_control_file
 from darwinbot.controller import Controller
+from darwinbot.fitness import UNSTABLE_SCORE
+from darwinbot.inner import cpu_evaluator
+from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
 CORE_SLOTS = ("front", "back", "left-front", "left-middle", "left-rear",
@@ -72,9 +76,9 @@ def has_elbows(elbow):
 
 # Servo and cradle measures, equal to parts.SERVO_* and parts.CRADLE_T
 # (parts needs build123d, the bill of materials does not).
-SERVO_BODY = (45.4, 24.8, 30.7)       # length, width, body height
-SERVO_AXIS_X = 12.5
-CRADLE_SLACK = 0.4 + 2.5              # servo clearance plus cradle wall
+SERVO_BODY = (hardware.SERVO.length, hardware.SERVO.width, hardware.SERVO.body_height)      # length, width, body height
+SERVO_AXIS_X = hardware.SERVO.axis_x
+CRADLE_SLACK = hardware.SERVO.clearance + 2.5              # servo clearance plus cradle wall
 MIN_FIN = 1.0                         # thinnest link tip fin left under a tongue
 
 
@@ -440,7 +444,7 @@ def part_counts(morph):
             for slot, child in sorted(cm.get(i, {}).items()):
                 if slot and servo_axis(morph, child):
                     elbows[elbow_args(morph, i, child)] += 1
-            if i not in cm:
+            if i not in cm and n.kind != "spring":
                 feet[("sphere", _mm(morpho.section_radius(n)))] += 1
         mount = torso_mount(morph, i)
         if mount:
@@ -760,9 +764,9 @@ def _write_assembly(morph, ctl, layout, out_dir):
 
 
 def _write_organic(morph, out_dir) -> dict:
-    """Hollowed links and elbow plates in parts_organic/ (organic.hollow);
-    returns {file name: volume ratio}. Parts with a fork or a printed cradle
-    are left solid."""
+    """Hollowed links in parts_organic/ (organic.hollow); returns {file name:
+    volume ratio}. Parts with a fork or a printed cradle are left solid, and
+    every elbow plate carries a servo cradle, so elbows stay solid too."""
     from darwinbot import organic, parts
     d = os.path.join(out_dir, "parts_organic")
     os.makedirs(d, exist_ok=True)
@@ -848,7 +852,15 @@ def _write_stls(morph, out_dir):
         out("spike.stl", parts.spike())
 
 
-def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False) -> dict:
+def _write_power(lines, out_dir):
+    """Append the power section to the bill of materials and the guide."""
+    for f in ("bom.md", "assembly.md"):
+        with open(os.path.join(out_dir, f), "a") as h:
+            h.write("\n## Power\n\n" + "\n".join(lines) + "\n")
+
+
+def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False,
+                 seconds: float = 10.0) -> dict:
     """Write the build folder for elite into out_dir; returns a small summary."""
     morph = morpho.decode(elite.morph)
     os.makedirs(out_dir, exist_ok=True)
@@ -857,6 +869,7 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False) -> 
                                     payload=payload)
     with open(os.path.join(out_dir, "robot.xml"), "w") as f:
         f.write(xml)
+    urdf.write_urdf(morph, os.path.join(out_dir, "robot.urdf"), payload)
 
     ctl = make_control_file(name, elite.fitness, layout, Controller(elite.ctrl, layout).params,
                             _layout_ranges(morph, layout), signs=servo_signs(morph, layout))
@@ -865,9 +878,62 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False) -> 
     rows = bom_rows(morph)
     _write_bom(rows, out_dir, name)
     _write_assembly(morph, ctl, layout, out_dir)
+    est = power.estimate(Episode(morph, flat, seconds, payload), elite.ctrl,
+                         seconds)
+    _write_power(power.report_lines(est), out_dir)
     if stl:
         _write_stls(morph, out_dir)
-    info = {"servos": morph.n_servos, "printed_parts": printed_parts(rows)}
+    info = {"servos": morph.n_servos, "printed_parts": printed_parts(rows),
+            "power": est}
     if stl and organic:
         info["organic"] = _write_organic(morph, out_dir)
     return info
+
+
+def organic_ratios(morph, out_dir) -> dict:
+    """Hollow the plates of morph into out_dir/parts_organic/ and return
+    {file name: kept-material ratio}, as export_robot(organic=True) does."""
+    return _write_organic(morph, out_dir)
+
+
+def organic_factors(morph, ratios: dict) -> dict:
+    """builder.mass_factors keys for the hollowed parts in ratios (from
+    organic_ratios): ("link", node id) for each printed link whose STL is
+    hollowed, ("elbow", child id) for each elbow plate that is. Parts are named
+    as _write_organic names them, so a part it leaves solid keeps its density."""
+    cm = morph.child_map()
+    factors = {}
+    for i, n in morph.nodes.items():
+        if n.kind not in ("joint", "link", "spring"):
+            continue
+        if print_owner(morph, i) == i:
+            length, width, thick, profile, bend, axis, foot, tip, elbow = link_args(morph, i)
+            name = f"{link_name(profile, bend, length, width, thick)}.stl"
+            if not (axis or foot or tip or has_elbows(elbow)) and name in ratios:
+                factors[("link", n.id)] = ratios[name]
+        for slot, c in sorted(cm.get(i, {}).items()):
+            if not slot:
+                continue
+            dist, angle, width, thick, axis = elbow_args(morph, i, c)
+            name = f"{elbow_name(dist, angle, width, thick)}.stl"
+            if axis is None and name in ratios:
+                factors[("elbow", morph.nodes[c].id)] = ratios[name]
+    return factors
+
+
+def organic_check(morph, ctrl, ratios: dict, terrains: str, seconds: float,
+                  task: str = "forward", payload: float = 0.0, variants: int = 0):
+    """(solid score, hollow score) of one controller on the terrains of an
+    archive: the same evaluation as training, once with the printed masses and
+    once inside builder.mass_factors with the hollowed ones."""
+    def run():
+        episodes, score = cpu_evaluator(morph, get_terrains(terrains), seconds,
+                                        payload, variants, 0, task)
+        if not episodes[0].buildable:
+            return UNSTABLE_SCORE
+        return float(score(ctrl)[0])
+
+    solid = run()
+    with builder.mass_factors(organic_factors(morph, ratios)):
+        hollow = run()
+    return solid, hollow

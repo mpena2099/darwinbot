@@ -11,6 +11,7 @@ Regenerate the README figures in docs/img/ from a MAP-Elites archive.
 
   nice -n 19 python tools/make_readme_figures.py
   nice -n 19 python tools/make_readme_figures.py --only gait,parts
+  nice -n 19 python tools/make_readme_figures.py --types a,b --terrains flat,rubble
   python tools/make_readme_figures.py --archive checkpoints/archive.pkl --out docs/img
 
 Rendering is offscreen (mujoco.Renderer) and small. The output depends only on
@@ -154,19 +155,42 @@ def fmt_size(path):
     return f"{os.path.getsize(path) / 1024:.0f} KB"
 
 
-def make_robots(items, out, seed, types=None):
+def parse_terrains(spec, types):
+    """One Terrain per robot type, or None (the flat floor for all).
+
+    A name is a terrain in darwinbot.terrain.TERRAINS or a preset, of which the
+    first terrain is used, so the list matches --types in order and count.
+    """
+    if not spec:
+        return None
+    if not types:
+        raise SystemExit("--terrains needs --types: give one terrain per robot type")
+    names = [s.strip() for s in spec.split(",") if s.strip()]
+    if len(names) != len(types):
+        raise SystemExit(f"--terrains names {len(names)} terrain(s) but --types has "
+                         f"{len(types)} robot(s); give one terrain per robot")
+    try:
+        return [get_terrains(n)[0] for n in names]
+    except ValueError as e:
+        raise SystemExit(str(e))
+
+
+def make_robots(items, out, seed, types=None, terrains=None):
     chosen = pick_distinct(items, types=types)
-    flat = get_terrains("flat")[0]
+    labelled = terrains is not None
+    terrains = terrains if labelled else [get_terrains("flat")[0]] * len(chosen)
     w, h = 400, 300
     tiles = []
-    for cell, elite in chosen:
-        ep = Episode(morpho.decode(elite.morph), flat)
+    for (cell, elite), terrain in zip(chosen, terrains):
+        ep = Episode(morpho.decode(elite.morph), terrain)
         settle(ep, elite.ctrl, 1.5)
         cam = follow_camera(ep, azimuth=135, elevation=-22)
         aim(cam, ep)
         r = mujoco.Renderer(ep.model, height=h, width=w)
         r.update_scene(ep.data, camera=cam)
-        tiles.append((r.render().copy(), f"{cell}\nfitness {elite.fitness:.2f}"))
+        caption = f"{cell}\nfitness {elite.fitness:.2f}"
+        tiles.append((r.render().copy(),
+                      caption + (f"\non {terrain.name}" if labelled else "")))
         r.close()
 
     cols = 3
@@ -186,11 +210,11 @@ def make_robots(items, out, seed, types=None):
     return [path]
 
 
-def _record(cell, elite, seconds, fps, size):
-    """Frames of one robot on the flat floor, camera following its torso."""
+def _record(cell, elite, seconds, fps, size, terrain, label=None):
+    """Frames of one robot on its terrain, camera following its torso."""
     from PIL import Image, ImageDraw
 
-    ep = Episode(morpho.decode(elite.morph), get_terrains("flat")[0])
+    ep = Episode(morpho.decode(elite.morph), terrain)
     cam = follow_camera(ep, azimuth=90, elevation=-25, distance_scale=2.6)
     r = mujoco.Renderer(ep.model, height=size[1], width=size[0])
     cpg = ep.reset(elite.ctrl)
@@ -201,19 +225,24 @@ def _record(cell, elite, seconds, fps, size):
         aim(cam, ep)
         r.update_scene(ep.data, camera=cam)
         img = Image.fromarray(r.render().copy())
-        ImageDraw.Draw(img).text((8, 6), cell, fill=(20, 20, 20))
+        ImageDraw.Draw(img).text((8, 6), label or cell, fill=(20, 20, 20))
         frames.append(img)
     r.close()
     return frames
 
 
-def make_gait(items, out, seed, types=None, seconds=4.0, fps=15, size=(360, 240)):
+def make_gait(items, out, seed, types=None, terrains=None, seconds=4.0, fps=15,
+              size=(360, 240)):
     """2 x 2 grid of four different robots moving at the same time: the
     first SHOWCASE picks (best roller, then the best legged gaits)."""
     from PIL import Image
 
     chosen = pick_distinct(items, n=4, types=types)
-    clips = [_record(c, e, seconds, fps, size) for c, e in chosen]
+    labelled = terrains is not None
+    terrains = terrains if labelled else [get_terrains("flat")[0]] * len(chosen)
+    clips = [_record(c, e, seconds, fps, size, t,
+                     f"{c} [{t.name}]" if labelled else None)
+             for (c, e), t in zip(chosen, terrains)]
     cols = 2
     rows = -(-len(clips) // cols)
     frames = []
@@ -223,7 +252,8 @@ def make_gait(items, out, seed, types=None, seconds=4.0, fps=15, size=(360, 240)
             tile.paste(clip[k], ((i % cols) * size[0], (i // cols) * size[1]))
         frames.append(tile)
     size = frames[0].size
-    cell = ", ".join(c for c, _ in chosen)
+    cell = ", ".join(c + (f" [{t.name}]" if labelled else "")
+                     for (c, _), t in zip(chosen, terrains))
 
     # One shared palette (built from a mosaic of frames) avoids flicker.
     sample = frames[:: max(1, len(frames) // 6)][:6]
@@ -377,8 +407,12 @@ def main():
     p.add_argument("--seed", type=int, default=0, help="tie-break among equal fitness")
     p.add_argument("--types", default=None,
                    help="comma list of robot types to show, in order, instead of the automatic pick")
+    p.add_argument("--terrains", default=None,
+                   help="comma list of terrains, one per --types robot, in order "
+                        "(default: flat for all)")
     a = p.parse_args()
     types = [t.strip() for t in a.types.split(",") if t.strip()] if a.types else None
+    terrains = parse_terrains(a.terrains, types)
 
     which = list(FIGURES) if a.only is None else [s.strip() for s in a.only.split(",") if s.strip()]
     unknown = [s for s in which if s not in FIGURES]
@@ -392,8 +426,8 @@ def main():
     items = ranked(archive, a.seed)
 
     written, t0 = [], time.time()
-    steps = {"robots": lambda: make_robots(items, a.out, a.seed, types),
-             "gait": lambda: make_gait(items, a.out, a.seed, types),
+    steps = {"robots": lambda: make_robots(items, a.out, a.seed, types, terrains),
+             "gait": lambda: make_gait(items, a.out, a.seed, types, terrains),
              "parts": lambda: make_parts(items, a.out, a.seed)}
     for name in which:
         if name in steps:

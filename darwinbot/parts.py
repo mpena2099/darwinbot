@@ -20,26 +20,28 @@ from build123d import (Align, Box, BuildPart, Circle, Cone, Cylinder, Location,
                        Part, Polygon, Pos, Rot, Sphere, SlotOverall, extrude,
                        export_stl as _export_stl)
 
+from darwinbot import hardware
+
 # --- Feetech STS3215, from the SO-ARM100 STEP model (STS3215_03a, 2025) and the
 # Waveshare ST3215 STEP and drawing (2022), which agree on these values ------
 # (the SO-ARM100 model is Apache-2.0), not yet checked on a real servo: confirm
 # every value below with calipers before printing. The body frame has x along
 # the body length and z along the output axis, the origin at the body centre.
-SERVO_L = 45.4          # body length (x), towards the output axis
-SERVO_W = 24.8          # body width (y)
-SERVO_H = 35.0          # envelope along z, horns included
-SERVO_BODY_H = 30.7     # body alone, from z = -15.5 to z = +15.2
-SERVO_Z0 = -15.5        # face on the mounting side
-SERVO_AXIS_X = 12.5     # output axis offset from the body centre, both horns
-SERVO_CLEARANCE = 0.4   # printing slack per side
-HORN_BOLT_CIRCLE = 14.0 # 4 holes on a 9.9 mm square
-HORN_HOLE_YAW = 45.0    # hole pattern turned to the body axes
-HORN_N_HOLES = 4
-HORN_HOLE_D = 2.5       # M2 clearance
-HORN_BORE_D = 6.0       # clearance for the centre screw head
-SERVO_M2 = 2.4          # M2 clearance for the body mounting holes
-SERVO_TAP_X = (5.0, -19.5)   # tapped M2 holes on the mounting face; the far
-SERVO_TAP_Y = 10.2           # face has them at x = +5.0 and -15.7
+SERVO_L = hardware.SERVO.length          # body length (x), towards the output axis
+SERVO_W = hardware.SERVO.width          # body width (y)
+SERVO_H = hardware.SERVO.height          # envelope along z, horns included
+SERVO_BODY_H = hardware.SERVO.body_height     # body alone, from z = -15.5 to z = +15.2
+SERVO_Z0 = hardware.SERVO.z0        # face on the mounting side
+SERVO_AXIS_X = hardware.SERVO.axis_x     # output axis offset from the body centre, both horns
+SERVO_CLEARANCE = hardware.SERVO.clearance   # printing slack per side
+HORN_BOLT_CIRCLE = hardware.SERVO.horn_bolt_circle # 4 holes on a 9.9 mm square
+HORN_HOLE_YAW = hardware.SERVO.horn_hole_yaw    # hole pattern turned to the body axes
+HORN_N_HOLES = hardware.SERVO.horn_n_holes
+HORN_HOLE_D = hardware.SERVO.horn_hole_d       # M2 clearance
+HORN_BORE_D = hardware.SERVO.horn_bore_d       # clearance for the centre screw head
+SERVO_M2 = hardware.SERVO.m2          # M2 clearance for the body mounting holes
+SERVO_TAP_X = hardware.SERVO.tap_x   # tapped M2 holes on the mounting face; the far
+SERVO_TAP_Y = hardware.SERVO.tap_y           # face has them at x = +5.0 and -15.7
 # ---------------------------------------------------------------------------
 
 WALL = 2.5              # wall thickness (>= 2)
@@ -47,7 +49,7 @@ PLATE_T = 6.0           # torso plate thickness (its tabs carry the edge servos)
 LINK_T = 6.0            # default link / elbow plate thickness: 4 mm bends at ~36 MPa under the stall torque, 6 mm at ~16
 LINK_W = 20.0           # default link width = end boss diameter
 M3 = 3.2                # M3 clearance hole
-BED_MM = 220.0          # largest part that fits a common print bed
+BED_MM = float(round(hardware.PRINTER.bed * 1000.0, 6))          # largest part that fits a common print bed
 SPLICE_W = 24.0         # splice strip width, across the cut
 SPLICE_EDGE = 12.0      # splice hole distance from the strip ends
 SPLICE_HOLE = 8.0       # splice hole distance from the cut on each side
@@ -75,7 +77,7 @@ SKID_L, SKID_W, SKID_T = 60.0, 30.0, 6.0   # low-friction pad
 SPIKE_L, SPIKE_R = 30.0, 5.0               # TPU tip, tapered to SPIKE_TIP_R
 SPIKE_TIP_R = 1.5
 # --- cradle and U link (see docs/exporting.md) ------------------------------
-HORN_T = 3.0            # horn thickness, from the simulation's visual dress
+HORN_T = hardware.SERVO.horn_thickness            # horn thickness, from the simulation's visual dress
 CRADLE_GAP = 0.2        # mm of air between a printed part and the servo body
 CRADLE_T = 2.5          # cradle wall and cap thickness
 HORN_OPEN_R = 8.5       # horn opening in a cradle cap
@@ -276,10 +278,10 @@ def _axis_roll(spec):
 
 
 def _u_root(axis: str, width_mm: float, thick_mm: float):
-    """U link fork that clasps both horns of the servo at the link root, plus
-    the bridge into the link plate. Returns (solid, x of the plate start).
-    The arms lie on the two horn faces, outside the cradle caps, and carry the
-    horn hole pattern on the output axis."""
+    """U link fork at the link root, plus the bridge into the link plate.
+    Returns (solid, x of the plate start). The arms lie on the horn faces,
+    outside the cradle caps, and carry the horn hole pattern on the output
+    axis. A link about X (roll) has one arm, on the main horn face only."""
     d = SERVO_BODY_H / 2 + HORN_T + ARM_GAP
     hw = max(ARM_W, width_mm / 2 + 1.0)
     front = BRIDGE_X + BRIDGE_T
@@ -310,14 +312,11 @@ def _u_root(axis: str, width_mm: float, thick_mm: float):
         add(_boxc(BRIDGE_X, front, -(d + ARM_T), d + ARM_T,
                   -thick_mm / 2, thick_mm / 2))
     else:
-        # about X: the arms sit fore and aft of the servo, joined by a strap
-        # over its far end at the radius the plate clears (BRIDGE_X); the plate
-        # runs on from the fore arm, along the output axis
-        z = BRIDGE_X
-        for s in (-1, 1):
-            add(_boxc(s * d, s * (d + ARM_T), -hw, hw, -hw, z + ARM_T))
-            part -= horn(s)
-        add(_boxc(-(d + ARM_T), d + ARM_T, -hw, hw, z, z + ARM_T))
+        # about X: one arm, on the main horn face; the far end of the servo is
+        # where the parent holds it, so the link carries no strap there. The
+        # plate runs on from this arm, along the output axis
+        add(_boxc(d, d + ARM_T, -hw, hw, -hw, BRIDGE_X + ARM_T))
+        part -= horn(1)
         front = d + ARM_T / 2
     return part, front
 

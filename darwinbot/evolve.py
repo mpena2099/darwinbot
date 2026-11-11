@@ -24,6 +24,7 @@ optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
 
+import copy
 import hashlib
 import multiprocessing
 import os
@@ -38,15 +39,15 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, rules
+from darwinbot import ablate, body_options, hardware, plugins, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
-from darwinbot.fitness import TASKS
+from darwinbot.fitness import task_names
 from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 22                     # bump when the genome meaning changes
+BODY_MODEL = 23                     # bump when the genome meaning changes
 N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
@@ -158,6 +159,9 @@ class Archive:
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body:     str = ""         # body_options limits, as given to train.py --body
+    profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
+    locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
+    plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -189,6 +193,21 @@ class Archive:
                     data["behaviour"][i])
                 for i in range(len(data["solution"]))}
 
+    def like(self) -> "Archive":
+        """Empty archive with this run's settings, but no cells, history or lineage."""
+        return Archive(terrains=self.terrains, batch=self.batch, evals=self.evals,
+                       seconds=self.seconds, variants=self.variants, task=self.task,
+                       payload=self.payload, ablate=self.ablate, rules=self.rules,
+                       body=self.body, profile=copy.deepcopy(self.profile),
+                       locked=self.locked, plugin=dict(self.plugin))
+
+    def activate(self) -> None:
+        """Turn on the ablations, score rules and body limits this archive was
+        trained with; scripts that score, decode or build its robots call this."""
+        ablate.set_active(self.ablate)
+        rules.set_active(self.rules)
+        body_options.set_active(self.body)
+
     def names(self) -> Dict[Cell, str]:
         """Unique readable name of every filled cell. Cells that share a type
         name get their cell index appended."""
@@ -207,7 +226,9 @@ class Archive:
         base, index = parse_cell_name(name)
         names = self.names()
         if index is not None:
-            if names.get(index, "").rsplit("-", 1)[0] != base:
+            stored = names.get(index, "")
+            # a unique name carries no cell suffix, so both spellings name the cell
+            if stored != base and stored.rsplit("-", 1)[0] != base:
                 raise ValueError(f"no {name} robot in the archive")
             return index
         hits = [c for c, n in names.items() if n == base]
@@ -286,6 +307,10 @@ class Archive:
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
         self.__dict__.setdefault("body", "")          # nor body options
+        self.__dict__.setdefault("locked", ())        # nor locked parts
+        self.__dict__.setdefault("plugin", {})        # nor plugins
+        if "profile" not in state:                    # nor hardware profiles
+            self.__dict__["profile"] = hardware.default_profile()
 
     def best(self) -> Elite:
         return max(self.cells.values(), key=lambda e: e.fitness)
@@ -301,7 +326,7 @@ class Archive:
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
-              "rules", "body")
+              "rules", "body", "profile", "locked", "plugin")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -367,13 +392,14 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=(), score_rules=(), body=""):
+def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=()):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations, optional score rules and body options."""
+    carry the run's ablations, optional score rules, body options and plugins."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
     rules.set_active(score_rules)
     body_options.set_active(body)
+    plugins.load_all(plugin_paths)
 
 
 def _cuda_devices() -> int:
@@ -381,9 +407,10 @@ def _cuda_devices() -> int:
     return max(1, wp.get_cuda_device_count())
 
 
-def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body=""):
+def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body="",
+                 plugin_paths=()):
     """Pool initializer for --device warp: bind this worker to the next GPU."""
-    _init_worker(ablations, score_rules, body)
+    _init_worker(ablations, score_rules, body, plugin_paths)
     with counter.get_lock():
         i = counter.value
         counter.value += 1
@@ -393,6 +420,7 @@ def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body=""):
 
 
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
+LOCK_TRIES = 8          # offspring drawn until one keeps the archive's locked parts
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
 
@@ -440,11 +468,12 @@ def run(
     ablations: tuple = (),
     score_rules: tuple = (),
     body: str = "",
+    plugin: Optional[dict] = None,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
-    if task not in TASKS:
-        raise ValueError(f"task must be one of {TASKS}")
+    if task not in task_names():
+        raise ValueError(f"task must be one of {task_names()}")
     if device == "gpu" and variants > 0 and not resume:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     os.makedirs(out_dir, exist_ok=True)
@@ -469,7 +498,8 @@ def run(
                           variants=variants, task=task, payload=payload,
                           ablate=ablate.normalise(ablations),
                           rules=rules.normalise(score_rules),
-                          body=body_options.parse(body).to_string())
+                          body=body_options.parse(body).to_string(),
+                          plugin=plugin or {})
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
     rules.set_active(archive.rules)             # and its score rules
     body_options.set_active(archive.body)       # and its body limits
@@ -488,17 +518,24 @@ def run(
         parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
-            if rng.random() < random_frac:
+            # A random body would not carry the locked parts.
+            if not archive.locked and rng.random() < random_frac:
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
                               device, popsize, archive.variants, None,
                               archive.task, archive.payload))
             else:
-                if rng.random() < GRAFT_P:        # crossover with another elite
-                    donor = parents["solution"][(i + 1) % batch_size]
-                    child = morpho.graft(parents["solution"][i], donor, rng)
-                else:
-                    child = morpho.mutate(parents["solution"][i], rng)
+                parent = parents["solution"][i]
+                for _ in range(LOCK_TRIES):
+                    if rng.random() < GRAFT_P:        # crossover with another elite
+                        donor = parents["solution"][(i + 1) % batch_size]
+                        child = morpho.graft(parent, donor, rng)
+                    else:
+                        child = morpho.mutate(parent, rng)
+                    if morpho.keeps_locked(child, parent, archive.locked):
+                        break
+                else:                    # same body, its controller searched again
+                    child = np.array(parent)
                 tasks.append((child, parents["ctrl"][i], terrains,
                               budget_child, 0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,
@@ -519,10 +556,10 @@ def run(
         ctx = multiprocessing.get_context("spawn")
         pool = ctx.Pool(workers, _warp_worker,
                         (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules,
-                         archive.body))
+                         archive.body, plugins.loaded()))
     else:
         pool = multiprocessing.Pool(workers, _init_worker,
-                                    (archive.ablate, archive.rules, archive.body))
+                                    (archive.ablate, archive.rules, archive.body, plugins.loaded()))
     path = os.path.join(out_dir, "archive.pkl")
     code = code_version()
     print(f"[darwinbot] code {code}")

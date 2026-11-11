@@ -77,13 +77,12 @@ on them.
     time a servo housing touches the ground). Each enters the run only if its
     own short run, over three seeds, passes against the current score
     without shrinking the archive's variety.
-- **Assemble every export virtually, then build one**: no robot has been
-  assembled yet, even on screen. A script that places every exported part and
-  a servo model in the spawn pose would check that holes and screws line up,
-  that no two printed parts intersect, and that the printed parts match the
-  shapes the simulator used, and write the assembled robot as one 3D file to
-  inspect. In parallel, measure a real STS3215, correct `parts.py`, and print
-  one bracket, link and horn adapter to test the fit before a whole robot.
+- **Build one robot**: every export is already assembled on screen
+  (`tools/check_assembly.py` reports clashes and horn holes,
+  `tools/render_assembled.py` shows the printed parts standing and walking),
+  but nothing has been printed. Measure a real STS3215, correct `parts.py`,
+  and print one bracket, link and horn adapter to test the fit before a whole
+  robot.
 - **A search that learns where to mutate** (CMA-ME / CMA-MAE): bodies come
   from random mutations today. In these MAP-Elites variants a CMA-ES learns
   which directions in the genome fill new cells or improve old ones; the body
@@ -136,6 +135,27 @@ on them.
 
 ## Later
 
+- **Hardware profiles: the default kit, or your own**: the parts kit is a
+  [profile file](hardware-profiles.md) (servo, battery, electronics, material,
+  print bed) that the archive stores and `train.py --profile` picks. What is
+  left: wheel and foot limits within the genome's ranges, parametric terrains
+  (step height, rubble size, slope, ground friction), part prices for the bill
+  of materials, and a flag saying whether a profile's numbers are measured or
+  datasheet only, repeated in the export and `validate.py` reports. Choosing
+  would go through a hardware tab in the command builder page, which writes
+  the profile file next to the `train.py` command, in the browser with nothing
+  to install; a local app (Streamlit) could later also start the run and show
+  the archive filling. In steps:
+  1. Limits, parametric terrains, prices and the measured flag in the
+     profile; the hardware tab.
+  2. Servos without a load sensor (common PWM servos): the load feedback gain
+     is held at zero and the firmware reads no load.
+  3. A parametric servo housing (box, shaft position, screw holes), so the
+     cradle, fork and elbow parts and `tools/check_assembly.py` work for other
+     servo sizes. The largest step.
+  4. Firmware drivers per servo family (Feetech serial, PWM, Dynamixel) under
+     the portable core.
+
 - **Archives and exports on Hugging Face** (an idea for after the repository
   opens): publish the showcase archives and the export packages (STLs, bill
   of materials, assembly guide, control file) as a Hugging Face dataset, and
@@ -170,10 +190,10 @@ on them.
   legs, cost of transport) are chosen by hand. Axes learned from recorded
   behaviour could separate gait styles nobody listed. More experimental.
 - **Organic parts on export, beyond flat plates**: `export.py --organic`
-  hollows links and elbow plates with 2D topology optimisation. Still to do:
-  the torso tiles (many mounts, no single clamp), a 3D optimisation for
-  out-of-plane loads, and scoring the lighter robot in simulation before
-  trusting it.
+  hollows plain links with 2D topology optimisation, re-simulates
+  the lighter robot and reports its score, and `polish.py --organic` re-tunes
+  the controller on those masses. Still to do: the torso tiles (many mounts, no
+  single clamp) and a 3D optimisation for out-of-plane loads.
 - **Elastic tendons across joints**: printed TPU tendons that span one or two
   joints and store energy, as a kangaroo bounces on its tendons and a
   hamstring moves hip and knee together (MuJoCo simulates tendons natively).
@@ -261,10 +281,10 @@ ROS 2 already has that layer (Nav2 for routes and obstacles, perception,
 task state machines), so the idea is to plug a finished robot into it rather
 than evolve missions. What it would take:
 
-- **URDF export**: write each evolved robot as URDF next to the STLs (every
-  module a `<link>` with its mesh, every servo a `<joint>`), so it opens in
-  RViz, Gazebo, MoveIt and the rest of the ROS 2 tools. The body is already a
-  tree of links and joints, so this is a direct translation.
+- **URDF export**: done as `robot.urdf` in every export (see
+  [Exporting](exporting.md#urdf)), with simple collision and visual shapes.
+  Still to do: point the visuals at the exported STL meshes, so RViz and
+  Gazebo show the printed robot rather than boxes and cylinders.
 - **Speed command**: Nav2 sends a `Twist` with forward and turning speed.
   The robot takes a turn command and a speed command from 0 to 1 (two gene
   pairs per joint, trained by a half-speed episode); the node maps the

@@ -27,12 +27,13 @@ A body whose
 geoms already touch at spawn is not buildable (see sim.is_buildable).
 """
 
+import contextlib
 import re
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 
-from darwinbot import ablate
+from darwinbot import ablate, hardware
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
@@ -47,11 +48,11 @@ from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   link_tip, plate_thick, segment_box,
                                   spring_stiffness)
 
-SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
-LIMB_DENSITY   = 300.0
-LINK_DENSITY   = 1240.0  # kg/m^3, solid PLA printed link
-PAYLOAD_MASS   = 0.17    # kg: ESP32 + 3S LiPo + regulator
-SERVO_MASS     = 0.060 + 0.015   # kg: the servo plus its printed bracket (~15 g of PLA)
+SHELL_DENSITY  = hardware.MATERIAL.shell_density   # kg/m^3, printed shell with infill
+LIMB_DENSITY   = hardware.MATERIAL.limb_density
+LINK_DENSITY   = hardware.MATERIAL.link_density    # kg/m^3, solid PLA printed link
+PAYLOAD_MASS   = hardware.ELECTRONICS.mass         # kg: ESP32 + 3S LiPo + regulator
+SERVO_MASS     = hardware.SERVO.mass   # kg, the servo alone; its cradle is added per mount (_servo_mass)
 ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
@@ -61,11 +62,11 @@ JOINT_RANGE = {"yaw": 0.9, "pitch": 1.3, "roll": 0.9}   # +/- rad
 # topped out at 2.3 rad/s, under half the real one, and any stride faster than
 # that turned into saturated torque reversals.
 JOINT_DAMPING  = SERVO_TORQUE / SERVO_SPEED
-JOINT_FRICTION = 0.068
-JOINT_ARMATURE = 0.027
-JOINT_KP       = 13.37
+JOINT_FRICTION = hardware.SERVO.joint_friction
+JOINT_ARMATURE = hardware.SERVO.joint_armature
+JOINT_KP       = hardware.SERVO.joint_kp
 SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
-WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
+WHEEL_KV       = hardware.SERVO.wheel_kv          # N*m per rad/s, saturates at SERVO_TORQUE
 WHEEL_DAMPING  = JOINT_DAMPING  # same motor: torque falls to zero at the no-load speed
 CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
@@ -78,7 +79,7 @@ SPIKE_FACTOR = 1.5
 # Hard printed or moulded plastic (servo housings, PLA links, elbows, torso,
 # tail, caster fork) on the floor: about 0.3 to 0.4, against 1.0 for the TPU
 # feet and wheels. Without it a servo housing grips like a foot.
-PLASTIC_FACTOR = 0.35
+PLASTIC_FACTOR = hardware.MATERIAL.plastic_factor
 
 
 def plastic_factor() -> float:
@@ -175,9 +176,18 @@ def _frame_attrs(morph: Morphology, node) -> str:
     return f'pos="{_f(*off)}" xyaxes="{_f(*rot[:, 0], *rot[:, 1])}"'
 
 
-def _servo_box(i: int, axis: str, friction: float = 1.0) -> str:
+def _servo_mass(morph: Morphology, node) -> float:
+    """kg of a servo and the printed cradle it sits in. The cradle is printed
+    on the torso or a segment plate (its own part, with a foot) or at a link
+    tip or on an elbow, which the cradle's volume depends on."""
+    plate = morph.nodes[node.parent].kind in ("core", "segment")
+    cradle = hardware.SERVO.cradle_mass_plate if plate else hardware.SERVO.cradle_mass_link
+    return SERVO_MASS + cradle
+
+
+def _servo_box(i: int, axis: str, mass: float, friction: float = 1.0) -> str:
     half, centre = servo_box(axis)
-    return (f'<geom name="servo{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" mass="{SERVO_MASS}" rgba="0.15 0.15 0.15 1" '
+    return (f'<geom name="servo{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" mass="{mass:.6f}" rgba="0.15 0.15 0.15 1" '
             f'{_special_geom(plastic_factor(), friction)}/>')
 
 
@@ -192,7 +202,7 @@ HORN_RADIUS, HORN_THICK = 0.011, 0.003
 
 def _cradle_geom(i: int, axis: str, friction: float = 1.0) -> str:
     """The printed cradle around the servo, a collision shape without mass of
-    its own (SERVO_MASS already counts the printed holder). It lives next to
+    its own (_servo_mass already counts the printed holder). It lives next to
     the servo box, in the part the servo is bolted to."""
     half, centre = cradle_box(axis)
     return (f'<geom name="cradle{i}" type="box" pos="{_f(*centre)}" size="{_f(*half)}" '
@@ -236,6 +246,29 @@ def _box_geom(name: str, centre, half, contact: str, rgba: str = LINK_RGBA,
             f'size="{_f(*half)}" {PART_ONLY} rgba="{rgba}" {contact}/>')
 
 
+# Mass factor of a printed plate, by ("link", node id) or ("elbow", child id):
+# the share of material a hollowed part keeps (export --organic). Empty, the
+# default, leaves every density as it is and the model text unchanged.
+_MASS_FACTOR: Dict[Tuple[str, int], float] = {}
+
+
+@contextlib.contextmanager
+def mass_factors(factors):
+    """Build every model inside the block with these plates lightened:
+    {("link", id): ratio, ("elbow", child id): ratio}."""
+    global _MASS_FACTOR
+    saved, _MASS_FACTOR = _MASS_FACTOR, dict(factors or {})
+    try:
+        yield
+    finally:
+        _MASS_FACTOR = saved
+
+
+def _plate_density(kind: str, node_id: int):
+    f = _MASS_FACTOR.get((kind, node_id), 1.0)
+    return LINK_DENSITY if f == 1.0 else LINK_DENSITY * f
+
+
 def _link_geoms(node, rgba: str = LINK_RGBA, contact: str = ROBOT_GEOM,
                 tip_cap: bool = True) -> str:
     """One box geom per piece of the link path; the last piece carries the
@@ -254,7 +287,7 @@ def _link_geoms(node, rgba: str = LINK_RGBA, contact: str = ROBOT_GEOM,
         out.append(f'<geom name="{name}" type="box" pos="{_f(*((a + b) / 2))}" '
                    f'{_xyaxes(rot)} '
                    f'size="{_f(np.linalg.norm(d) / 2, node.width / 2, plate_thick(node) / 2)}" '
-                   f'density="{LINK_DENSITY}" rgba="{rgba}" {contact}/>')
+                   f'density="{_plate_density("link", node.id)}" rgba="{rgba}" {contact}/>')
     for k, p in enumerate(pts):
         if (k == 0 and node.kind == "joint") or (k == len(pts) - 1 and not tip_cap):
             continue
@@ -299,7 +332,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
         end = max(at + 0.002, d - 0.0381)
         centre = tip + rot @ np.array([0.0, side * (at + end) / 2, 0.0])
         # the strut keeps the mass of the plate it replaces
-        mass = LINK_DENSITY * w * (d - near) * plate_thick(parent)
+        mass = _plate_density("elbow", child.id) * w * (d - near) * plate_thick(parent)
         strut = _box_geom(f"strut{child.id}", centre,
                           (STRUT_HALF_W, max(1e-4, (end - at) / 2), hz), plastic, rot=rot)
         strut = strut.replace(PART_ONLY, f'mass="{mass:.6f}"')
@@ -312,7 +345,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
     return (f'<geom name="elbow{child.id}" type="box" '
             f'pos="{_f(*pos)}" {_xyaxes(rot)} '
             f'size="{_f(w / 2, (d - near) / 2, plate_thick(parent) / 2)}" '
-            f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {plastic}/>')
+            f'density="{_plate_density("elbow", child.id)}" rgba="{LINK_RGBA}" {plastic}/>')
 
 
 def _foot_shape_geoms(node, friction: float = 1.0) -> str:
@@ -427,7 +460,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
             f'ctrlrange="{-SERVO_SPEED} {SERVO_SPEED}" '
             f'forcerange="{-SERVO_TORQUE} {SERVO_TORQUE}"/>')
         layout.append(Actuator(i, "wheel", "wheel"))
-        inner = f"""{_servo_box(i, "yaw", friction)}
+        inner = f"""{_servo_box(i, "yaw", _servo_mass(morph, node), friction)}
           {_cradle_geom(i, "yaw", friction)}
           <body name="{name}" pos="{_f(*hub)}">
             <joint name="{name}" type="hinge" axis="{_f(*axle)}" damping="{WHEEL_DAMPING}"/>
@@ -485,7 +518,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
     mount = ""
     if node.kind in ("joint", "segment"):
         mount = (f'\n      <frame {_frame_attrs(morph, node)}>\n        '
-                 f'{_servo_box(i, node.axis, friction)}\n        {_cradle_geom(i, node.axis, friction)}\n        {_servo_dress(node.axis)}\n      </frame>')
+                 f'{_servo_box(i, node.axis, _servo_mass(morph, node), friction)}\n        {_cradle_geom(i, node.axis, friction)}\n        {_servo_dress(node.axis)}\n      </frame>')
     return f"""{mount}
       <body name="n{i}" {_frame_attrs(morph, node)}>
         {inner}{below}

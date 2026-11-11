@@ -3,6 +3,7 @@ Give chosen robots a longer controller search than evolution could afford.
 
     python experiments/polish.py --archive a.pkl --types t1,t2 --out polished.pkl
     python experiments/polish.py --archive a.pkl --per-gait roll,trot,walk --out polished.pkl
+    python experiments/polish.py --archive a.pkl --types t1 --organic --out polished-organic.pkl
 
 Training tunes a controller only long enough to judge a body, so an elite
 usually enters the archive far below what its body allows. For each chosen
@@ -12,7 +13,8 @@ archive with only those robots, for replay, validate and export. --types picks
 robots by name (as in replay.py --list); --per-gait picks the best elite of
 each listed gait. A robot whose polished behaviour lands in a cell another
 robot already took goes to polished-2.pkl (-3, ...), and a robot that did not
-improve keeps its original controller.
+improve keeps its original controller. --organic searches on the hollowed masses of each
+robot (export --organic), so the polished scores are those of the lighter body.
 """
 
 import argparse
@@ -20,14 +22,15 @@ import dataclasses
 import os
 import pickle
 import sys
+import tempfile
 import time
 from multiprocessing import Pool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from darwinbot import morphology as morpho   # noqa: E402
-from darwinbot import body_options   # noqa: E402
+from darwinbot import builder, morphology as morpho, plugins   # noqa: E402
 from darwinbot.evolve import Archive, cell_of, scaled_budget, type_name   # noqa: E402
+from darwinbot.export import organic_factors, organic_ratios   # noqa: E402
 from darwinbot.inner import cpu_evaluator, optimise_controller   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
 from replay import open_archive   # noqa: E402
@@ -40,7 +43,10 @@ _score = None   # a population worker's cpu_evaluator
 
 def _init_population_worker(args):
     global _score
-    _score = cpu_evaluator(*args)[1]
+    (init, factors), plugin_paths = args
+    plugins.load_all(plugin_paths)
+    builder.mass_factors(factors).__enter__()   # the hollow masses, for the worker's life
+    _score = cpu_evaluator(*init)[1]
 
 
 def _score_one(ctrl):
@@ -48,20 +54,32 @@ def _score_one(ctrl):
 
 
 def polish_elite(job, workers=1):
-    """Polish one robot; workers > 1 scores each CMA-ES generation on a pool."""
-    cell, elite, a, budget, sigma, seed = job
-    body_options.set_active(a.body)
+    """Polish one robot; workers > 1 scores each CMA-ES generation on a pool.
+    With organic, the robot's hollowed plates are weighed (export --organic) and
+    the search, its baseline included, runs on those masses."""
+    cell, elite, a, budget, sigma, seed, organic = job
     m = morpho.decode(elite.morph)
+    factors = {}
+    if organic:
+        with tempfile.TemporaryDirectory() as tmp:
+            factors = organic_factors(m, organic_ratios(m, tmp))
     terrains = get_terrains(a.terrains, seed=seed)
     start = time.time()
     kw = dict(x0=elite.ctrl, budget=scaled_budget(budget, m), sigma0=sigma, seed=seed,
               seconds=a.seconds, variants=a.variants, task=a.task, payload=a.payload)
-    if workers > 1:
-        init = (m, terrains, a.seconds, a.payload, a.variants, seed, a.task)
-        with Pool(workers, _init_population_worker, (init,)) as pool:
-            r = optimise_controller(m, terrains, map_many=lambda cs: pool.map(_score_one, cs), **kw)
-    else:
-        r = optimise_controller(m, terrains, **kw)
+    with builder.mass_factors(factors):
+        if organic:
+            _, base = cpu_evaluator(m, terrains, a.seconds, a.payload, a.variants, seed,
+                                    a.task)
+            fit, scores, _ = base(elite.ctrl)
+            elite = dataclasses.replace(elite, fitness=fit, scores=list(scores))
+        if workers > 1:
+            init = (m, terrains, a.seconds, a.payload, a.variants, seed, a.task)
+            with Pool(workers, _init_population_worker,
+                      ((init, factors), plugins.loaded())) as pool:
+                r = optimise_controller(m, terrains, map_many=lambda cs: pool.map(_score_one, cs), **kw)
+        else:
+            r = optimise_controller(m, terrains, **kw)
     minutes = (time.time() - start) / 60
     if r.fitness >= elite.fitness:
         e = dataclasses.replace(elite, ctrl=r.ctrl, fitness=r.fitness,
@@ -89,15 +107,11 @@ def picks(a, types, gaits):
     return [best[g][0] for g in gaits]
 
 
-def _new_archive(a) -> Archive:
-    return Archive(terrains=a.terrains, batch=a.batch, seconds=a.seconds,
-                   variants=a.variants, task=a.task, payload=a.payload,
-                   body=a.body)
-
-
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--archive", required=True)
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     choose = p.add_mutually_exclusive_group(required=True)
     choose.add_argument("--types", help="comma-separated type names, as in replay.py --list")
     choose.add_argument("--per-gait", help="comma-separated gaits: " + ", ".join(GAITS))
@@ -107,6 +121,8 @@ def main():
     p.add_argument("--sigma", type=float, default=0.12)
     p.add_argument("--seed", type=int, default=12345)
     p.add_argument("--workers", type=int, default=1)
+    p.add_argument("--organic", action="store_true",
+                   help="search on the hollowed masses of each robot (export --organic)")
     args = p.parse_args()
     if os.path.exists(args.out):
         sys.exit(f"{args.out} exists; pick a new name")
@@ -116,15 +132,15 @@ def main():
         bad = [g for g in gaits if g not in GAITS]
         if bad:
             sys.exit(f"unknown gait(s) {', '.join(bad)}; pick from {', '.join(GAITS)}")
-    a: Archive = open_archive(args.archive)
-    body_options.set_active(a.body)
+    a: Archive = open_archive(args.archive, args.plugin)
     cells = picks(a, args.types.split(",") if args.types else None, gaits)
-    jobs = [(c, a.cells[c], a, args.budget, args.sigma, args.seed) for c in cells]
+    jobs = [(c, a.cells[c], a, args.budget, args.sigma, args.seed, args.organic)
+            for c in cells]
     if args.workers > 1 and len(jobs) < args.workers:
         # fewer robots than workers: one robot at a time, its generations in parallel
         results = [polish_elite(job, args.workers) for job in jobs]
     elif args.workers > 1:
-        with Pool(args.workers) as pool:
+        with Pool(args.workers, plugins.load_all, (plugins.loaded(),)) as pool:
             results = pool.map(polish_elite, jobs)
     else:
         results = [polish_elite(job) for job in jobs]
@@ -132,7 +148,7 @@ def main():
     # One archive per collision group: every polished robot is kept, and an
     # archive still holds at most one elite per cell.
     base, ext = os.path.splitext(args.out)
-    groups = [[_new_archive(a), set(), args.out]]
+    groups = [[a.like(), set(), args.out]]
     for cell, e in results:
         c = cell_of(e.behaviour)
         group = next((g for g in groups if c not in g[1]), None)
@@ -140,7 +156,7 @@ def main():
             n = len(groups) + 1
             while os.path.exists(f"{base}-{n}{ext}"):
                 n += 1
-            group = [_new_archive(a), set(), f"{base}-{n}{ext}"]
+            group = [a.like(), set(), f"{base}-{n}{ext}"]
             groups.append(group)
         group[1].add(c)
         group[0].insert(e)

@@ -115,6 +115,18 @@ python experiments/validate.py --archive pruned.pkl --type 13servos-mid-trot
 python tools/check_assembly.py --archive pruned.pkl --type 13servos-mid-trot
 ```
 
+The whole chain runs with one command. It refuses an existing `--out` and
+writes `polished.pkl`, `pruned.pkl`, `validate.txt`, `assembly.txt`,
+`showcase.snap.pkl` and a `summary.txt` with each robot's score before and after
+polish and prune, its validate verdict and its clash count:
+
+```bash
+python experiments/showcase.py --archive merged.pkl --types 13servos-mid-trot,6servos-low-trot --out showcase --workers 8
+```
+
+`--skip polish,prune` leaves stages out (the next stage then reads the previous
+stage's archive), and `--budget` sets polish's CMA-ES evaluations.
+
 - `polish.py` runs a longer CMA-ES (1200 evaluations, up to three times more
   for bodies with many joints) from each robot's own controller, on the same
   terrains, variants and task. With as many robots as workers, each worker
@@ -124,8 +136,20 @@ python tools/check_assembly.py --archive pruned.pkl --type 13servos-mid-trot
 - `prune.py` removes, one at a time, each part whose removal does not lower
   the score, with a short controller search after each cut. A pruned robot
   can change its name (a 7-servo trotter became a 6-servo one).
-- `validate.py` passes a robot that loses less than 30% under varied physics.
+- `validate.py` passes a robot only when it is robust: mean loss under 30%,
+  5th-percentile loss under 60% and fall rate at most 10% on every terrain and
+  command, and no terrain where it fails to move at all. `--unseen` also
+  checks the grounds the archive never trained on.
 - `check_assembly.py` builds the printed parts and reports clashes.
 
 Pruning reruns the score with fresh terrains and variants, so its number is
 the one to report.
+
+A snapshot plays a robot recorded on flat ground, walking straight, with any
+later version of the code, while an archive needs the code of its BODY_MODEL.
+Record one before the genome or the physics changes:
+
+```bash
+python experiments/snapshot.py --archive pruned.pkl --types 13servos-mid-trot --out showcase.snap.pkl
+python experiments/replay.py --snapshot showcase.snap.pkl --type 13servos-mid-trot
+```

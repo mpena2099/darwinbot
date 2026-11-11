@@ -36,6 +36,7 @@ import threading
 
 TRAIN_ARGS = "--preset steer --batches 5"
 PROGRESS_DATASET = "your-user/darwinbot-progress"
+PROFILE_YAML = ""         # text of a hardware profile (islands.py --profile); empty: the default
 TOKEN_DATASET = "darwinbot-secret"   # slug of the private dataset with token.txt
 PUBLISH_EVERY = 900        # s
 RESUME_TO = "steer/archive.pkl"   # where --preset steer looks for its archive
@@ -119,14 +120,19 @@ def main():
         shutil.copy(previous[0], f"{OUT}/{RESUME_TO}")
         print(f"resuming from {previous[0]}")
     pip = [sys.executable, "-m", "pip", "install", "-q"]
-    subprocess.run(pip + ["mujoco>=3.6.0", "cma>=3.3", "ribs>=0.12"], check=True)
+    subprocess.run(pip + ["mujoco>=3.6.0", "cma>=3.3", "ribs>=0.12", "pyyaml"], check=True)
     if "--device warp" in TRAIN_ARGS:
         subprocess.run(pip + ["mujoco-warp>=3.17", "warp-lang>=1.18"], check=True)
     publishing = api_token()
     if publishing:
         subprocess.run(pip + ["-U", "kaggle"], check=True)
     env = dict(os.environ, PYTHONPATH=code)
-    cmd = (f"timeout {TIME_LIMIT} {sys.executable} experiments/train.py {TRAIN_ARGS} "
+    profile = ""
+    if PROFILE_YAML:
+        with open(f"{WORK}/profile.yaml", "w") as f:
+            f.write(PROFILE_YAML)
+        profile = f"--profile {WORK}/profile.yaml "
+    cmd = (f"timeout {TIME_LIMIT} {sys.executable} experiments/train.py {TRAIN_ARGS} {profile}"
            f"--workers {os.cpu_count()} --out {OUT} > {LOG} 2>&1")
     run = subprocess.Popen(["bash", "-c", cmd], env=env)
     done = threading.Event()

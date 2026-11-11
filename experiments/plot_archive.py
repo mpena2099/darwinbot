@@ -16,9 +16,9 @@ from darwinbot.fitness import UNSTABLE_SCORE
 from darwinbot.sim import HEIGHT_MAX
 
 
-def load(path):
+def load(path, plugin=None):
     from replay import open_archive   # same directory; shared error messages
-    return open_archive(path)
+    return open_archive(path, plugin)
 
 
 def heatmap(archive):
@@ -91,6 +91,8 @@ def history(archive):
 def main():
     p = argparse.ArgumentParser(description="darwinbot: plot an archive")
     p.add_argument("--archive", default="checkpoints/archive.pkl")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains the archive was trained with")
     p.add_argument("--out", default="checkpoints", help="output directory")
     p.add_argument("--show", action="store_true", help="display instead of Agg")
     a = p.parse_args()
@@ -100,7 +102,7 @@ def main():
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    archive = load(a.archive)
+    archive = load(a.archive, a.plugin)
     os.makedirs(a.out, exist_ok=True)
 
     figures = [("archive_heatmap.png", heatmap(archive)),

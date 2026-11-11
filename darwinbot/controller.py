@@ -50,6 +50,7 @@ import math
 import numpy as np
 from numba import njit
 
+from darwinbot import hardware
 from darwinbot.morphology import MAX_NODES, ActuatorLayout, Morphology
 
 FREQ_RANGE   = (0.3, 1.5)     # Hz; the second harmonic doubles it. Robots and animals
@@ -57,9 +58,9 @@ FREQ_RANGE   = (0.3, 1.5)     # Hz; the second harmonic doubles it. Robots and a
                               # gaits were a shiver of short, fast steps
 AMP_RANGE    = (0.0, 0.8)     # rad, each harmonic
 OFFSET_RANGE = (-0.6, 0.6)    # rad
-SERVO_SPEED  = 4.71           # rad/s, STS3215 (12 V) no-load speed
-LOAD_FULL_SCALE = 0.7        # fraction of the STS3215 stall torque that reads as N = 1
-SERVO_TORQUE = 2.94 * LOAD_FULL_SCALE   # N*m: 12 V stall torque with a 30% margin
+SERVO_SPEED  = hardware.SERVO.speed          # rad/s, STS3215 (12 V) no-load speed
+LOAD_FULL_SCALE = hardware.SERVO.load_full_scale   # fraction of the stall torque that reads as N = 1
+SERVO_TORQUE = hardware.SERVO.stall_torque * LOAD_FULL_SCALE   # N*m: 12 V stall torque with a 30% margin
 WHEEL_RANGE  = (-SERVO_SPEED, SERVO_SPEED)   # signed so wheels may roll either way
 SIGMA_MAX    = 3.0            # rad/s; signed, load sign depends on the mounting
 SIGMA_RANGE  = (-SIGMA_MAX, SIGMA_MAX)

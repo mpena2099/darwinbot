@@ -120,12 +120,14 @@ class BatchEpisode:
          ticks, yaw, _, x_mid, reached, _, _, tiltsum, slipsum, sgsum), _ = (
             jax.lax.scan(body, carry, jnp.arange(self.n_steps)))
         # Same convention as Episode: a blow up reports no displacement.
-        keep = jnp.where(unstable, 0.0, 1.0)
+        # A where, not a product: the blown-up values may already be NaN.
+        def keep(v):
+            return jnp.where(unstable, 0.0, v)
         # As in Episode, a blow up is reported as unstable, not as a fall.
         # progress = 2 * (x_end - x_mid) if the half-way step was reached, else dx.
         progress = jnp.where(reached, 2.0 * (dx - x_mid), dx)
-        return (dx * keep, dy * keep, energy, done & ~unstable, unstable, duration,
-                touch, zsum, upsum, ticks, yaw * keep, progress * keep,
+        return (keep(dx), keep(dy), energy, done & ~unstable, unstable, duration,
+                touch, zsum, upsum, ticks, keep(yaw), keep(progress),
                 tiltsum, slipsum, sgsum)
 
     def _hits(self, d, geoms):

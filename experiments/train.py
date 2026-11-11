@@ -16,13 +16,13 @@ in its own folder (checkpoints/<preset>), and a preset whose folder already
 holds an archive is resumed, so the same command run again trains further.
 """
 
+import argparse
 import os
+import pickle
 import sys
 
-import argparse
-
-from darwinbot import ablate, body_options, evolve, rules
-from darwinbot.fitness import TASKS
+from darwinbot import ablate, body_options, evolve, hardware, plugins, rules
+from darwinbot.fitness import task_names
 from darwinbot.morphology import decode, summary
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -57,7 +57,32 @@ def resolve_device(device, workers, cache_path=None):
     return picked, workers
 
 
+def check_kit_profile(path):
+    """Sanity-check a --profile kit before the run; warnings are printed and
+    errors stop it (tools/check_kit.py)."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+    from check_kit import check
+    errors, warnings, _ = check(path)
+    for message in warnings:
+        print(f"[kit] warning: {message}")
+    if errors:
+        raise SystemExit("hardware profile check failed:\n  " +
+                         "\n  ".join(errors))
+
+
 def main():
+    # --plugin must load before the parser checks --task and --terrains, which
+    # the plugin may add to.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--plugin", default=None, metavar="FILE.py")
+    early, _ = pre.parse_known_args()
+    record = None
+    if early.plugin:
+        try:
+            record = plugins.load(early.plugin)
+        except OSError as e:
+            raise SystemExit(str(e))
+
     p = argparse.ArgumentParser(description="darwinbot: evolve bodies and gaits")
     p.add_argument("--terrains", default="flat",
                    help="preset (flat, terrain, all) or comma list of terrain names")
@@ -88,13 +113,19 @@ def main():
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
-    p.add_argument("--task", choices=TASKS, default="steer",
+    p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
                         "turning in place (ignored on --resume)")
     p.add_argument("--payload", type=float, default=0.0, metavar="KG",
                    help="extra mass carried on the torso (ignored on --resume)")
     p.add_argument("--resume", default=None)
+    p.add_argument("--profile", default=None, metavar="PATH",
+                   help="hardware profile YAML (default: the built-in STS3215 12 V one; "
+                        "stored in the archive; see docs/hardware-profiles.md)")
+    p.add_argument("--plugin", default=None, metavar="FILE.py",
+                   help="external tasks and terrains to load; stored in the archive "
+                        "(see docs/plugins.md)")
     p.add_argument("--preset", default=None,
                    help="comma list of ready tasks run in sequence: "
                         + ", ".join(PRESETS) + " (each in checkpoints/<preset>)")
@@ -118,6 +149,27 @@ def main():
         raise SystemExit(str(e))
 
     a.device, a.workers = resolve_device(a.device, a.workers)
+    wanted = None
+    if a.profile:
+        check_kit_profile(a.profile)
+        try:
+            wanted = hardware.load(a.profile)
+        except (OSError, ValueError) as e:
+            raise SystemExit(str(e))
+        hardware.require(wanted)        # re-runs this command under that profile
+
+    def check_profile(path):
+        """A run that resumes an archive trains on the archive's hardware and plugin."""
+        with open(path, "rb") as f:
+            stored = pickle.load(f)
+        if wanted is not None and stored.profile != wanted:
+            raise SystemExit(f"{path} was trained on another hardware profile than "
+                             f"--profile {a.profile}; drop --profile to keep the archive's")
+        plugins.require(stored, a.plugin)
+        hardware.require(stored.profile)
+
+    if a.resume:
+        check_profile(a.resume)
 
     if a.device == "gpu":
         try:
@@ -142,7 +194,7 @@ def main():
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
                   parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
-                  body=a.body)
+                  body=a.body, plugin=record)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:
@@ -159,6 +211,8 @@ def main():
         out = os.path.join(a.out, name)
         path = os.path.join(out, "archive.pkl")
         resume = path if os.path.exists(path) else None
+        if resume:
+            check_profile(resume)
         print(f"\n=== preset {name}: {PRESETS[name]} -> {out}"
               f"{' (resuming)' if resume else ''}")
         spec = dict(PRESETS[name])

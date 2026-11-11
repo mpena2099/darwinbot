@@ -9,6 +9,7 @@
 | `assembly.md` | one row per servo in layout order: id, node slot, parent chain in words (for example `core right-front > joint pitch > joint roll`), axis, link length, sign; mounting direction and calibration step |
 | `parts/*.stl` | one file per distinct size (needs the `cad` extra): `link_{L}x{W}x{T}.stl` (bent links add `_L{deg}` or `_arc{deg}`; a joint's link adds `_u{axis}` for the fork, a tip cradle `_c{axis}`), `elbow_{D}mm_{A}deg_{W}x{T}.stl`, `foot_{R}.stl` (blade, pad and claw feet: `foot_{shape}_{R}.stl`), `wheel_{R}x{W}.stl`, `spring_{W}x{B}.stl`, `tail_{L}.stl`, `skid.stl`, `spike.stl`, `caster_wheel_{R}.stl`, `caster_fork.stl`, `cradle_{axis}.stl` (variants `_w{deg}`, `_back`, `_free`) with `wedge_{deg}.stl`, `segment_plate_{L}x{W}.stl` for each spine segment, the torso as `torso_plate.stl` or `torso_tile_{i}.stl`, and `splice_plate_{span}.stl` across each torso cut (sizes in whole millimetres) |
 | `robot.xml` | the MuJoCo model, for inspection |
+| `robot.urdf` | the same robot as a URDF file (see [URDF](#urdf)) |
 
 The export walks the module tree: every joint, link and spring needs a link of
 its own length and section, every elbow an elbow plate for its distance and
@@ -16,6 +17,34 @@ angle, every servo one cradle, every wheel, caster, tail, skid, spike and foot
 (explicit, or the free tip of a limb) one print. Links, elbows, feet and springs
 get one STL per distinct size. Springs and spikes are printed in TPU, the rest in
 PLA. The bill of materials counts everything from the tree.
+
+## URDF
+
+`robot.urdf` describes the same robot for ROS tools (rviz, Gazebo) and other
+simulators. It is a plain file, not a ROS package. It is built from the MuJoCo
+model of `robot.xml` on the flat terrain: the torso is the root link, every
+other body is a link with the simulated mass and principal inertia, and every
+servo is a revolute joint with its limits (wheels and casters are continuous,
+springs revolute). Collision and visual are simple shapes (box, cylinder,
+sphere; a capsule is a cylinder), not the STLs: the torso plates are drawn as
+their bounding boxes, and the massless helpers of the assembly check (cradles, bosses,
+U forks, horn discs) are skipped too. The file is for seeing and testing the
+kinematics, not for printing.
+
+## Power estimate
+
+`bom.md` and `assembly.md` end with a power section, also returned in the
+export's info dict. `darwinbot/power.py` runs the evolved gait straight on flat
+ground for the archive's episode length and reads the actuator force of every
+servo, wheels included. The current of a 12 V STS3215 is linear between its
+200 mA idle and 2.7 A stall current, from zero to the stall torque the
+simulation uses; 0.15 A goes to the ESP32 and no current to the passive
+modules. The section gives the mean, peak and 1 s peak draw, the runtime on a
+1200 mAh 3S LiPo (the middle of the documented 1000 to 1500 mAh range), the C
+rating the pack would need and a warning when the 1 s peak is above what the
+pack can deliver. `validate.py` prints the same lines for the nominal flat run.
+This is a report: it never enters the score, and it comes from simulated
+torque, not from a meter on a real robot.
 
 ## Cradle, U link and wedge
 
@@ -27,7 +56,9 @@ tip of a link it is printed as one piece with the link, and an elbow plate ends
 in the cradle of its child. The joint's own link starts as a U fork that clasps
 both horns of the servo, one arm on each horn face with the horn hole pattern,
 and joins the plate beyond the servo, out of the circle the cradle fills, so the
-link turns the whole joint range.
+link turns the whole joint range. A roll joint (about X) is the exception: its
+link holds only the main horn, with one arm on that face and no strap over the
+far end, where the parent holds the servo.
 
 The foot goes down to the torso plate on the side that points down. When the slot
 is rolled by an angle that is not a multiple of 90 degrees (up to 20), the foot
@@ -64,16 +95,36 @@ the parts before slicing.
 ## Hollowed parts (optional)
 
 `experiments/export.py --type <type> --organic` also writes `parts_organic/`:
-the links and elbow plates hollowed by 2D topology optimisation
+the plain links hollowed by 2D topology optimisation
 (`darwinbot/organic.py`), with the horn end clamped and the stall load at the
 far end. Evolution chose each part's size and interfaces; the optimisation only
 removes material from the middle, keeping a rim along every edge and a solid
-boss at both ends, so holes and outline are unchanged. Parts typically keep 50
+boss at both ends, so holes and outline are unchanged. Only plain links are hollowed: a link with a servo fork, a printed cradle, a foot or an elbow at its tip stays solid, and so do the elbow plates, which all carry a servo cradle. Parts typically keep 50
 to 90% of their material, and each takes about 10 s.
 
+The export then re-simulates the robot with the hollow masses, on the archive's
+terrains, task and payload, and prints the two scores, for example:
+
+```
+organic check: solid 1.204, hollow 1.151 (-4%)
+```
+
+If the hollow score falls more than 10% below the solid one, the export warns
+and prints the command that re-tunes the controller on the lighter body:
+
+```bash
+python experiments/polish.py --archive checkpoints/archive.pkl --types <type> --organic --out <type>-organic.pkl
+```
+
+`polish.py --organic` hollows each chosen robot the same way (into a temporary
+folder) and runs its longer controller search on those masses, its baseline
+included, so the saved archive scores the hollow robot. The check and the
+polish use the simulation, not the print: a hollow part is weighed by its
+density, and its stiffness is not modelled.
+
 Two cautions: the load case is in-plane only (out-of-plane bending is carried by
-the rim, not optimised), and the hollowed robot is lighter than the one
-evolution scored. Nothing here has been printed yet.
+the rim, not optimised), and the score is simulated, not measured. Nothing here
+has been printed yet.
 
 Servo dimensions in `darwinbot/parts.py` (horn and mounting holes, body size)
 come from the SO-ARM100 STEP model of the STS3215, not from a caliper

@@ -1,0 +1,11 @@
+name: small-walker
+torso: {length_mm: 200, width_mm: 140}
+nodes:
+  front_left_hip:  {parent: torso, slot: 2, kind: joint, axis: pitch, length_mm: 80, roll_deg: 270}
+  front_left_foot: {parent: front_left_hip, slot: 0, kind: foot, radius_mm: 15, shape: sphere}
+  front_right_hip: {parent: torso, slot: 5, kind: joint, axis: pitch, length_mm: 80, roll_deg: 270}
+  front_right_foot: {parent: front_right_hip, slot: 0, kind: foot, radius_mm: 15, shape: sphere}
+  rear_left_hip:   {parent: torso, slot: 4, kind: joint, axis: pitch, length_mm: 80, roll_deg: 270}
+  rear_left_foot:  {parent: rear_left_hip, slot: 0, kind: foot, radius_mm: 15, shape: sphere}
+  rear_right_hip:  {parent: torso, slot: 7, kind: joint, axis: pitch, length_mm: 80, roll_deg: 270}
+  rear_right_foot: {parent: rear_right_hip, slot: 0, kind: foot, radius_mm: 15, shape: sphere}

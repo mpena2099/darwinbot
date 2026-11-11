@@ -210,8 +210,9 @@ exist. DarwinBot uses three defenses:
    delay. A movement that only works under one exact physics doesn't
    survive.
 3. **Validation:** `experiments/validate.py` tests the robot under 50
-   varied physics and approves it if it loses less than 30% of its
-   performance.
+   varied physics and approves it only if it is robust: mean loss under
+   30%, 5th-percentile loss under 60% and fall rate at most 10% on every
+   terrain and command, and no terrain where it does not move at all.
 
 There is a fourth defense, **natural selection by the printer**: a body is
 buildable only if every part fits a 220 mm print bed, every link survives

@@ -1,0 +1,32 @@
+# Feetech STS3215 12 V servo: speed, torque, current, masses and the housing and horn measures (docs/hardware-profiles.md).
+speed: 4.71                 # rad/s, STS3215 (12 V) no-load speed (docs/hardware-dados.md)
+stall_torque: 2.94          # N*m, STS3215 (12 V) stall torque (docs/hardware-dados.md)
+load_full_scale: 0.7        # fraction of the stall torque that reads as N = 1
+mass: 0.060                 # kg, the servo alone (docs/hardware-dados.md)
+cradle_mass_plate: 0.0227   # kg, its printed cradle on a torso or segment plate (solid PLA, parts.cradle volume)
+cradle_mass_link: 0.0173    # kg, its printed cradle at a link tip or on an elbow (solid PLA, parts.cradle volume)
+current_idle: 0.2           # A, "corrente em repouso" (docs/hardware-dados.md)
+current_stall: 2.7          # A, "corrente de travamento" (docs/hardware-dados.md)
+joint_friction: 0.068       # N*m, hinge frictionloss of a servo joint
+joint_armature: 0.027       # kg*m^2, rotor inertia
+joint_kp: 13.37             # position gain of the MuJoCo position actuator
+wheel_kv: 2.0               # N*m per rad/s, wheel velocity gain
+box: [0.045, 0.025, 0.035]  # m, simulation body: length, width, height
+axis_offset: 0.0125         # m, output axis from the body centre (docs/hardware-dados.md)
+print_body_height: 0.0307   # m, printed body along the output axis (parts.SERVO_BODY_H)
+length: 45.4                # mm, body length (SO-ARM100 STEP model)
+width: 24.8                 # mm, body width
+height: 35.0                # mm, envelope along the output axis, horns included
+body_height: 30.7           # mm, body alone, from z = -15.5 to z = +15.2
+z0: -15.5                   # mm, face on the mounting side
+axis_x: 12.5                # mm, output axis from the body centre, both horns
+clearance: 0.4              # mm, printing slack per side
+tap_x: [5.0, -19.5]         # mm, tapped M2 holes on the mounting face
+tap_y: 10.2                 # mm, their distance from the body centre line
+m2: 2.4                     # mm, M2 clearance
+horn_bolt_circle: 14.0      # mm, 4 holes on a 9.9 mm square
+horn_hole_yaw: 45.0         # degrees, hole pattern turned to the body axes
+horn_n_holes: 4
+horn_hole_d: 2.5            # mm, M2 clearance
+horn_bore_d: 6.0            # mm, clearance for the centre screw head
+horn_thickness: 3.0         # mm, from the simulation's visual dress

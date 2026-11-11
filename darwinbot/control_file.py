@@ -16,7 +16,7 @@ controller parameters and the joint limits as plain data.
 import json
 import math
 
-from darwinbot.controller import CONTROL_DT, LOAD_FULL_SCALE, RAMP_TIME
+from darwinbot.controller import CONTROL_DT, LOAD_FULL_SCALE, RAMP_TIME, SERVO_SPEED
 
 FORMAT = 4
 CONTROL_HZ = round(1 / CONTROL_DT)   # same as the simulation
@@ -34,14 +34,15 @@ _TOP_KEYS = ("format", "robot", "fitness", "control_hz", "ramp_time", "frequency
 
 def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=None,
                       control_hz=CONTROL_HZ, ramp_time=RAMP_TIME,
-                      load_full_scale=LOAD_FULL_SCALE) -> dict:
+                      load_full_scale=LOAD_FULL_SCALE, servo_speed=SERVO_SPEED) -> dict:
     """
     Build the control dict. layout items are (slot, kind, axis) in servo order
     (morphology.Actuator), params is controller.Params and signs the mounting
     sign of every servo (default 1). joint_ranges is either one symmetric limit
     per axis or one (lo, hi) per servo in layout order (None for a wheel).
     load_full_scale is the fraction of the
-    servo maximum torque that the simulation treats as N = 1.
+    servo maximum torque that the simulation treats as N = 1, servo_speed the
+    no-load speed (rad/s) the amplitude and wheel clips use.
     """
     servos = []
     for i, (slot, kind, axis) in enumerate(layout):
@@ -74,6 +75,7 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
     return {"format": FORMAT, "robot": robot_name, "fitness": float(fitness),
             "control_hz": control_hz, "ramp_time": ramp_time,
             "load_full_scale": float(load_full_scale),
+            "servo_speed": float(servo_speed),
             "frequency": float(params.omega) / (2 * math.pi), "servos": servos}
 
 
@@ -90,7 +92,8 @@ def read_control_file(path) -> dict:
     with open(path) as f:
         d = json.load(f)
     _validate(d)
-    d.setdefault("load_full_scale", LOAD_FULL_SCALE)    # optional field
+    d.setdefault("load_full_scale", LOAD_FULL_SCALE)    # optional fields
+    d.setdefault("servo_speed", SERVO_SPEED)
     for s in d["servos"]:                               # older formats lack the genes
         for k in _STEER_KEYS + _SPEED_KEYS:
             s.setdefault(k, 0.0)
@@ -110,6 +113,9 @@ def _validate(d) -> None:
     scale = d.get("load_full_scale", LOAD_FULL_SCALE)
     if not isinstance(scale, (int, float)) or not 0 < scale <= 1:
         raise ValueError(f"load_full_scale must be in (0, 1], got {scale!r}")
+    speed = d.get("servo_speed", SERVO_SPEED)
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not speed > 0:
+        raise ValueError(f"servo_speed must be a positive number, got {speed!r}")
     ids = set()
     for s in d["servos"]:
         mode = s.get("mode")

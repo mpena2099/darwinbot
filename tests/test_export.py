@@ -258,6 +258,11 @@ def test_load_full_scale_is_written(tmp_path):
     assert read_control_file(tmp_path / "control.json")["load_full_scale"] == 0.7
 
 
+def test_servo_speed_is_written(tmp_path):
+    export_robot(_elite(), tmp_path, "t", stl=False)
+    assert read_control_file(tmp_path / "control.json")["servo_speed"] == 4.71
+
+
 def _profiled_tree():
     """An L link, an arc link and one explicit foot of every shape."""
     m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})

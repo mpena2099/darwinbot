@@ -732,17 +732,19 @@ class Morphology:
                 c = pos + rot @ self.caster_hub(n, pos, rot)
                 az = abs(float((rot @ np.array([0.0, 1.0, 0.0]))[2]))
                 half = CASTER_WHEEL_T / 2
-                low = min(low, float(pos[2] - CASTER_FORK_SIZE[2] / 2),
+                low = min(low, float(pos[2] - abs(rot[2]) @ (np.array(CASTER_FORK_SIZE) / 2)),
                           float(c[2] - half * az
                                 - n.wheel_rad * np.sqrt(max(0.0, 1 - az * az))))
             elif n.kind == "foot":
                 low = min(low, pos[2] + foot_lowest(n, rot))
             elif n.kind == "tail":
                 tip = pos + rot @ np.array([n.length, 0, 0])
-                low = min(low, pos[2] - TAIL_BAR_SIZE[1] / 2,
+                bar = np.array([n.length / 2, TAIL_BAR_SIZE[0] / 2, TAIL_BAR_SIZE[1] / 2])
+                mid = pos + rot @ np.array([n.length / 2, 0, 0])
+                low = min(low, float(mid[2] - abs(rot[2]) @ bar),
                           tip[2] - TAIL_TIP_RADIUS)
             elif n.kind == "skid":
-                low = min(low, pos[2] - SKID_SIZE[2] / 2)
+                low = min(low, float(pos[2] - abs(rot[2]) @ (np.array(SKID_SIZE) / 2)))
             elif n.kind == "spike":
                 tip = pos + rot @ np.array([SPIKE_LENGTH, 0, 0])
                 low = min(low, pos[2] - SPIKE_RADIUS, tip[2] - SPIKE_RADIUS)

@@ -47,6 +47,8 @@ def perturb(model: mujoco.MjModel, rng: np.random.Generator,
     mass_scale[0] = 1.0                                  # world body
     m.body_mass[:] *= mass_scale
     m.body_inertia[:] *= mass_scale[:, None]
+    # derived constants (subtree masses, inverse weights) follow the varied masses
+    mujoco.mj_setConst(m, mujoco.MjData(m))
 
     m.actuator_forcerange[:] *= rng.uniform(*r.torque, size=(m.nu, 1))
 

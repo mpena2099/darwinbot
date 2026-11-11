@@ -334,9 +334,9 @@ def test_unbuildable_results_never_enter_the_archive(monkeypatch, tmp_path):
         calls["n"] += 1
         genes = job[0]
         if calls["n"] <= 3:                       # the whole first batch
-            return (genes, CTRL, -5.0, [-5.0], 0, np.zeros(5), job[10])
+            return (genes, CTRL, -5.0, [-5.0], 0, np.zeros(5), job[10], False)
         return (genes, CTRL, 1.0, [1.0], 3,
-                np.array([0.6, 0.3, 8.0, 0.0, 1.0, 2.0]), job[10])
+                np.array([0.6, 0.3, 8.0, 0.0, 1.0, 2.0]), job[10], False)
 
     class FakePool:
         def __init__(self, *a): pass
@@ -351,6 +351,42 @@ def test_unbuildable_results_never_enter_the_archive(monkeypatch, tmp_path):
     assert archive.cells
     assert all(e.fitness == 1.0 for e in archive.cells.values())
     assert all(rec[2] == 1.0 for rec in archive.lineage.values())
+
+
+def test_a_failing_body_is_counted_and_does_not_stop_the_run(monkeypatch, tmp_path, capsys):
+    real = evolve.optimise_controller
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("boom")
+        return real(*a, **k)
+
+    class FakePool:             # runs _work in this process, where the patch is
+        def __init__(self, *a): pass
+        def imap_unordered(self, f, tasks): return map(f, tasks)
+        def close(self): pass
+        def join(self): pass
+
+    monkeypatch.setattr(evolve, "optimise_controller", flaky)
+    monkeypatch.setattr(evolve.multiprocessing, "Pool", FakePool)
+    archive = evolve.run(terrains="flat", n_init=3, n_batches=1, batch_size=3,
+                         budget_init=4, budget_child=4, workers=1, variants=0,
+                         episode_seconds=1.0, out_dir=str(tmp_path))
+    out = capsys.readouterr().out
+    assert archive.cells and "ValueError: boom" in out
+    assert any(l.startswith("batch") and l.endswith("failed 1") for l in out.splitlines())
+
+
+def test_a_batch_where_every_body_fails_stops_the_run(monkeypatch, tmp_path):
+    def broken(*a, **k):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(evolve, "optimise_controller", broken)
+    with pytest.raises(RuntimeError, match="failed"):
+        evolve.run(terrains="flat", n_init=2, n_batches=1, batch_size=2, workers=1,
+                   variants=0, episode_seconds=1.0, device="gpu", out_dir=str(tmp_path))
 
 
 def test_budget_grows_with_joints_up_to_a_cap():

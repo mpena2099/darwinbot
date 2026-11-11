@@ -521,6 +521,18 @@ def test_ensure_servo_with_every_core_slot_taken():
     assert all(n.parent in m.nodes for n in m.nodes.values() if n.id)
 
 
+def test_ensure_servo_with_contour_taken_keeps_the_servo_off_the_faces():
+    m = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    for s in range(8):
+        m.nodes[s + 1] = mo.Node(s + 1, "link", 0, s, 0.0)
+    m = mo.decode(mo.encode(m))
+    m = mo.fit_clashes(mo.fit_rules(m))
+    assert m.n_servos == 1
+    assert mo.violations(m) == []
+    assert not any(mo.is_joint(n.kind) and n.parent == 0 and n.slot >= 8
+                   for n in m.nodes.values())
+
+
 def test_graft_copies_a_donor_limb_into_a_valid_body():
     rng = np.random.default_rng(0)
     host, donor = mo.encode(mo.template(1)), mo.encode(mo.template(2, wheels=True))
@@ -607,6 +619,32 @@ def test_decode_drops_misplaced_and_extra_segments():
     d = mo.decode(mo.encode(m))
     assert not any(n.parent == seg and n.slot == 1 for n in d.nodes.values())
     assert (seg, 1) not in _spine_body().free_slots()
+
+
+class _Pick:
+    """An rng that picks the given node id, and otherwise the first option."""
+
+    def __init__(self, node):
+        self.node = node
+
+    def choice(self, items):
+        items = list(items)
+        return self.node if self.node in items else "joint"
+
+
+def test_retyping_a_segment_drops_the_segment_hanging_from_it(monkeypatch):
+    m = _spine_body(2)
+    first = next(i for i, n in m.nodes.items()
+                 if n.kind == "segment" and n.parent == 0)
+    child = next(i for i, n in m.nodes.items()
+                 if n.kind == "segment" and n.parent == first)
+    monkeypatch.setattr(mo, "_random_node",
+                        lambda rng, kind, parent, slot: mo.Node(0, kind, parent, slot, 0.0))
+    mo._op_type(m, _Pick(first))
+    assert m.nodes[first].kind == "joint"
+    assert child not in m.nodes
+    assert all(m.nodes[n.parent].kind in ("core", "segment")
+               for n in m.nodes.values() if n.kind == "segment")
 
 
 @pytest.mark.parametrize("seed", range(6))

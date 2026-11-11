@@ -28,6 +28,7 @@ def load_archive(path, plugin=None):
             archive = pickle.load(f)
         plugins.require(archive, plugin)
         hardware.require(archive.profile)
+        archive.activate()
         return archive
     except FileNotFoundError:
         raise SystemExit(f"{path} not found: train first with experiments/train.py")
@@ -43,7 +44,8 @@ def record(episode, ctrl, fps):
         episode.step(cpg)
         if i % every == 0:
             frames.append(episode.data.qpos.copy())
-    return np.asarray(frames, dtype=np.float32).reshape(-1, episode.model.nq)
+    qpos = np.asarray(frames, dtype=np.float32).reshape(-1, episode.model.nq)
+    return qpos, 1.0 / (every * dt)
 
 
 def main(argv=None):
@@ -87,8 +89,8 @@ def main(argv=None):
         name = names[cell]
         episode = Episode(morpho.decode(elite.morph), terrain,
                           payload=archive.payload, seconds=a.seconds)
-        qpos = record(episode, elite.ctrl, a.fps)
-        robots[name] = {"xml": episode.xml, "fps": a.fps, "qpos": qpos,
+        qpos, fps = record(episode, elite.ctrl, a.fps)
+        robots[name] = {"xml": episode.xml, "fps": round(fps, 3), "qpos": qpos,
                         "fitness": float(elite.fitness)}
         print(f"{name}: {len(qpos)} frames, nq {qpos.shape[1]}")
 

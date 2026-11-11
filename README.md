@@ -44,7 +44,7 @@ archive map and training progress)
 ## Quick start
 
 ```bash
-python -m venv venv && source venv/bin/activate && pip install -e .   # install
+python -m venv venv && source venv/bin/activate && pip install -e ".[cad]"   # install (cad: STL parts)
 python experiments/train.py                                           # evolve (flat ground)
 python experiments/replay.py --list                                   # see the robot types, then:
 python experiments/replay.py --type 8servos-mid-trot                  # watch one

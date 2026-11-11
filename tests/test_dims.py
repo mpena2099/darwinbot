@@ -37,8 +37,8 @@ def _pairs():
         ("SPRING_FLEX", mo.SPRING_FLEX_LEN * mm, parts.SPRING_FLEX),
         ("WHEEL_T", mo.WHEEL_WIDTH_RANGE[0] * mm, parts.WHEEL_T),
         ("WHEEL_MAX_T", mo.WHEEL_WIDTH_RANGE[1] * mm, parts.WHEEL_MAX_T),
-        ("cradle length", 45.4, S.length),
-        ("cradle width", 24.8, S.width),
+        ("cradle length", mo.cradle_box("pitch")[0][0] * 2 * mm - 2 * mo.PRINT_WALL * mm, S.length),
+        ("cradle width", mo.cradle_box("pitch")[0][1] * 2 * mm - 2 * mo.PRINT_WALL * mm, S.width),
         ("export SERVO_BODY", export.SERVO_BODY[0], parts.SERVO_L),
         ("export SERVO_BODY w", export.SERVO_BODY[1], parts.SERVO_W),
         ("export SERVO_BODY h", export.SERVO_BODY[2], parts.SERVO_BODY_H),
@@ -55,16 +55,6 @@ def _pairs():
     ]
 
 
-# morphology.ELBOW_BOSS_R is 15.5 mm, parts.END_BOSS_D / 2 is 15.41 mm. Which one
-# is right is a design decision, so the pair is recorded here, not fixed.
-KNOWN = {"END_BOSS_D": "ELBOW_BOSS_R 15.5 mm vs END_BOSS_D / 2 15.41 mm"}
-
-
-def _param(p):
-    marks = [pytest.mark.xfail(reason=KNOWN[p[0]], strict=True)] if p[0] in KNOWN else []
-    return pytest.param(*p, id=p[0], marks=marks)
-
-
-@pytest.mark.parametrize("name,a,b", [_param(p) for p in _pairs()])
+@pytest.mark.parametrize("name,a,b", [pytest.param(*p, id=p[0]) for p in _pairs()])
 def test_copies_agree(name, a, b):
     assert a == pytest.approx(b, abs=1e-9), name

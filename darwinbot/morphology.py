@@ -79,7 +79,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
 
-from darwinbot import hardware
+from darwinbot import dims, hardware
 
 MAX_NODES  = 20
 MAX_SERVOS = 16
@@ -97,20 +97,20 @@ SPRING_BLADE_RANGE = (0.002, 0.008)       # m, TPU blade thickness of a spring
 FOOT_RANGE = (0.008, 0.03)                # m, TPU foot radius
 TAIL_MASS_RANGE = (0.0, 0.10)             # kg, counterweight at the tip of a tail
 TAIL_TIP_RADIUS = 0.012                   # m
-TAIL_BAR_SIZE = (0.015, 0.006)            # m, width and thickness of the tail bar
-SKID_SIZE = (0.06, 0.03, 0.006)           # m, low-friction pad
+TAIL_BAR_SIZE = dims.TAIL_BAR_SIZE        # m, width and thickness of the tail bar
+SKID_SIZE = dims.SKID_SIZE                # m, low-friction pad
 SKID_RADIUS = 0.015                       # m, contact radius of a skid
-SPIKE_LENGTH = 0.03                       # m
-SPIKE_RADIUS = 0.005                      # m
+SPIKE_LENGTH = dims.SPIKE_LENGTH           # m
+SPIKE_RADIUS = dims.SPIKE_RADIUS           # m
 ELBOW_RANGE = (0.045, 0.08)               # m, side slot offset from the link axis; under 45 mm the
                                           # child's printed cradle reaches back over the link axis
 WHEEL_RANGE_M = (0.03, 0.10)              # m, wheel radius
 WHEEL_HORN_GAP = 0.003                    # m, the horn's thickness: the wheel disc sits on it
-WHEEL_WIDTH_RANGE = (0.010, 0.060)        # m, wheel width; 10 mm is the least that holds the horn
+WHEEL_WIDTH_RANGE = dims.WHEEL_WIDTH_RANGE    # m, wheel width; 10 mm is the least that holds the horn
                                           # screws (14 mm circle) and the 4 mm O-ring groove with 3 mm walls
 CASTER_RANGE = (0.015, 0.035)             # m, free caster wheel radius
 CASTER_FORK_SIZE = (0.02, 0.02, 0.02)     # m, printed fork box of a caster
-CASTER_WHEEL_T = 0.008                    # m, caster wheel thickness
+CASTER_WHEEL_T = dims.CASTER_WHEEL_T        # m, caster wheel thickness
 BODY_BOUNDS = [
     (0.15, 0.40),   # body_length (m)
     (0.10, 0.25),   # body_width  (m)
@@ -141,23 +141,23 @@ def servo_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
     return np.array([L, H, W]) / 2, SERVO_CENTRE.copy()
 
 
-ELBOW_BOSS_R = 0.0155               # m, round end of a printed elbow plate (parts.END_BOSS_D / 2)
+ELBOW_BOSS_R = dims.ELBOW_BOSS_R    # m, round end of a printed elbow plate (parts.END_BOSS_D / 2)
 
 # Printed parts as parts.py draws them (mm there, m here): the simulation
 # collides these shapes, so a body it accepts is a body whose parts assemble.
 PRINT_BODY_H   = hardware.SERVO.print_body_height   # parts.SERVO_BODY_H: servo body along its output axis
-PRINT_WALL     = 0.0029             # parts.SERVO_CLEARANCE + parts.CRADLE_T: air and wall around the servo
-FORK_ARM_T     = 0.003              # parts.ARM_T: U link arm, one on each horn face
-FORK_ARM_GAP   = 0.0002             # parts.ARM_GAP: air between a cradle cap and an arm
-FORK_HORN_T    = 0.003              # parts.HORN_T
-FORK_ARM_HALF_W = 0.0134            # parts.ARM_W: half width of an arm across the link plane
-FORK_BRIDGE_X  = 0.024              # parts.BRIDGE_X: where the U link crosses the servo front
-FORK_BRIDGE_T  = 0.003              # parts.BRIDGE_T
-STRUT_HALF_W   = 0.004              # parts.STRUT_HW: half width of an elbow strut along the link
-TONGUE_HALF_H  = 0.0045             # parts.TONGUE_Z
+PRINT_WALL     = dims.PRINT_WALL    # air and wall around the servo
+FORK_ARM_T     = dims.ARM_T         # parts.ARM_T: U link arm, one on each horn face
+FORK_ARM_GAP   = dims.ARM_GAP       # parts.ARM_GAP: air between a cradle cap and an arm
+FORK_HORN_T    = dims.HORN_T        # parts.HORN_T
+FORK_ARM_HALF_W = dims.ARM_HALF_W   # parts.ARM_W: half width of an arm across the link plane
+FORK_BRIDGE_X  = dims.BRIDGE_X      # parts.BRIDGE_X: where the U link crosses the servo front
+FORK_BRIDGE_T  = dims.BRIDGE_T      # parts.BRIDGE_T
+STRUT_HALF_W   = dims.STRUT_HALF_W  # parts.STRUT_HW: half width of an elbow strut along the link
+TONGUE_HALF_H  = dims.TONGUE_HALF_H # parts.TONGUE_Z
 TONGUE_T       = 0.001              # parts.TONGUE_T (0.45 mm) and the 0.1 mm it stands out, thick enough to collide
 TAB_SIZE       = (0.0512, 0.0306)   # m, torso tab under a servo (parts torso_plate)
-PLATE_THICK    = 0.006              # parts.PLATE_T
+PLATE_THICK    = dims.PLATE_THICK   # parts.PLATE_T
 
 
 def cradle_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -165,7 +165,7 @@ def cradle_box(axis: str) -> Tuple[np.ndarray, np.ndarray]:
     of the printed cradle around a servo: its body, the air around it and the
     wall (caps included). The sleeve is trimmed to a circle in front of the
     output axis, which this box does not follow by up to a millimetre."""
-    pl, pw = 0.0454, 0.0248
+    pl, pw = hardware.SERVO.length / 1000.0, hardware.SERVO.width / 1000.0
     half = np.array([pl / 2, pw / 2, PRINT_BODY_H / 2]) + PRINT_WALL
     if axis == "pitch":
         return half, SERVO_CENTRE.copy()
@@ -217,7 +217,7 @@ BED = hardware.PRINTER.bed               # m, largest part that fits a common pr
 # Spring (see docs/hardware-dados.md, "Mola de TPU"): a TPU blade bending at
 # one end. E is not verified yet.
 E_TPU = 26e6             # Pa, printed TPU
-SPRING_FLEX_LEN = 0.012  # m, free blade length
+SPRING_FLEX_LEN = dims.SPRING_FLEX_LEN  # m, free blade length
 SPRING_DAMPING = 0.02    # N*m*s/rad
 
 TYPE_KINDS = ("joint", "link", "wheel", "foot", "spring",
@@ -2062,10 +2062,10 @@ def summary(m: Morphology) -> str:
 # parts.CRADLE_GAP and parts.MOUNT_DROP (parts needs build123d, this does not).
 SERVO_BODY = (hardware.SERVO.length, hardware.SERVO.width, hardware.SERVO.body_height)      # length, width, body height
 SERVO_AXIS_X = hardware.SERVO.axis_x
-CRADLE_SLACK = hardware.SERVO.clearance + 2.5              # servo clearance plus cradle wall
+CRADLE_SLACK = hardware.SERVO.clearance + dims.CRADLE_T_MM              # servo clearance plus cradle wall
 MIN_FIN = 1.0                         # thinnest link tip fin left under a tongue
-CRADLE_GAP = 0.2         # parts.CRADLE_GAP
-MOUNT_DROP = 22.0        # torso plate face below a joint axis (parts.MOUNT_DROP)
+CRADLE_GAP = dims.CRADLE_GAP_MM   # parts.CRADLE_GAP
+MOUNT_DROP = dims.MOUNT_DROP_MM   # torso plate face below a joint axis (parts.MOUNT_DROP)
 
 
 def _mm(m):

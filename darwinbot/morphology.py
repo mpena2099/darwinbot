@@ -1647,12 +1647,12 @@ def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     kinds = tuple(k for k in TYPE_KINDS if k != "segment")
     probs = [0.45, 0.14, 0.10, 0.18, 0.05, 0.03, 0.02, 0.02, 0.01]
     opts = _body_options()
-    allowed = [(k, w) for k, w in zip(kinds, probs) if opts.allows(k)]
-    if len(allowed) == len(kinds):
-        kind = str(rng.choice(kinds, p=probs))
-    else:
-        weights = np.array([w for _, w in allowed])
-        kind = str(rng.choice([k for k, _ in allowed], p=weights / weights.sum()))
+    allowed = [(k, w) for k, w in zip(kinds, probs)
+               if k not in DISABLED_KINDS and opts.allows(k)]
+    if not allowed:
+        return None
+    weights = np.array([w for _, w in allowed])
+    kind = str(rng.choice([k for k, _ in allowed], p=weights / weights.sum()))
     if (is_joint(kind) or kind == "wheel") and morph.n_servos >= _max_servos():
         kind = "link" if rng.random() < 0.5 else "foot"
     node = _random_node(rng, kind, p, s)
@@ -1740,6 +1740,13 @@ def _jitter(value: float, lo: float, hi: float, rng) -> float:
     return round(_scale(float(np.clip(u, 0.0, 1.0)), lo, hi), 6)
 
 
+def _jitter_angle(value: float, rng) -> float:
+    """Like _jitter for an angle in [0, 2 pi): the step wraps around."""
+    sigma = BIG_STEP if rng.random() < BIG_STEP_P else SMALL_STEP
+    u = (_unscale(value, 0.0, 2 * np.pi) + rng.normal(0.0, sigma)) % 1.0
+    return round(_scale(u, 0.0, 2 * np.pi), 6) % (2 * np.pi)
+
+
 def _op_param(morph, rng):
     n = morph.nodes[int(rng.choice(list(morph.nodes)))]
     if n.kind == "core":
@@ -1775,7 +1782,7 @@ def _op_param(morph, rng):
         choices += ["foot_rad", "foot_shape"]
     what = str(rng.choice(choices))
     if what == "rot":
-        n.rot = _jitter(n.rot, 0.0, 2 * np.pi, rng) % (2 * np.pi)
+        n.rot = _jitter_angle(n.rot, rng)
     elif what == "length":
         span = SEGMENT_LENGTH_RANGE if n.kind == "segment" else LENGTH_RANGE
         n.length = _jitter(n.length, *span, rng)
@@ -1834,9 +1841,13 @@ def _op_type(morph, rng):
     elif (morph.n_segments < MAX_SEGMENTS and opts.allow_segments
           and _segment_slot(morph.nodes[n.parent].kind, n.slot)):
         kinds.append("segment")
+    kinds = [k for k in kinds if k not in DISABLED_KINDS]
     if not opts.is_default():
         kinds = [k for k in kinds if opts.allows(k)]
-    kind = str(rng.choice([k for k in kinds if k != n.kind]))
+    kinds = [k for k in kinds if k != n.kind]
+    if not kinds:
+        return
+    kind = str(rng.choice(kinds))
     if (is_joint(kind) or kind == "wheel") \
             and not (is_joint(n.kind) or n.kind == "wheel") \
             and morph.n_servos >= _max_servos():

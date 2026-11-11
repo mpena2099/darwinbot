@@ -795,3 +795,55 @@ def test_random_trees_put_wheels_straight_on_the_torso():
         n.kind == "wheel" and m.nodes[n.parent].kind == "core"
         for n in m.nodes.values() if n.parent >= 0)]
     assert len(cars) >= 10                           # 5% of the bodies
+
+
+def test_op_type_is_symmetric_and_never_offers_disabled_kinds():
+    import copy
+    from collections import Counter
+    rng = np.random.default_rng(1)
+    # two joints and two links, each with a child
+    base = mo.Morphology(0.4, 0.2, {0: mo.Node(0, "core")})
+    base.nodes[1] = mo.Node(1, "joint", 0, 3, 0.0, "pitch", 0.10)
+    base.nodes[2] = mo.Node(2, "link", 1, 0, 0.0, length=0.10)
+    base.nodes[3] = mo.Node(3, "foot", 2, 0, 0.0)
+    base.nodes[4] = mo.Node(4, "link", 0, 5, 0.0, length=0.10)
+    base.nodes[5] = mo.Node(5, "joint", 4, 0, 0.0, "pitch", 0.10)
+    base.nodes[6] = mo.Node(6, "foot", 5, 0, 0.0)
+    swaps = Counter()
+    for _ in range(2000):
+        m = copy.deepcopy(base)
+        before = {i: n.kind for i, n in m.nodes.items()}
+        mo._op_type(m, rng)
+        for i, n in m.nodes.items():
+            if i in before and n.kind != before[i]:
+                swaps[(before[i], n.kind)] += 1
+                assert n.kind not in mo.DISABLED_KINDS
+    jl, lj = swaps[("joint", "link")], swaps[("link", "joint")]
+    assert jl > 0 and lj > 0
+    assert 0.6 < jl / lj < 1.6
+
+
+def test_add_random_never_adds_a_disabled_kind():
+    rng = np.random.default_rng(2)
+    for _ in range(500):
+        m = mo.template(1)
+        i = mo._add_random(m, rng, 0, 0)
+        if i is not None:
+            assert m.nodes[i].kind not in mo.DISABLED_KINDS
+
+
+def test_rot_mutation_wraps_around_zero():
+    rng = np.random.default_rng(3)
+    crossed = 0
+    for _ in range(400):
+        m = mo.template(1)
+        n = m.nodes[1]
+        n.rot = 0.05
+        mo._op_param(m, rng)
+        # whichever node was touched, the angle stays a valid angle
+        assert all(0.0 <= x.rot < 2 * np.pi for x in m.nodes.values())
+        crossed += any(x.rot > 1.5 * np.pi for x in m.nodes.values())
+    assert crossed > 0
+    assert 0.0 <= mo._jitter_angle(6.2, rng) < 2 * np.pi
+    hits = [mo._jitter_angle(0.02, rng) for _ in range(500)]
+    assert sum(h > np.pi for h in hits) > 100         # a step below 0 comes out near 2 pi

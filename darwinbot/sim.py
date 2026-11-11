@@ -88,11 +88,6 @@ def wrap_angle(a):
     return (a + np.pi) % (2.0 * np.pi) - np.pi
 
 
-def heading(xmat):
-    """Torso yaw about world Z from a flattened 3x3 rotation matrix."""
-    return np.arctan2(xmat[3], xmat[0])
-
-
 def control_hold(timestep: float) -> int:
     """Physics steps per controller update."""
     return max(1, round(CONTROL_DT / timestep))

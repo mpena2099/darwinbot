@@ -1106,11 +1106,6 @@ def encode(morph: Morphology) -> np.ndarray:
     return blocks.reshape(-1)
 
 
-def repair(genes: np.ndarray) -> np.ndarray:
-    """Canonical genome of the body the genes decode to."""
-    return encode(decode(genes))
-
-
 def _free_id(morph: Morphology) -> Optional[int]:
     for i in range(1, MAX_NODES):
         if i not in morph.nodes:
@@ -2047,3 +2042,95 @@ def summary(m: Morphology) -> str:
             show(cm[i][s], indent + 1)
     show(0, 1)
     return "\n".join(lines)
+
+
+# --- printed-part helpers shared by the simulation (builder) and the export ---
+# Servo and cradle measures in mm, equal to parts.SERVO_*, parts.CRADLE_T,
+# parts.CRADLE_GAP and parts.MOUNT_DROP (parts needs build123d, this does not).
+SERVO_BODY = (hardware.SERVO.length, hardware.SERVO.width, hardware.SERVO.body_height)      # length, width, body height
+SERVO_AXIS_X = hardware.SERVO.axis_x
+CRADLE_SLACK = hardware.SERVO.clearance + 2.5              # servo clearance plus cradle wall
+MIN_FIN = 1.0                         # thinnest link tip fin left under a tongue
+CRADLE_GAP = 0.2         # parts.CRADLE_GAP
+MOUNT_DROP = 22.0        # torso plate face below a joint axis (parts.MOUNT_DROP)
+
+
+def _mm(m):
+    return int(round(m * 1000))
+
+
+def servo_roll(morph, i, side=1):
+    """Whole degrees the module of servo i is rolled about its own X, as the
+    frame its cradle is drawn in: on the other side of a link (slot 2) the
+    elbow plate is printed turned over, so the roll gains half a turn."""
+    deg = int(round(np.degrees(morph.nodes[i].rot))) + (180 if side < 0 else 0)
+    return (deg + 180) % 360 - 180
+
+
+def elbow_trim(dist, angle, axis, roll=0):
+    """(at, x0, x1) of the link tip fin under the tongue of an elbow plate, whole
+    mm in the tip frame: the fin ends at `at` from the link axis, the nearest
+    point of the child's cradle for this distance and angle less the clearance
+    (never under MIN_FIN, which leaves the clash the check reports when the
+    cradle reaches back to the link), and the plate beside the fin is cut away
+    from x0 to x1, the span of that cradle along the link."""
+    L, W, H = SERVO_BODY
+    half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
+            "roll": (H / 2, W / 2, L / 2)}[axis]
+    centre = (0.0, 0.0, -SERVO_AXIS_X) if axis == "roll" else (-SERVO_AXIS_X, 0.0, 0.0)
+    r, a = np.radians(roll), np.radians(angle)
+    rx = np.array([[1, 0, 0], [0, np.cos(r), -np.sin(r)], [0, np.sin(r), np.cos(r)]])
+    rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
+    pts = np.array([[centre[0] + sx * (half[0] + CRADLE_SLACK),
+                     centre[1] + sy * (half[1] + CRADLE_SLACK),
+                     centre[2] + sz * (half[2] + CRADLE_SLACK)]
+                    for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+    world = pts @ (rz @ rx).T
+    ys = dist + world[:, 1]
+    xs = world[:, 0]
+    at = max(int(np.floor(min(ys) - CRADLE_GAP)), int(MIN_FIN))
+    return at, int(np.floor(min(xs) - 1.0)), int(np.ceil(max(xs) + 1.0))
+
+
+def servo_axis(morph, i):
+    """Module axis of the servo at node i, or None for a passive module."""
+    n = morph.nodes[i]
+    if n.kind == "wheel":
+        return "yaw"
+    if n.kind in ("joint", "segment"):
+        return n.axis
+    return None
+
+
+def torso_mounted(morph, i):
+    """True when the servo at i is bolted to the torso: its cradle is a part
+    of its own, not the tip of a link or the end of an elbow."""
+    n = morph.nodes[i]
+    return servo_axis(morph, i) is not None and morph.nodes[n.parent].kind in (
+        "core", "segment")
+
+
+def plate_drop(morph):
+    """How far below the joint plane the top of the torso plate is, in mm, for
+    this robot: MOUNT_DROP, or lower when a servo on a torso edge hangs below
+    that (a roll joint stands 35 mm of body below its axis) so no cradle or
+    servo reaches into the plate. Face mounts sit above or below the torso and
+    are not counted."""
+    L, W, H = SERVO_BODY
+    need = 0.0
+    for i, n in morph.nodes.items():
+        axis = servo_axis(morph, i) if i else None
+        if not axis or not torso_mounted(morph, i) or (
+                n.parent == 0 and n.slot in FACE_SLOTS):
+            continue
+        off, rot = morph.rel_frame(n)
+        half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
+                "roll": (H / 2, W / 2, L / 2)}[axis]
+        centre = np.array((0.0, 0.0, -SERVO_AXIS_X) if axis == "roll"
+                          else (-SERVO_AXIS_X, 0.0, 0.0))
+        corners = np.array([centre + np.array((sx, sy, sz)) * (
+            np.array(half) + CRADLE_SLACK)
+            for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+        low = float(off[2] * 1000.0 + (corners @ rot.T)[:, 2].min())
+        need = max(need, -low)
+    return max(MOUNT_DROP, float(np.ceil(need + 0.5)))

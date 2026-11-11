@@ -80,10 +80,10 @@ def test_random_genes_decode_to_valid_bodies():
         _same(m, mo.decode(mo.encode(m)))
 
 
-def test_repair_is_canonical():
+def test_encode_decode_is_canonical():
     genes = np.random.default_rng(3).uniform(0, 1, mo.MORPH_LENGTH)
-    fixed = mo.repair(genes)
-    assert np.allclose(mo.repair(fixed), fixed)
+    fixed = mo.encode(mo.decode(genes))
+    assert np.allclose(mo.encode(mo.decode(fixed)), fixed)
     _same(mo.decode(genes), mo.decode(fixed))
 
 

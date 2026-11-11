@@ -37,10 +37,6 @@ CORE_SLOTS = ("front", "back", "left-front", "left-middle", "left-rear",
 ELBOW_SLOTS = {1: "left elbow", 2: "right elbow"}
 
 
-def _mm(m):
-    return int(round(m * 1000))
-
-
 def link_name(profile, bend_deg, length, width, thick, axis=None, foot_r=None,
               tip_axis=None, elbow=()):
     """STL name of a link: profile and whole-degree bend when bent, then the
@@ -74,12 +70,11 @@ def has_elbows(elbow):
     return any(e is not None for e in elbow[:2]) or any(elbow[2:])
 
 
-# Servo and cradle measures, equal to parts.SERVO_* and parts.CRADLE_T
-# (parts needs build123d, the bill of materials does not).
-SERVO_BODY = (hardware.SERVO.length, hardware.SERVO.width, hardware.SERVO.body_height)      # length, width, body height
-SERVO_AXIS_X = hardware.SERVO.axis_x
-CRADLE_SLACK = hardware.SERVO.clearance + 2.5              # servo clearance plus cradle wall
-MIN_FIN = 1.0                         # thinnest link tip fin left under a tongue
+# Servo and cradle measures (mm), defined in morphology.py with the helpers
+# the simulation shares with the export; imported here under the same names.
+from darwinbot.morphology import (CRADLE_GAP, CRADLE_SLACK, MIN_FIN, MOUNT_DROP,  # noqa: E402,F401
+                                  SERVO_AXIS_X, SERVO_BODY, _mm, elbow_trim,
+                                  plate_drop, servo_axis, servo_roll, torso_mounted)
 
 
 def print_owner(morph, i):
@@ -91,39 +86,6 @@ def print_owner(morph, i):
         i = n.parent
         n = morph.nodes[i]
     return i
-
-
-def servo_roll(morph, i, side=1):
-    """Whole degrees the module of servo i is rolled about its own X, as the
-    frame its cradle is drawn in: on the other side of a link (slot 2) the
-    elbow plate is printed turned over, so the roll gains half a turn."""
-    deg = int(round(np.degrees(morph.nodes[i].rot))) + (180 if side < 0 else 0)
-    return (deg + 180) % 360 - 180
-
-
-def elbow_trim(dist, angle, axis, roll=0):
-    """(at, x0, x1) of the link tip fin under the tongue of an elbow plate, whole
-    mm in the tip frame: the fin ends at `at` from the link axis, the nearest
-    point of the child's cradle for this distance and angle less the clearance
-    (never under MIN_FIN, which leaves the clash the check reports when the
-    cradle reaches back to the link), and the plate beside the fin is cut away
-    from x0 to x1, the span of that cradle along the link."""
-    L, W, H = SERVO_BODY
-    half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
-            "roll": (H / 2, W / 2, L / 2)}[axis]
-    centre = (0.0, 0.0, -SERVO_AXIS_X) if axis == "roll" else (-SERVO_AXIS_X, 0.0, 0.0)
-    r, a = np.radians(roll), np.radians(angle)
-    rx = np.array([[1, 0, 0], [0, np.cos(r), -np.sin(r)], [0, np.sin(r), np.cos(r)]])
-    rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
-    pts = np.array([[centre[0] + sx * (half[0] + CRADLE_SLACK),
-                     centre[1] + sy * (half[1] + CRADLE_SLACK),
-                     centre[2] + sz * (half[2] + CRADLE_SLACK)]
-                    for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
-    world = pts @ (rz @ rx).T
-    ys = dist + world[:, 1]
-    xs = world[:, 0]
-    at = max(int(np.floor(min(ys) - CRADLE_GAP)), int(MIN_FIN))
-    return at, int(np.floor(min(xs) - 1.0)), int(np.ceil(max(xs) + 1.0))
 
 
 def elbow_name(dist, angle, width, thick, axis=None):
@@ -201,24 +163,6 @@ def elbow_args(morph, parent, child):
             if servo_axis(morph, child) else None)
 
 
-def servo_axis(morph, i):
-    """Module axis of the servo at node i, or None for a passive module."""
-    n = morph.nodes[i]
-    if n.kind == "wheel":
-        return "yaw"
-    if n.kind in ("joint", "segment"):
-        return n.axis
-    return None
-
-
-def torso_mounted(morph, i):
-    """True when the servo at i is bolted to the torso: its cradle is a part
-    of its own, not the tip of a link or the end of an elbow."""
-    n = morph.nodes[i]
-    return servo_axis(morph, i) is not None and morph.nodes[n.parent].kind in (
-        "core", "segment")
-
-
 def _rot_x(deg):
     a = np.radians(deg)
     c, s = np.cos(a), np.sin(a)
@@ -253,32 +197,6 @@ def cradle_name(axis, angle=0.0, foot="side"):
 def wedge_name(angle):
     """STL name of a rolled-mount wedge."""
     return f"wedge_{int(round(angle))}"
-
-
-def plate_drop(morph):
-    """How far below the joint plane the top of the torso plate is, in mm, for
-    this robot: MOUNT_DROP, or lower when a servo on a torso edge hangs below
-    that (a roll joint stands 35 mm of body below its axis) so no cradle or
-    servo reaches into the plate. Face mounts sit above or below the torso and
-    are not counted."""
-    L, W, H = SERVO_BODY
-    need = 0.0
-    for i, n in morph.nodes.items():
-        axis = servo_axis(morph, i) if i else None
-        if not axis or not torso_mounted(morph, i) or (
-                n.parent == 0 and n.slot in morpho.FACE_SLOTS):
-            continue
-        off, rot = morph.rel_frame(n)
-        half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
-                "roll": (H / 2, W / 2, L / 2)}[axis]
-        centre = np.array((0.0, 0.0, -SERVO_AXIS_X) if axis == "roll"
-                          else (-SERVO_AXIS_X, 0.0, 0.0))
-        corners = np.array([centre + np.array((sx, sy, sz)) * (
-            np.array(half) + CRADLE_SLACK)
-            for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
-        low = float(off[2] * 1000.0 + (corners @ rot.T)[:, 2].min())
-        need = max(need, -low)
-    return max(MOUNT_DROP, float(np.ceil(need + 0.5)))
 
 
 class Mount(NamedTuple):
@@ -353,8 +271,6 @@ def foot_name(shape, radius):
 FLOOR_T = 3.0            # cradle foot, under the servo on a torso tab
 PLATE_T = 6.0            # torso plate and splice strip
 CRADLE_BACK = 38.1       # parts.CRADLE_BACK: cradle back wall behind the axis
-CRADLE_GAP = 0.2         # parts.CRADLE_GAP
-MOUNT_DROP = 22.0        # torso plate face below a joint axis (parts.MOUNT_DROP)
 WEDGE_T = 2.0            # thinnest edge of a rolled-mount wedge
 WEDGE_W = 23.0           # wedge side (parts.MOUNT_SIDE + 2 * parts.WALL + 2)
 BACK_FOOT_X = 31.0       # M3 pattern of a back foot behind the axis (parts.BACK_FOOT_X)

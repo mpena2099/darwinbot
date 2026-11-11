@@ -180,6 +180,8 @@ def optimise_controller(
         fit, scores, metrics = run_one(base)
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)
     if len(active) < 2:       # no actuator: only the frequency gene, nothing CMA-ES can search
+        best.behaviour = behaviour_vector(morph, _nominal_flat(
+            morph, terrains, best, variants, seconds, device, payload), task)
         return best
 
     opts = {"bounds": [0.0, 1.0], "seed": int(rng.integers(1, 2**31 - 1)),

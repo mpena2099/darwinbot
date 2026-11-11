@@ -463,3 +463,18 @@ def test_archive_with_four_axes_is_refused():
     state = old.__dict__.copy()
     with pytest.raises(ValueError, match="archive axes"):
         evolve.Archive.__new__(evolve.Archive).__setstate__(state)
+
+
+def test_body_without_actuator_gets_its_behaviour():
+    from darwinbot.inner import behaviour_vector, optimise_controller
+    from darwinbot.sim import Episode
+    from darwinbot.terrain import flat
+    morph = mo.Morphology(0.20, 0.12, {0: mo.Node(0, "core"),
+                                     1: mo.Node(1, "skid", 0, 1)})
+    ep = Episode(morph, flat(), 1.0)
+    assert ep.buildable
+    r = optimise_controller(morph, [flat()], budget=4, seed=1, seconds=1.0)
+    assert r.evals == 1
+    assert r.behaviour is not None
+    expected = behaviour_vector(morph, ep.run(r.ctrl), "steer")
+    assert np.allclose(r.behaviour, expected)

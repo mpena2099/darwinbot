@@ -140,6 +140,17 @@ on them.
   `validate` still work on another machine; (3) a complete worked example in
   the Environments page for people who write their own terrain function.
 
+- **Your own parts, controllers and sensors**: today a module kind (wheel,
+  joint, foot...) is spread over the genome, the simulator, the printed parts
+  and the exporter, so adding one means editing the core. Each kind becomes a
+  self-contained package (its genes, mounting rules, simulation model, printed
+  parts, bill of materials and hardware numbers), loaded with `--modules`
+  like terrain and task plugins, and evolution uses it like any built-in
+  part. The same goes for the controller (the CPG becomes one implementation
+  among others) and for sensors, whose readings reach the controller through
+  evolved gains that start at zero. First examples: a wheel driven by a DC
+  motor, and a balance sense (IMU).
+
 ## Later
 
 - **Hardware profiles: the default kit, or your own**: today the parts kit is

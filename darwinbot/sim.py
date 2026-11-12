@@ -12,7 +12,7 @@ at spawn (overlapping legs) is not buildable and is never simulated.
 """
 
 import math
-from typing import Optional
+from typing import NamedTuple, Optional
 from collections import deque
 from dataclasses import dataclass
 
@@ -129,6 +129,26 @@ def servo_geoms(model: mujoco.MjModel) -> np.ndarray:
     return np.array([g for g in range(model.ngeom)
                      if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "")
                      .startswith("servo")], dtype=int)
+
+
+class Behaviour(NamedTuple):
+    """What a body does on the nominal flat episode: the record stored in the
+    archive and read by name everywhere. The field order is the order of the
+    `behaviour` array of old archives and checkpoints."""
+    duty:        float   # mean fraction of control ticks a terminal point touches the ground
+    height:      float   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
+    servos:      float   # number of servos
+    wheel_share: float   # share of terminal contact time that belongs to wheels
+    cot:         float   # cost of transport
+    legs:        float   # number of legs
+
+    @classmethod
+    def of(cls, values) -> "Behaviour":
+        """A Behaviour from any sequence of six numbers (a tuple or array from an
+        old archive, a list); a Behaviour passes through."""
+        if isinstance(values, cls):
+            return values
+        return cls(*(float(v) for v in values[:6]))
 
 
 def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,

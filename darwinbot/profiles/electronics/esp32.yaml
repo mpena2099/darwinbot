@@ -2,3 +2,13 @@
 mass: 0.17                  # kg: ESP32 + 3S LiPo + regulator
 current_a: 0.15             # A for the board and its radio
 box: [0.10, 0.06]           # m, ESP32 + LiPo footprint, centred
+
+board_name: ESP32 servo driver board    # BOM row of the board
+board_note: >-
+  see docs/hardware-dados.md; the torso hole pattern is a PLACEHOLDER,
+  check it against your board before printing
+board_label: ESP32 board    # BOM note of the screws that hold it
+holes: [58, 23]             # mm: [width, height] rectangle centred behind the origin,
+                            # or a list of [x, y] points. PLACEHOLDER: a guess.
+hole_d: 3.2                 # mm, clearance hole in the torso plate
+screw_d: 3.0                # mm, one screw per hole (3.0 is M3)

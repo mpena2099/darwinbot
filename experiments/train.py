@@ -105,8 +105,8 @@ def main():
                         "searches, the archive is still scored on the CPU")
     p.add_argument("--popsize", type=int, default=None,
                    help="CMA-ES population (gpu default: 64)")
-    p.add_argument("--seconds", type=float, default=5.0,
-                   help="simulated seconds per episode (ignored on --resume)")
+    p.add_argument("--seconds", type=float, default=8.0,
+                   help="simulated seconds per episode, 8 by default (ignored on --resume)")
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain for every evaluation "
                         "(default: 2 on cpu and warp, 0 on gpu; ignored on --resume)")
@@ -161,7 +161,7 @@ def main():
     def check_profile(path):
         """A run that resumes an archive trains on the archive's hardware and plugin."""
         stored = load_archive(path)
-        if wanted is not None and stored.profile != wanted:
+        if wanted is not None and hardware.normalize(stored.profile) != wanted:
             raise SystemExit(f"{path} was trained on another hardware profile than "
                              f"--profile {a.profile}; drop --profile to keep the archive's")
         plugins.require(stored, a.plugin)

@@ -16,7 +16,7 @@ Each component is a YAML file with the keys of its section, and the numbers carr
 
 - `servos/`: no-load speed, stall torque, the load that reads as `N = 1`, mass, cradle masses (on a plate and at a link), idle and stall current, joint friction, armature and gain, wheel gain, the simulation box, and the housing and horn measures that `parts.py` and the exporter use (body size, output axis offset, clearance, tapped holes, bolt circle).
 - `batteries/`: capacity, C rating and voltage.
-- `electronics/`: mass, current and footprint of the board and pack.
+- `electronics/`: mass, current and footprint of the board and pack, plus the board itself: its BOM name and note, the hole pattern in the torso plate, the hole diameter and the screw size.
 - `materials/`: densities, PLA strength, the safety factor on link bending and the friction factor of hard plastic on the floor.
 - `printers/`: the largest part that fits the bed.
 
@@ -27,6 +27,25 @@ A kit entry may be:
 - an inline mapping with the whole section, which is how profiles were written when they were a single file, so an old profile still loads unchanged.
 
 A missing component, or a component with a missing or unknown key, stops the program with a message that names the section and the file.
+
+## Your own board
+
+The board is a component like the servo. To use another one, copy `darwinbot/profiles/electronics/esp32.yaml`, name it in a kit (`electronics: my-board`) and edit:
+
+| Key | Meaning |
+|---|---|
+| `mass`, `current_a`, `box` | everything on the torso besides the servos: board, regulator, bus adapter and pack; the footprint in metres |
+| `board_name`, `board_note` | the BOM row of the board and its note |
+| `board_label` | what the board's screws are listed for in the BOM |
+| `holes` | the hole pattern in mm, centred behind the origin of the plate: `[width, height]` for a rectangle, or a list of `[x, y]` points |
+| `hole_d` | clearance hole in the torso plate, mm |
+| `screw_d` | screw diameter, mm; one screw per hole. `3.0` joins the M3 screws of the joints in the BOM, any other size gets its own screw and nut rows |
+
+The five keys after `box` are optional. A profile without them, such as the one an old archive stores, reads as the ESP32 board with a 58 x 23 mm pattern, so it loads and exports as before. `tools/check_kit.py` also warns when a hole is outside the footprint or smaller than its screw.
+
+`examples/kits/pi-zero-2w/` is a worked example for a Raspberry Pi Zero 2 W with a 5 V regulator and a half-duplex bus adapter. Its masses and currents are labelled as estimates in the file.
+
+The board changes the torso plate and the BOM. The program that runs on it is the firmware core plus a platform layer (`firmware/README.md`), and that layer exists for no board today.
 
 ## Using another kit
 

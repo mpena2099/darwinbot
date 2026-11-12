@@ -36,6 +36,7 @@ def is_default_profile(profile: dict) -> bool:
     shares with today's default is equal (keys one side lacks are what a
     hardware change adds or renames)."""
     current = hardware.default_profile()
+    profile = hardware.normalize(profile)
     for section, values in profile.items():
         for key, value in values.items():
             if key in current.get(section, {}) and current[section][key] != value:
@@ -58,6 +59,7 @@ def check_keys(profile: dict) -> None:
     """A kept profile must have the keys this code reads; hardware.require would
     otherwise fail on import after the re-run."""
     current = hardware.default_profile()
+    profile = hardware.normalize(profile)
     for section, values in current.items():
         wrong = set(values) ^ set(profile.get(section, {}))
         if wrong:

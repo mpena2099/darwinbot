@@ -9,7 +9,7 @@ from real parts so the result can be printed and assembled.
 
 Every robot is a tree of real modules (Karl Sims and Revolve2 style): a core
 (a torso plate with a free contour, ESP32, LiPo) with servo joints, spine
-segments, passive links (straight, L or arc), TPU springs, tails, skids, spikes,
+segments, passive links (straight, L or arc), tails, skids, spikes,
 caster wheels, wheels and feet (sphere, blade, pad or claw) hanging from its
 slots, driven by Feetech STS3215 servos. Only the interfaces are fixed (servo,
 horn and bracket holes, M3 screws, electronics); torso contour, link length,
@@ -28,8 +28,7 @@ modules; evolution decides how many limbs, how long (continuous lengths, in
 millimetres, straight or bent), which way each joint turns, what outline the
 torso has, whether it is split in segments, where each part mounts on the torso
 (edge, top or bottom face) and whether a limb ends in a wheel or a shaped foot.
-Passive modules without a servo (TPU spring,
-tail with counterweight, skid, spike, caster wheel) are part of the search. A
+Passive modules without a servo (tail with counterweight, skid, spike, caster wheel) are part of the search. A
 body the printer or the servo could not handle is not buildable and is never
 simulated. For every new body, an optimiser searches for
 the rhythm of joint movements that carries it farthest forward in a few simulated

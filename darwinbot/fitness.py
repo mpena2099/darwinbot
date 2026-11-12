@@ -40,7 +40,7 @@ episode (then up() of that), minus the energy and fall terms:
 
 score = 0.4 * straight + 0.2 * (left + right) + 0.2 * half
 
-A fall ends the episode but keeps the distance covered so far.
+A fall ends the episode; the progress rule above says what it keeps.
 
 The half-speed episode asks for half the distance of the full-speed one. With P
 the upright-weighted progress of an episode (never below 0):

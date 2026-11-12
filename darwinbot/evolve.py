@@ -46,7 +46,7 @@ from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import task_names
 from darwinbot.inner import optimise_controller
-from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
+from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX, Behaviour
 from darwinbot.terrain import get_terrains
 
 BODY_MODEL = 23                     # bump when the genome meaning changes
@@ -62,7 +62,52 @@ PARENT_SELECTIONS = ("novelty", "uniform")
 # change adds its entry: decode with the old constants (kept next to the
 # function as a small frozen dict) and encode with the new ones; new genes get
 # the neutral value.
-MIGRATIONS = {22: lambda morph, ctrl: (morph, ctrl)}
+# Frozen constants of the versions a translation reads. Not the old code.
+_V20 = {"wheel_range": (0.03, 0.06),          # m, wheel radius gene range
+        "ctrl_per_node": 8}                    # amp1 .. steer_shift
+_V21 = {"wheel_range": (0.03, 0.10),
+        "wheel_width": lambda rad: max(0.02, 0.5 * rad)}   # m: the wheel was
+                                               # 2 * max(10 mm, rad / 4) wide, no gene
+
+
+def _wheel_nodes(genes) -> List[int]:
+    """Slots that decode to a wheel (the kind does not depend on the ranges)."""
+    return [i for i, n in morpho.decode(genes).nodes.items() if n.kind == "wheel"]
+
+
+def _migrate_20(genes, cvec):
+    """20 -> 21: the wheel radius range grew from 60 to 100 mm; each wheel gene
+    is rescaled so its radius in metres stays."""
+    genes = np.array(genes, dtype=float)
+    blocks = genes.reshape(morpho.MAX_NODES, morpho.BLOCK_GENES)
+    for i in _wheel_nodes(genes):
+        rad = morpho._scale(blocks[i, morpho.WHEEL], *_V20["wheel_range"])
+        blocks[i, morpho.WHEEL] = morpho._unscale(rad, *_V21["wheel_range"])
+    return genes, cvec
+
+
+def _migrate_21(genes, cvec):
+    """21 -> 22: a wheel's width became the WIDTH gene (the old code derived it
+    from the radius: the gene is set to that width), and every controller slot
+    gained speed_gain and speed_shift (neutral: 0.5 is a gain and a shift of 0,
+    the same gait at every speed command)."""
+    genes = np.array(genes, dtype=float)
+    blocks = genes.reshape(morpho.MAX_NODES, morpho.BLOCK_GENES)
+    for i in _wheel_nodes(genes):
+        rad = morpho._scale(blocks[i, morpho.WHEEL], *_V21["wheel_range"])
+        blocks[i, morpho.WIDTH] = morpho._unscale(_V21["wheel_width"](rad),
+                                                  *morpho.WHEEL_WIDTH_RANGE)
+    cvec = np.asarray(cvec, dtype=float)
+    per = _V20["ctrl_per_node"]
+    if len(cvec) == 1 + morpho.MAX_NODES * per:
+        slots = cvec[1:].reshape(morpho.MAX_NODES, per)
+        neutral = np.full((morpho.MAX_NODES, ctrl.CTRL_PER_NODE - per), 0.5)
+        cvec = np.concatenate([cvec[:1], np.hstack([slots, neutral]).reshape(-1)])
+    return genes, cvec
+
+
+MIGRATIONS = {20: _migrate_20, 21: _migrate_21,
+              22: lambda morph, cvec: (morph, cvec)}
 _stale_ok = False                   # set by loading_stale()
 
 
@@ -116,12 +161,12 @@ N_DESCRIPTORS = 5
 
 
 def normalise(behaviour) -> np.ndarray:
-    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot) from a behaviour vector, so that every axis
-    weighs the same. Cost of transport spans decades, so it is taken in log."""
-    duty, height, servos, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
-    cot = np.log(np.clip(cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS,
-                    legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
+    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot: the archive axes, not
+    the order of the Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost of transport spans decades, so it is taken in log."""
+    b = Behaviour.of(behaviour)
+    cot = np.log(np.clip(b.cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
+    return np.clip([b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
+                    b.legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
 
 
 @lru_cache(maxsize=1)
@@ -132,27 +177,27 @@ def _centroids() -> np.ndarray:
 
 
 def cell_of(behaviour) -> Cell:
-    """CVT cell of a behaviour vector (duty, height, servos, wheel share, cot, legs)."""
+    """CVT cell of a Behaviour."""
     point = normalise(behaviour)
     return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
-    """Readable type from a behaviour vector, e.g. '8servos-low-crawl'."""
-    duty, height, servos, wheel_share = (float(v) for v in behaviour[:4])
-    band = next(name for top, name in HEIGHT_BINS if height < top)
-    if wheel_share > ROLL_SHARE:
+    """Readable type from a Behaviour, e.g. '8servos-low-crawl'."""
+    b = Behaviour.of(behaviour)
+    band = next(name for top, name in HEIGHT_BINS if b.height < top)
+    if b.wheel_share > ROLL_SHARE:
         gait = "roll"
-    elif duty > CRAWL_DUTY:
+    elif b.duty > CRAWL_DUTY:
         gait = "crawl"
-    elif duty >= WALK_DUTY:
+    elif b.duty >= WALK_DUTY:
         gait = "walk"
-    elif duty >= BELLY_DUTY:
+    elif b.duty >= BELLY_DUTY:
         gait = "trot"
     else:
         # tips barely touch the ground: the robot slides on its body
         gait = "belly"
-    return f"{int(round(servos))}servos-{band}-{gait}"
+    return f"{int(round(b.servos))}servos-{band}-{gait}"
 
 
 _NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll)(?:-(\d+))?$")
@@ -174,15 +219,21 @@ class Elite:
     fitness: float
     scores:  List[float]
     born:    int          # batch index
-    # (duty, height, servos, wheel share, cot, legs); None: a body never simulated
-    behaviour: Optional[np.ndarray] = None
+    # None: a body never simulated
+    behaviour: Optional[Behaviour] = None
 
     def __post_init__(self):
         if self.behaviour is None:
             m = morpho.decode(self.morph)
-            self.behaviour = np.array(
-                [0.0, 0.0, float(m.n_servos), 0.0, COT_MAX, float(m.n_legs)])
-        self.behaviour = np.asarray(self.behaviour, dtype=float)
+            self.behaviour = Behaviour(0.0, 0.0, float(m.n_servos), 0.0, COT_MAX,
+                                       float(m.n_legs))
+        self.behaviour = Behaviour.of(self.behaviour)
+
+    def __setstate__(self, state):
+        # elites pickled before Behaviour carry a plain array or tuple
+        self.__dict__.update(state)
+        if self.__dict__.get("behaviour") is not None:
+            self.behaviour = Behaviour.of(self.behaviour)
 
 
 def elite_id(morph_genes, ctrl_genes) -> str:
@@ -346,7 +397,7 @@ class Archive:
                     f"archive from body model {old}, this code is {BODY_MODEL}: "
                     "run experiments/migrate_archive.py to bring it up to date")
             raise ValueError("archive from an older body model, retrain")
-        if grid is not None and grid.measure_dim != N_DESCRIPTORS:
+        if grid is not None and grid.measure_dim != N_DESCRIPTORS and not _stale_ok:
             raise ValueError(
                 f"archive with {grid.measure_dim} archive axes, this code uses "
                 f"{N_DESCRIPTORS} (the servo count is an axis again): retrain")

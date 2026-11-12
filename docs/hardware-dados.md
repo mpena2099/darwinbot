@@ -130,6 +130,10 @@ Quando o slot do tronco tem rolagem que não é múltiplo de 90 graus (até 20),
 
 ## Mola de TPU
 
+O módulo mola existe no código, mas está desligado: nenhuma peça impressa o monta ainda,
+então a evolução nunca o gera e um corpo com mola é rejeitado. Os números abaixo
+são os da simulação.
+
 Flexão passiva: lâmina de TPU com 12 mm de comprimento livre, presa entre dois
 blocos de fixação. A rigidez à rotação usada na simulação é a de uma viga em
 balanço:

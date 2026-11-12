@@ -17,6 +17,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -70,7 +71,7 @@ def simulate(name):
 
 
 def export_hashes(name):
-    """sha256 of every file the export package of a case writes."""
+    """Fingerprint (`_digest`) of every file the export package of a case writes."""
     from darwinbot.export import export_robot
     genes, _, ctrl = _case(name)
     el = Elite(genes, ctrl, 1.0, [1.0], 0)
@@ -80,9 +81,33 @@ def export_hashes(name):
     for root, _, names in sorted(os.walk(out)):
         for f in sorted(names):
             p = os.path.join(root, f)
-            with open(p, "rb") as fh:
-                files[os.path.relpath(p, out)] = hashlib.sha256(fh.read()).hexdigest()
+            files[os.path.relpath(p, out)] = _digest(p)
     return files
+
+
+_FLOAT = re.compile(r"-?\d+\.\d+(?:[eE][-+]?\d+)?")
+
+
+def _digest(path):
+    """A fingerprint of one exported file that is the same on every platform.
+
+    Text files are hashed byte for byte. A binary STL is reduced to its volume
+    and bounding box in mm, rounded, because OpenCascade tessellates the same
+    solid with slightly different triangles across versions and machines. The
+    URDF carries masses and inertias computed from that geometry, so its
+    numbers are rounded to 4 significant digits before hashing."""
+    data = open(path, "rb").read()
+    if path.endswith(".stl"):
+        tri = np.frombuffer(data, dtype=np.dtype([("n", "<f4", 3), ("v", "<f4", (3, 3)),
+                                                  ("a", "<u2")]), offset=84)
+        v = tri["v"].astype(np.float64)
+        volume = np.einsum("ij,ij->i", v[:, 0], np.cross(v[:, 1], v[:, 2])).sum() / 6.0
+        lo, hi = v.reshape(-1, 3).min(0), v.reshape(-1, 3).max(0)
+        return f"stl volume {volume:.3g} bbox " + " ".join(f"{x:.0f}" for x in (*lo, *hi))
+    if path.endswith(".urdf"):
+        text = _FLOAT.sub(lambda m: f"{float(m.group()):.4g}", data.decode())
+        return hashlib.sha256(text.encode()).hexdigest()
+    return hashlib.sha256(data).hexdigest()
 
 
 def _golden():

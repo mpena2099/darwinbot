@@ -330,18 +330,18 @@ def main():
               "  wheels  feet  segments  passive  nodes")
         shown = 0
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
-            duty, height, servos, _, cot, legs = e.behaviour
+            b = e.behaviour
             morph = morpho.decode(e.morph)
             kinds = [n.kind for n in morph.nodes.values()]
-            row = dict(fitness=e.fitness, duty=duty, height=height, servos=int(servos),
-                       legs=int(legs), cot=cot, wheels=morph.n_wheels,
+            row = dict(fitness=e.fitness, duty=b.duty, height=b.height, servos=int(b.servos),
+                       legs=int(b.legs), cot=b.cot, wheels=morph.n_wheels,
                        feet=kinds.count("foot"), segments=morph.n_segments,
                        passive=sum(k in PASSIVE_KINDS for k in kinds), nodes=len(kinds))
             if not matches(row, conds):
                 continue
             shown += 1
-            print(f"{names[cell]:26s} {e.fitness:7.2f}  {duty:4.2f}  {height:6.2f}  "
-                  f"{int(servos):6d}  {int(legs):4d}  {cot:5.1f}  {row['wheels']:6d}  "
+            print(f"{names[cell]:26s} {e.fitness:7.2f}  {b.duty:4.2f}  {b.height:6.2f}  "
+                  f"{row['servos']:6d}  {row['legs']:4d}  {b.cot:5.1f}  {row['wheels']:6d}  "
                   f"{row['feet']:4d}  {row['segments']:8d}  {row['passive']:7d}  "
                   f"{row['nodes']:5d}")
         print(f"{shown} of {len(archive.cells)} robots")

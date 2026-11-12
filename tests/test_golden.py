@@ -89,6 +89,13 @@ _INERTIAL = re.compile(r"<inertial>.*?</inertial>", re.S)
 _FLOAT = re.compile(r"-?\d+\.\d+(?:[eE][-+]?\d+)?")
 
 
+
+def _round(x):
+    """4 significant digits; values within 1e-9 of zero (rounding noise in
+    angles and offsets) count as 0."""
+    return "0" if abs(x) < 1e-9 else f"{x:.4g}"
+
+
 def _digest(path):
     """A fingerprint of one exported file that is the same on every platform.
 
@@ -108,7 +115,7 @@ def _digest(path):
         return f"stl volume {volume:.3g} bbox " + " ".join(f"{x:.0f}" for x in (*lo, *hi))
     if path.endswith(".urdf"):
         text = _INERTIAL.sub("", data.decode())
-        text = _FLOAT.sub(lambda m: f"{float(m.group()):.4g}", text)
+        text = _FLOAT.sub(lambda m: _round(float(m.group())), text)
         return hashlib.sha256(text.encode()).hexdigest()
     return hashlib.sha256(data).hexdigest()
 

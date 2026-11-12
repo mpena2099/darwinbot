@@ -72,6 +72,8 @@ SPEC = {
         "mass":               ("kg", 0.001, 10.0, 0.005, 5.0),
         "current_a":          ("A", 0.0, 100.0, 0.0, 10.0),
         "box":                ("m", 0.001, 1.0, 0.005, 0.5),
+        "hole_d":             ("mm", 0.5, 20.0, 2.0, 6.0),
+        "screw_d":            ("mm", 1.0, 12.0, 2.0, 5.0),
     },
     "material": {
         "link_density":       ("kg/m^3", 1.0, 30000.0, 100.0, 5000.0),
@@ -149,7 +151,8 @@ def _resolve(kit_path):
         except (OSError, ValueError) as e:
             errors.append(str(e))
             continue
-        parts[name], labels[name] = raw, label
+        parts[name], labels[name] = (hardware.normalize({name: raw})[name]
+                                     if isinstance(raw, dict) else raw), label
     return data, parts, labels, errors
 
 
@@ -179,6 +182,33 @@ def _cross(parts, labels, errors, warnings):
                 warnings.append(
                     f"{labels['servo']} servo.box[{axis}] = {box[axis]:g} m is "
                     f"more than 20% from servo.{name} = {mm:g} mm")
+
+    board = parts.get("electronics")
+    if isinstance(board, dict):
+        for key in ("board_name", "board_note", "board_label"):
+            if not isinstance(board.get(key), str) or not board[key].strip():
+                errors.append(f"{labels['electronics']} electronics.{key} must be "
+                              "a non-empty text")
+        why = hardware.holes_error(board.get("holes"))
+        if why:
+            errors.append(f"{labels['electronics']} electronics.holes {why}")
+        else:
+            points = hardware.hole_points(board["holes"])
+            hole_d = _number(parts, "electronics", "hole_d")
+            screw_d = _number(parts, "electronics", "screw_d")
+            if hole_d is not None and screw_d is not None and hole_d < screw_d:
+                warnings.append(f"{labels['electronics']} electronics.hole_d = "
+                                f"{hole_d:g} mm is below electronics.screw_d = "
+                                f"{screw_d:g} mm: the screw will not pass")
+            ebox = board.get("box")
+            if (isinstance(ebox, (list, tuple)) and len(ebox) == 2
+                    and all(isinstance(v, (int, float)) for v in ebox)):
+                reach = (max(abs(x) for x, _ in points), max(abs(y) for _, y in points))
+                if reach[0] > ebox[0] * 500 or reach[1] > ebox[1] * 500:
+                    warnings.append(
+                        f"{labels['electronics']} electronics.holes reach "
+                        f"{reach[0]:g} x {reach[1]:g} mm from the centre, outside "
+                        f"half of electronics.box ({ebox[0] * 500:g} x {ebox[1] * 500:g} mm)")
 
     volts = _number(parts, "battery", "volts")
     name = labels.get("servo", "")

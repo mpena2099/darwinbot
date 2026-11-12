@@ -523,9 +523,7 @@ def bom_rows(morph):
     for span, q in sorted(splices.items()):
         rows.append((f"splice_plate_{span}.stl", q, "PLA, across a torso cut"))
     screws = screw_counts(morph, elbows, springs, splices)
-    rows.append(("ESP32 servo driver board", 1,
-                 "see docs/hardware-dados.md; the torso hole pattern is a "
-                 "PLACEHOLDER, check it against your board before printing"))
+    rows.append((hardware.ELECTRONICS.board_name, 1, hardware.ELECTRONICS.board_note))
     rows.append(("M2 x 6 screw", 8 * n,
                  "four into each tapped face of every servo, through its cradle"))
     rows += [("3S LiPo battery 11.1 V", 1, "1000 to 1500 mAh, feeds the servos directly"),
@@ -534,6 +532,7 @@ def bom_rows(morph):
         rows.append((f"M3 x {length} screw", q, what))
     rows.append(("M3 nut", sum(q for q, _ in screws.values()),
                  "one per screw"))
+    rows += board_screw_rows()
     return rows
 
 
@@ -563,8 +562,27 @@ def screw_counts(morph, elbows, springs, splices):
         add(2 * max(6, blade), 8 * q, "spring blocks")
     for span, q in splices.items():
         add(2 * PLATE_T, 4 * q, "torso splice")
-    add(PLATE_T, 4, "ESP32 board")
+    if board_screws_are_m3():
+        add(PLATE_T, len(hardware.hole_points(hardware.ELECTRONICS.holes)),
+            hardware.ELECTRONICS.board_label)
     return {L: (q, ", ".join(w)) for L, (q, w) in use.items()}
+
+
+def board_screws_are_m3():
+    return hardware.ELECTRONICS.screw_d == 3.0
+
+
+def board_screw_rows():
+    """BOM rows of the screws that hold a board whose screws are not M3: they
+    do not share the M3 lengths and nuts of the joints. Empty for M3."""
+    if board_screws_are_m3():
+        return []
+    e = hardware.ELECTRONICS
+    n = len(hardware.hole_points(e.holes))
+    size = f"M{e.screw_d:g}"
+    length = screw_length(PLATE_T)
+    return [(f"{size} x {length} screw", n, e.board_label),
+            (f"{size} nut", n, "one per screw")]
 
 
 def printed_parts(rows):

@@ -50,7 +50,7 @@ that error exceeds `1e-3 rad`.
 
 ## ESP32 layer
 
-Not written yet. When the hardware arrives, a thin Arduino layer will read the
+Not written yet, for any board. When the hardware arrives, a thin Arduino layer will read the
 control JSON, poll each STS3215 load register (`0x3C`/`0x3D`), apply the
 calibration (`zero`, `sign`) and write targets on the bus. All control math
 stays in this portable core.

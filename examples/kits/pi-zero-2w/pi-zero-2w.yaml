@@ -1,0 +1,7 @@
+# Example kit: the default parts with a Raspberry Pi Zero 2 W as the board.
+# Run: python tools/check_kit.py examples/kits/pi-zero-2w/pi-zero-2w.yaml
+servo: sts3215-12v
+battery: 3s-1200mah
+electronics: pi-zero-2w     # ./electronics/pi-zero-2w.yaml, next to this file
+material: pla-tpu
+printer: bed-220mm

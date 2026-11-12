@@ -74,3 +74,23 @@ def test_train_refuses_a_bad_profile(tmp_path):
     with pytest.raises(SystemExit) as caught:
         train.check_kit_profile(path)
     assert "servo.length" in str(caught.value)
+
+
+def test_example_pi_kit_is_clean():
+    path = str(ROOT / "examples" / "kits" / "pi-zero-2w" / "pi-zero-2w.yaml")
+    errors, warnings, _ = check_kit.check(path)
+    assert errors == [] and warnings == []
+
+
+def test_bad_holes_and_small_hole_diameter(tmp_path):
+    path = _kit(tmp_path, lambda d: d["electronics"].update(holes=[1, 2, 3]))
+    assert any("electronics.holes" in e for e in _errors(path))
+    path = _kit(tmp_path, lambda d: d["electronics"].update(hole_d=2.0))
+    assert any("hole_d" in w for w in check_kit.check(path)[1])
+
+
+def test_old_inline_kit_without_board_keys_has_no_errors(tmp_path):
+    def drop(d):
+        for k in hardware.ELECTRONICS_DEFAULTS:
+            del d["electronics"][k]
+    assert _errors(_kit(tmp_path, drop)) == []

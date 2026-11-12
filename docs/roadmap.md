@@ -182,8 +182,7 @@ on them.
   4. Firmware drivers per servo family (Feetech serial, PWM, Dynamixel) under
      the portable core.
 
-- **Archives and exports on Hugging Face** (an idea for after the repository
-  opens): publish the showcase archives and the export packages (STLs, bill
+- **Archives and exports on Hugging Face** (an idea): publish the showcase archives and the export packages (STLs, bill
   of materials, assembly guide, control file) as a Hugging Face dataset, and
   perhaps a Space that shows the robots walking in the browser.
 - **A change of grip mid-stride** (suggested in

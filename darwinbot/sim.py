@@ -12,6 +12,7 @@ at spawn (overlapping legs) is not buildable and is never simulated.
 """
 
 import math
+import os
 from typing import NamedTuple, Optional
 from collections import deque
 from dataclasses import dataclass
@@ -20,9 +21,10 @@ import mujoco
 import numpy as np
 from numba import njit
 
-from darwinbot import ablate
+from darwinbot import ablate, fastloop
 from darwinbot.builder import AssemblyRules, build_mjcf
-from darwinbot.controller import CONTROL_DT, Controller, advance_phases
+from darwinbot.controller import (CONTROL_DT, RAMP_TIME, SERVO_TORQUE, Controller,
+                                  advance_phases)
 from darwinbot.morphology import Morphology, violations
 from darwinbot.terrain import Terrain
 
@@ -267,29 +269,18 @@ class Episode:
         hit[b[~self._robot[a]]] = True
         return hit[self._tgeoms]
 
-    def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0,
-            speed: float = 1.0) -> Metrics:
-        """
-        Simulate one episode. With a randomize.Variant the perturbed model is
-        stepped instead (same sizes, so the MjData is reused) and every new
-        command reaches the servos variant.latency control periods late; until
-        the first one arrives the targets stay at zero.
-
-        The loop is the hot path of training: MuJoCo views and constants are
-        bound once and the per-step phase update and state check are compiled
-        (Numba), with the same operations in the same order as the NumPy
-        versions, so the results match them bit for bit.
-        """
+    def _loop_py(self, controller, sim_model, variant):
+        """The per-step loop in Python (the reference of fastloop.run_loop,
+        selected with DARWINBOT_PY_LOOP=1, and the fallback when the compiled
+        loop cannot be set up). Returns the quantities the metrics are built
+        from."""
         m, d = self.model, self.data
-        sim_model = variant.model if variant is not None else m
-        controller = self.reset(ctrl, sim_model, command, speed)
         queue = (deque([np.zeros(m.nu)] * variant.latency)
                  if variant is not None and variant.latency > 0 else None)
         xmat, xpos = d.xmat[self.torso], d.xpos[self.torso]
         force, velocity, qacc, qvel = (d.actuator_force, d.actuator_velocity,
                                        d.qacc, d.qvel)
         warnings = [d.warning[w] for w in BLOWUP_WARNINGS]
-        x0, y0 = xpos[:2].copy()
         dt = m.opt.timestep
         hold = self.hold
         step = mujoco.mj_step
@@ -345,6 +336,42 @@ class Episode:
                 upsum += float(xmat[8])
                 tiltsum += math.acos(min(1.0, max(-1.0, float(xmat[8]))))
                 ticks += 1
+
+        return (energy, yaw, fell, unstable, x_mid, touch, zsum, upsum, ticks,
+                tiltsum, slipsum, sgsum)
+
+    def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0,
+            speed: float = 1.0) -> Metrics:
+        """
+        Simulate one episode. With a randomize.Variant the perturbed model is
+        stepped instead (same sizes, so the MjData is reused) and every new
+        command reaches the servos variant.latency control periods late; until
+        the first one arrives the targets stay at zero.
+
+        The loop is the hot path of training: MuJoCo views and constants are
+        bound once and the per-step phase update and state check are compiled
+        (Numba), with the same operations in the same order as the NumPy
+        versions, so the results match them bit for bit.
+        """
+        m, d = self.model, self.data
+        sim_model = variant.model if variant is not None else m
+        controller = self.reset(ctrl, sim_model, command, speed)
+        x0, y0 = d.xpos[self.torso][:2].copy()
+        prep = fastloop.prepare(self)
+        if prep is not None and prep.consistent(d):
+            latency = variant.latency if variant is not None and variant.latency > 0 else 0
+            out, touch = fastloop.run(self, prep, controller, sim_model, latency,
+                                      SERVO_TORQUE, RAMP_TIME, UPRIGHT_MIN)
+            energy, yaw = float(out[0]), float(out[1])
+            fell, unstable = bool(out[2]), bool(out[3])
+            x_mid = None if math.isnan(out[4]) else float(out[4])
+            zsum, upsum, ticks = float(out[5]), float(out[6]), int(out[7])
+            tiltsum, slipsum, sgsum = float(out[8]), float(out[9]), int(out[10])
+            self._k = int(out[11])
+            touch = touch.copy()
+        else:
+            (energy, yaw, fell, unstable, x_mid, touch, zsum, upsum, ticks,
+             tiltsum, slipsum, sgsum) = self._loop_py(controller, sim_model, variant)
 
         x, y = d.xpos[self.torso][:2]
         duty, height, share = behaviour(touch, self._twheel, zsum, ticks, self.reach)

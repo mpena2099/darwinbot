@@ -95,12 +95,12 @@ def test_lineage_survives_parent_eviction():
 
 
 def test_type_name_bins():
-    assert evolve.type_name([0.9, 0.2, 8, 0.0]) == "8servos-low-crawl"
-    assert evolve.type_name([0.3, 0.2, 8, 0.0]) == "8servos-low-trot"
-    assert evolve.type_name([0.05, 0.2, 8, 0.0]) == "8servos-low-belly"
-    assert evolve.type_name([0.6, 0.5, 12, 0.0]) == "12servos-mid-walk"
-    assert evolve.type_name([0.3, 1.0, 16, 0.0]) == "16servos-high-trot"
-    assert evolve.type_name([0.9, 0.2, 4, 0.8]) == "4servos-low-roll"   # wheels win
+    assert evolve.type_name([0.9, 0.2, 8, 0.0, 1.0, 2]) == "8servos-low-crawl"
+    assert evolve.type_name([0.3, 0.2, 8, 0.0, 1.0, 2]) == "8servos-low-trot"
+    assert evolve.type_name([0.05, 0.2, 8, 0.0, 1.0, 2]) == "8servos-low-belly"
+    assert evolve.type_name([0.6, 0.5, 12, 0.0, 1.0, 2]) == "12servos-mid-walk"
+    assert evolve.type_name([0.3, 1.0, 16, 0.0, 1.0, 2]) == "16servos-high-trot"
+    assert evolve.type_name([0.9, 0.2, 4, 0.8, 1.0, 2]) == "4servos-low-roll"   # wheels win
 
 
 def test_names_round_trip_with_parse():
@@ -514,3 +514,22 @@ def test_body_without_actuator_gets_its_behaviour():
     assert r.behaviour is not None
     expected = behaviour_vector(morph, ep.run(r.ctrl), "steer")
     assert np.allclose(r.behaviour, expected)
+
+
+def test_behaviour_is_a_named_tuple_and_reads_old_arrays():
+    from darwinbot.sim import Behaviour
+    b = Behaviour.of(np.array([0.6, 0.3, 8.0, 0.1, 2.5, 4.0]))
+    assert (b.duty, b.height, b.servos, b.wheel_share, b.cot, b.legs) == (
+        0.6, 0.3, 8.0, 0.1, 2.5, 4.0)
+    assert Behaviour.of(b) is b
+    assert evolve.type_name(np.array(b)) == evolve.type_name(b)
+    assert np.allclose(evolve.normalise(list(b)), evolve.normalise(b))
+    # an elite pickled with a plain array loads with the named record
+    rng = np.random.default_rng(0)
+    el = evolve.Elite(mo.random_morphology(rng), rng.random(evolve.ctrl.CTRL_LENGTH),
+                      0.1, [0.1], 0, b)
+    state = dict(el.__dict__, behaviour=np.array(b))
+    old = evolve.Elite.__new__(evolve.Elite)
+    old.__setstate__(state)
+    assert isinstance(old.behaviour, Behaviour) and old.behaviour == b
+    assert pickle.loads(pickle.dumps(el)).behaviour == b

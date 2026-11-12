@@ -46,7 +46,7 @@ from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import task_names
 from darwinbot.inner import optimise_controller
-from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
+from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX, Behaviour
 from darwinbot.terrain import get_terrains
 
 BODY_MODEL = 23                     # bump when the genome meaning changes
@@ -161,12 +161,12 @@ N_DESCRIPTORS = 5
 
 
 def normalise(behaviour) -> np.ndarray:
-    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot) from a behaviour vector, so that every axis
-    weighs the same. Cost of transport spans decades, so it is taken in log."""
-    duty, height, servos, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
-    cot = np.log(np.clip(cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS,
-                    legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
+    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot: the archive axes, not
+    the order of the Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost of transport spans decades, so it is taken in log."""
+    b = Behaviour.of(behaviour)
+    cot = np.log(np.clip(b.cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
+    return np.clip([b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
+                    b.legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
 
 
 @lru_cache(maxsize=1)
@@ -177,27 +177,27 @@ def _centroids() -> np.ndarray:
 
 
 def cell_of(behaviour) -> Cell:
-    """CVT cell of a behaviour vector (duty, height, servos, wheel share, cot, legs)."""
+    """CVT cell of a Behaviour."""
     point = normalise(behaviour)
     return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
-    """Readable type from a behaviour vector, e.g. '8servos-low-crawl'."""
-    duty, height, servos, wheel_share = (float(v) for v in behaviour[:4])
-    band = next(name for top, name in HEIGHT_BINS if height < top)
-    if wheel_share > ROLL_SHARE:
+    """Readable type from a Behaviour, e.g. '8servos-low-crawl'."""
+    b = Behaviour.of(behaviour)
+    band = next(name for top, name in HEIGHT_BINS if b.height < top)
+    if b.wheel_share > ROLL_SHARE:
         gait = "roll"
-    elif duty > CRAWL_DUTY:
+    elif b.duty > CRAWL_DUTY:
         gait = "crawl"
-    elif duty >= WALK_DUTY:
+    elif b.duty >= WALK_DUTY:
         gait = "walk"
-    elif duty >= BELLY_DUTY:
+    elif b.duty >= BELLY_DUTY:
         gait = "trot"
     else:
         # tips barely touch the ground: the robot slides on its body
         gait = "belly"
-    return f"{int(round(servos))}servos-{band}-{gait}"
+    return f"{int(round(b.servos))}servos-{band}-{gait}"
 
 
 _NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll)(?:-(\d+))?$")
@@ -219,15 +219,21 @@ class Elite:
     fitness: float
     scores:  List[float]
     born:    int          # batch index
-    # (duty, height, servos, wheel share, cot, legs); None: a body never simulated
-    behaviour: Optional[np.ndarray] = None
+    # None: a body never simulated
+    behaviour: Optional[Behaviour] = None
 
     def __post_init__(self):
         if self.behaviour is None:
             m = morpho.decode(self.morph)
-            self.behaviour = np.array(
-                [0.0, 0.0, float(m.n_servos), 0.0, COT_MAX, float(m.n_legs)])
-        self.behaviour = np.asarray(self.behaviour, dtype=float)
+            self.behaviour = Behaviour(0.0, 0.0, float(m.n_servos), 0.0, COT_MAX,
+                                       float(m.n_legs))
+        self.behaviour = Behaviour.of(self.behaviour)
+
+    def __setstate__(self, state):
+        # elites pickled before Behaviour carry a plain array or tuple
+        self.__dict__.update(state)
+        if self.__dict__.get("behaviour") is not None:
+            self.behaviour = Behaviour.of(self.behaviour)
 
 
 def elite_id(morph_genes, ctrl_genes) -> str:

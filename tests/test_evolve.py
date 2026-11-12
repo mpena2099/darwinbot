@@ -533,3 +533,14 @@ def test_behaviour_is_a_named_tuple_and_reads_old_arrays():
     old.__setstate__(state)
     assert isinstance(old.behaviour, Behaviour) and old.behaviour == b
     assert pickle.loads(pickle.dumps(el)).behaviour == b
+
+
+def test_longest_first_only_reorders_the_batch():
+    rng = np.random.default_rng(3)
+    tasks = [(mo.random_morphology(rng), None, "flat", 40, 0.25, i, 4.0, "cpu",
+              None, 0, None, "steer", 0.0) for i in range(8)]
+    ordered = evolve.longest_first(tasks)
+    assert sorted(id(t) for t in ordered) == sorted(id(t) for t in tasks)
+    costs = [evolve.job_cost(t) for t in ordered]
+    assert costs == sorted(costs, reverse=True)
+    assert evolve.longest_first([]) == []

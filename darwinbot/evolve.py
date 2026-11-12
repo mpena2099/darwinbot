@@ -41,7 +41,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, hardware, plugins, rules
+from darwinbot import ablate, body_options, fastloop, hardware, plugins, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import task_names
@@ -520,6 +520,22 @@ def scaled_budget(budget: int, morph) -> int:
     return int(round(budget * scale))
 
 
+def job_cost(job) -> float:
+    """Expected cost of a pool job, relative to the others of its batch: the
+    CMA-ES evaluations (`scaled_budget`) times the actuators, which set the
+    time per evaluation. Only used to order the jobs of a batch."""
+    morph = morpho.decode(job[0])
+    return scaled_budget(job[3], morph) * max(len(morph.layout()), 1)
+
+
+def longest_first(tasks: list) -> list:
+    """The jobs of a batch with the most expensive first, so the last ones to
+    finish are short and the workers wait less for the slowest body. Stable for
+    equal costs. Only the submission order changes: every result carries its
+    body, and the archive already takes results in completion order."""
+    return sorted(tasks, key=job_cost, reverse=True)
+
+
 def _work(job):
     """Pool worker: optimise one body's controller. Runs in a subprocess.
     An exception in one body (a compile error, a numerical failure) must not end
@@ -641,6 +657,8 @@ def run(
           + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
           + (f" rules={list(archive.rules)}" if archive.rules else "")
           + (f" body={archive.body}" if archive.body else ""))
+    if device != "gpu":
+        fastloop.warmup()        # compiled before the fork, so workers inherit it
     pool = None if device == "gpu" else multiprocessing.Pool(
         workers, _init_worker,
         (archive.ablate, archive.rules, archive.body, plugins.loaded()))
@@ -662,7 +680,7 @@ def run(
             added = failed = 0
             tasks = make_batch()
             results = ([_work(t) for t in tasks] if pool is None
-                       else pool.imap_unordered(_work, tasks))
+                       else pool.imap_unordered(_work, longest_first(tasks)))
             for genes, ctrl, fit, scores, evals, behaviour, parent, bad in results:
                 archive.evals += evals
                 failed += bad

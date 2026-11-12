@@ -292,6 +292,8 @@ def test_variant_none_is_bit_identical():
 
 
 def test_latency_delays_first_command(monkeypatch):
+    # spies on mujoco.mj_step, which only the Python loop calls; the compiled
+    # loop's latency is checked against it in test_fastloop.py
     ctrl = np.random.default_rng(3).random(co.CTRL_LENGTH)
 
     def first_nonzero(latency):
@@ -306,6 +308,7 @@ def test_latency_delays_first_command(monkeypatch):
                 applied.append(np.abs(data.ctrl).max())
 
         monkeypatch.setattr(mujoco, "mj_step", spy)
+        monkeypatch.setenv("DARWINBOT_PY_LOOP", "1")
         ep.run(ctrl, randomize.Variant(ep.model, latency))
         monkeypatch.undo()
         return next(i for i, a in enumerate(applied) if a > 0)
@@ -498,6 +501,7 @@ def test_nan_in_qvel_mid_episode_is_unstable(monkeypatch):
         real(model, data, *a)
 
     monkeypatch.setattr(mujoco, "mj_step", poisoned)
+    monkeypatch.setenv("DARWINBOT_PY_LOOP", "1")      # the spy only sees the Python loop
     m = ep.run(_ctrl(morph, amp=0.3))
     assert m.unstable
     assert fitness.score(m) == fitness.UNSTABLE_SCORE

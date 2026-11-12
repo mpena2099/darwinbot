@@ -85,6 +85,7 @@ def export_hashes(name):
     return files
 
 
+_INERTIAL = re.compile(r"<inertial>.*?</inertial>", re.S)
 _FLOAT = re.compile(r"-?\d+\.\d+(?:[eE][-+]?\d+)?")
 
 
@@ -94,8 +95,9 @@ def _digest(path):
     Text files are hashed byte for byte. A binary STL is reduced to its volume
     and bounding box in mm, rounded, because OpenCascade tessellates the same
     solid with slightly different triangles across versions and machines. The
-    URDF carries masses and inertias computed from that geometry, so its
-    numbers are rounded to 4 significant digits before hashing."""
+    URDF is hashed without its <inertial> blocks (masses and inertias come
+    from that geometry, already covered by the STL fingerprints) and with its
+    other numbers rounded to 4 significant digits."""
     data = open(path, "rb").read()
     if path.endswith(".stl"):
         tri = np.frombuffer(data, dtype=np.dtype([("n", "<f4", 3), ("v", "<f4", (3, 3)),
@@ -105,7 +107,8 @@ def _digest(path):
         lo, hi = v.reshape(-1, 3).min(0), v.reshape(-1, 3).max(0)
         return f"stl volume {volume:.3g} bbox " + " ".join(f"{x:.0f}" for x in (*lo, *hi))
     if path.endswith(".urdf"):
-        text = _FLOAT.sub(lambda m: f"{float(m.group()):.4g}", data.decode())
+        text = _INERTIAL.sub("", data.decode())
+        text = _FLOAT.sub(lambda m: f"{float(m.group()):.4g}", text)
         return hashlib.sha256(text.encode()).hexdigest()
     return hashlib.sha256(data).hexdigest()
 

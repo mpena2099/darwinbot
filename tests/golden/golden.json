@@ -17,7 +17,7 @@
    "parts/splice_plate_170.stl": "stl volume 2.43e+04 bbox -12 -85 0 12 85 6",
    "parts/torso_tile_1.stl": "stl volume 9.13e+04 bbox -164 -90 0 -9 79 6",
    "parts/torso_tile_2.stl": "stl volume 8.36e+04 bbox -9 -65 0 145 70 6",
-   "robot.urdf": "166df5474d2fe25c3a6028f6c2ec0bffc106fa14b47667fd890b78ff84c70833",
+   "robot.urdf": "9d1c2e30f251c9e43b9897bfeacc137e289f183763818007b9b5989db1a65b6b",
    "robot.xml": "a35f63e57170fd95c8a64e8fac22f0b20dba12ad0b100fdfb7665dae4acd142f"
   },
   "sim": {
@@ -62,7 +62,7 @@
    "parts/torso_tile_1.stl": "stl volume 1.49e+05 bbox -211 -79 0 -2 79 6",
    "parts/torso_tile_2.stl": "stl volume 1.45e+05 bbox -2 -61 0 207 61 6",
    "parts/wedge_15.stl": "stl volume 2.52e+03 bbox -12 -12 0 12 12 8",
-   "robot.urdf": "df673eca6128c6b45855634cda6e6ff47affc8c260d3a071ee0d4db4370a5265",
+   "robot.urdf": "b83b0f96eed9814d07cc91a6b761f487b26a9e898ab91e26ca22f4e2d2ae553a",
    "robot.xml": "aec904ec16e640e24f3b48c83d7bfdf4db80ee2be75248eb5f42e26a588046d9"
   },
   "sim": {
@@ -108,7 +108,7 @@
    "parts/torso_tile_5.stl": "stl volume 7.46e+04 bbox -95 -0 0 60 86 6",
    "parts/torso_tile_6.stl": "stl volume 6.61e+04 bbox 60 -0 0 214 118 6",
    "parts/wheel_35x20.stl": "stl volume 7.35e+04 bbox -35 -35 -10 35 35 10",
-   "robot.urdf": "2ebf5c548b6af68a041f10b668b85ae3a7bfbbd9822751b5bcc4ccb554841852",
+   "robot.urdf": "c39b48595c4afb4f8d56d8c8d9f4c9345013fec2fce311102094ea04da050ce4",
    "robot.xml": "492d2d41864a68455eb034b8b1a2cfc0bd262e076ccf5d965a5eb53beb45188e"
   },
   "sim": {
@@ -149,7 +149,7 @@
    "parts/torso_tile_1.stl": "stl volume 1.57e+05 bbox -174 -99 0 1 99 6",
    "parts/torso_tile_2.stl": "stl volume 1.55e+05 bbox 1 -99 0 174 99 6",
    "parts/wheel_45x20.stl": "stl volume 1.14e+05 bbox -45 -45 -10 45 45 10",
-   "robot.urdf": "bc6e391b2ccff65356abc185683eb3398872ed132e2569c0e5a4f1fc8280533e",
+   "robot.urdf": "25ff9020c210e7d21aa5e3f9140015afb544a9be29375349d6c00efd595788a5",
    "robot.xml": "8b4ea903f9e390d78d8887d85c1acbcd9e54f9e2c45a11bcc736297cf3061488"
   },
   "sim": {
@@ -193,7 +193,7 @@
    "parts/torso_tile_3.stl": "stl volume 5.95e+04 bbox -190 -5 0 -25 124 6",
    "parts/torso_tile_4.stl": "stl volume 1.13e+05 bbox -25 -5 0 140 148 6",
    "parts/wheel_43x33.stl": "stl volume 1.71e+05 bbox -43 -43 -16 43 43 16",
-   "robot.urdf": "56826b60b2ba27a9ac208feb7f652fe93f288ac779d3973750febe10647e2294",
+   "robot.urdf": "133dce0936a0e325c28f7bc2b28ab31d8893e2781fb9f17d28d1d4a09de588c3",
    "robot.xml": "1dcb8515e47f50e3b22a7a84dd96ca5c744d660acf2c784cc66b26e2b499986b"
   },
   "sim": {
@@ -230,7 +230,7 @@
    "parts/splice_plate_181.stl": "stl volume 2.59e+04 bbox -12 -90 0 12 90 6",
    "parts/torso_tile_1.stl": "stl volume 9.17e+04 bbox -120 -90 0 0 90 6",
    "parts/torso_tile_2.stl": "stl volume 9.09e+04 bbox 0 -90 0 120 90 6",
-   "robot.urdf": "b0af917c359d256c2ce7d0ac8a8aa7f739f8bb51ce694a12e9584f5abf5a242b",
+   "robot.urdf": "9e5aaffe7772b20d5568913f00ca0392d6b0d3413f4bb19d0eb5a76985850999",
    "robot.xml": "4f105df2df0088454d46aeb69b1dea683fd50ac9762e42e2ea039295c4ee55fe"
   },
   "sim": {

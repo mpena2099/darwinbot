@@ -544,3 +544,49 @@ def test_longest_first_only_reorders_the_batch():
     costs = [evolve.job_cost(t) for t in ordered]
     assert costs == sorted(costs, reverse=True)
     assert evolve.longest_first([]) == []
+
+
+def _tiny_run(out, monkeypatch, trace_dir=None):
+    if trace_dir is None:
+        monkeypatch.delenv("DARWINBOT_TRACE", raising=False)
+    else:
+        monkeypatch.setenv("DARWINBOT_TRACE", str(trace_dir))
+    return evolve.run(n_init=2, n_batches=1, batch_size=2, budget_init=6,
+                      budget_child=5, workers=1, seed=3, out_dir=str(out),
+                      variants=1)
+
+
+def test_trace_leaves_the_archive_unchanged_and_files_agree(tmp_path, monkeypatch):
+    import json
+    plain = _tiny_run(tmp_path / "a", monkeypatch)
+    tdir = tmp_path / "trace"
+    traced = _tiny_run(tmp_path / "b", monkeypatch, tdir)
+    ca, cb = plain.cells, traced.cells
+    assert ca.keys() == cb.keys()
+    for k in ca:
+        assert ca[k].fitness == cb[k].fitness
+        assert np.array_equal(ca[k].morph, cb[k].morph)
+        assert np.array_equal(ca[k].ctrl, cb[k].ctrl)
+
+    lines = [json.loads(x) for x in (tdir / "bodies.jsonl").read_text().splitlines()]
+    assert len(lines) == 2 + 2
+    assert {x["origin"] for x in lines} <= {"random", "mutate", "graft", "same"}
+    for rec in lines:
+        if rec["file"] is None:
+            continue
+        z = np.load(tdir / rec["file"])
+        n = len(z["fitness"])
+        assert n == rec["evals"]
+        assert z["cand"].shape == (n, len(z["active"]))
+        assert z["metrics"].shape[:3] == (n, len(z["terrains"]), int(z["variants"]))
+        assert z["metrics"].shape[3] == len(z["commands"])
+        assert z["metrics"].shape[4] == len(z["fields"])
+        assert z["task_scores"].shape == z["metrics"].shape[:3]
+        assert z["scores"].shape == (n, len(z["terrains"]))
+        assert z["gen"][0] == -1 and z["fitness"].max() == rec["fitness"]
+    assert any(x["parent"] and x["changed_slots"] is not None for x in lines)
+
+
+def test_trace_off_writes_nothing(tmp_path, monkeypatch):
+    _tiny_run(tmp_path / "a", monkeypatch)
+    assert sorted(p.name for p in (tmp_path / "a").iterdir()) == ["archive.pkl"]

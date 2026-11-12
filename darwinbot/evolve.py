@@ -27,6 +27,7 @@ much cheaper than learning a gait from scratch.
 import contextlib
 import copy
 import hashlib
+import json
 import multiprocessing
 import os
 import pickle
@@ -41,10 +42,10 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, fastloop, hardware, plugins, rules
+from darwinbot import ablate, body_options, fastloop, hardware, plugins, rules, trace
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
-from darwinbot.fitness import task_names
+from darwinbot.fitness import commands, task_names, task_score
 from darwinbot.inner import optimise_controller
 from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX, Behaviour
 from darwinbot.terrain import get_terrains
@@ -542,20 +543,58 @@ def _work(job):
     a long run: it is printed with a short id of the body and the result comes
     back with evals == 0 and the failed flag set, which the loop counts."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
-     device, popsize, variants, parent, task, payload) = job
+     device, popsize, variants, parent, task, payload) = job[:13]
+    tdir = trace.directory()      # tracing: a 14th job element is the batch index
+    t0 = time.time()
+    rec = trace.Recorder() if tdir else None
+    extra = None
     try:
         morph = morpho.decode(morph_genes)
-        res = optimise_controller(morph, get_terrains(terrains, seed=seed), x0=x0,
+        terr = get_terrains(terrains, seed=seed)
+        res = optimise_controller(morph, terr, x0=x0,
                                   budget=scaled_budget(budget, morph), sigma0=sigma0,
                                   seed=seed, seconds=seconds, device=device,
                                   popsize=popsize, variants=variants, task=task,
-                                  payload=payload)
+                                  payload=payload, recorder=rec)
+        if tdir:
+            extra = {"idx": job[13] if len(job) > 13 else None,
+                     "id": trace.body_id(morph_genes), "file": None,
+                     "budget": scaled_budget(budget, morph),
+                     "seconds": round(time.time() - t0, 3)}
+            try:
+                if res.evals > 0 and rec.runs:
+                    extra["file"] = rec.write(
+                        tdir, morph_genes, x0, ctrl.active_genes(morph),
+                        extra["budget"], sigma0, seed, seconds, variants, task,
+                        [t.name for t in terr], commands(task), task_score)
+            except Exception:
+                print(f"trace write failed:\n{traceback.format_exc()}", flush=True)
     except Exception:
         body = hashlib.sha1(np.asarray(morph_genes, float).tobytes()).hexdigest()[:8]
         print(f"body {body} failed:\n{traceback.format_exc()}", flush=True)
-        return (morph_genes, x0, -np.inf, [], 0, None, parent, True)
-    return (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
-            res.behaviour, parent, False)
+        out = (morph_genes, x0, -np.inf, [], 0, None, parent, True)
+        return out + (None,) if tdir else out
+    out = (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
+           res.behaviour, parent, False)
+    return out + (extra,) if tdir else out
+
+
+def _trace_body(tdir, archive, batch_meta, res, cell, before, accepted):
+    """Tracing: one line of bodies.jsonl for a finished body (main process)."""
+    genes, ctrl_, fit, scores, evals, behaviour, parent, bad = res[:8]
+    extra = res[8] if len(res) > 8 and res[8] else {}
+    idx = extra.get("idx")
+    m = batch_meta[idx] if idx is not None and idx < len(batch_meta) else {}
+    rec = {"batch": archive.batch, "id": trace.body_id(genes),
+           "file": extra.get("file"), "parent": parent,
+           "origin": m.get("origin"), "changed_slots": m.get("changed_slots"),
+           "l2": m.get("l2"), "budget": extra.get("budget"), "evals": int(evals),
+           "seconds": extra.get("seconds"),
+           "fitness": None if not np.isfinite(fit) else float(fit),
+           "behaviour": None if behaviour is None else [float(v) for v in behaviour],
+           "cell": cell, "before": before, "accepted": accepted, "failed": bool(bad)}
+    with open(os.path.join(tdir, "bodies.jsonl"), "a") as f:
+        f.write(json.dumps(rec) + "\n")
 
 
 def run(
@@ -617,12 +656,32 @@ def run(
     def new_seed():
         return int(rng.integers(0, 2**31 - 1))
 
+    tdir = trace.directory()
+    batch_meta: list = []      # tracing: origin and distance to the parent of each job
+
+    def meta(child, parent=None, origin="random"):
+        if parent is None:
+            return {"origin": origin, "changed_slots": None, "l2": None}
+        d = (np.asarray(child, float) - np.asarray(parent, float)).reshape(
+            morpho.MAX_NODES, morpho.BLOCK_GENES)
+        return {"origin": origin, "changed_slots": int((np.abs(d).max(axis=1) > 0).sum()),
+                "l2": float(np.sqrt((d ** 2).sum()))}
+
     def make_batch() -> list:
+        batch_meta.clear()
+        tasks = _make_batch()
+        if tdir:
+            tasks = [t + (i,) for i, t in enumerate(tasks)]
+        return tasks
+
+    def _make_batch() -> list:
         if not archive.cells:
-            return [(morpho.random_morphology(rng), None, terrains,
-                     budget_init, 0.25, new_seed(), archive.seconds,
-                     device, popsize, archive.variants, None,
-                     archive.task, archive.payload) for _ in range(n_init)]
+            tasks = [(morpho.random_morphology(rng), None, terrains,
+                      budget_init, 0.25, new_seed(), archive.seconds,
+                      device, popsize, archive.variants, None,
+                      archive.task, archive.payload) for _ in range(n_init)]
+            batch_meta.extend(meta(t[0]) for t in tasks)
+            return tasks
         parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
@@ -632,10 +691,12 @@ def run(
                               budget_init, 0.25, new_seed(), archive.seconds,
                               device, popsize, archive.variants, None,
                               archive.task, archive.payload))
+                batch_meta.append(meta(tasks[-1][0]))
             else:
                 parent = parents["solution"][i]
                 for _ in range(LOCK_TRIES):
-                    if rng.random() < GRAFT_P:        # crossover with another elite
+                    grafted = rng.random() < GRAFT_P
+                    if grafted:                       # crossover with another elite
                         donor = parents["solution"][(i + 1) % batch_size]
                         child = morpho.graft(parent, donor, rng)
                     else:
@@ -644,6 +705,9 @@ def run(
                         break
                 else:                    # same body, its controller searched again
                     child = np.array(parent)
+                    grafted = None
+                batch_meta.append(meta(child, parent, "same" if grafted is None
+                                       else "graft" if grafted else "mutate"))
                 tasks.append((child, parents["ctrl"][i], terrains,
                               budget_child, 0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,
@@ -662,6 +726,8 @@ def run(
     pool = None if device == "gpu" else multiprocessing.Pool(
         workers, _init_worker,
         (archive.ablate, archive.rules, archive.body, plugins.loaded()))
+    if tdir:
+        os.makedirs(tdir, exist_ok=True)
     path = os.path.join(out_dir, "archive.pkl")
     code = code_version()
     print(f"[darwinbot] code {code}")
@@ -681,13 +747,24 @@ def run(
             tasks = make_batch()
             results = ([_work(t) for t in tasks] if pool is None
                        else pool.imap_unordered(_work, longest_first(tasks)))
-            for genes, ctrl, fit, scores, evals, behaviour, parent, bad in results:
+            for res in results:
+                genes, ctrl, fit, scores, evals, behaviour, parent, bad = res[:8]
                 archive.evals += evals
                 failed += bad
                 if evals == 0:      # unbuildable: it would only occupy a cell
+                    if tdir:
+                        _trace_body(tdir, archive, batch_meta, res, None, None, False)
                     continue
-                added += archive.insert(Elite(genes, ctrl, fit, scores,
-                                              archive.batch, behaviour), parent)
+                cell = cell_of(behaviour) if tdir else None
+                before = None
+                if tdir:
+                    inc = archive.cells.get(cell)
+                    before = None if inc is None else float(inc.fitness)
+                ok = archive.insert(Elite(genes, ctrl, fit, scores,
+                                          archive.batch, behaviour), parent)
+                added += ok
+                if tdir:
+                    _trace_body(tdir, archive, batch_meta, res, cell, before, bool(ok))
             if tasks and failed == len(tasks):     # a systematic bug, not one odd body
                 raise RuntimeError(f"all {failed} bodies of the batch failed")
             if not archive.cells:

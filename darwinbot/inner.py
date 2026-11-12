@@ -28,9 +28,9 @@ import numpy as np
 
 from darwinbot import randomize
 
-from darwinbot.controller import CTRL_LENGTH, active_genes, random_controller
+from darwinbot.controller import CTRL_LENGTH, CTRL_PER_NODE, active_genes, random_controller
 from darwinbot.fitness import UNSTABLE_SCORE, aggregate, commands, score, task_score
-from darwinbot.morphology import Morphology
+from darwinbot.morphology import BLOCK_GENES, MAX_NODES, Morphology, decode, encode
 from darwinbot.sim import (COT_MAX, EPISODE_SECONDS, Behaviour, Episode, Metrics,
                            cost_of_transport)
 from darwinbot.terrain import Terrain, flat
@@ -109,6 +109,32 @@ def cpu_evaluator(morph: Morphology, terrains: Sequence[Terrain], seconds: float
     return episodes, lambda c: evaluate(episodes, c, var_sets, task, collect)
 
 
+def _focused_stds(morph: Morphology, parent_genes: np.ndarray,
+                  active: np.ndarray) -> np.ndarray:
+    """Initial CMA-ES step per active gene: 1.0 for the controller genes of the
+    node slots whose genome block differs from the parent (or that are new) and
+    of their descendants, 0.3 for the rest, so the search moves where the body
+    changed and leaves the inherited gait alone."""
+    parent = decode(parent_genes)
+    before = np.asarray(parent_genes, dtype=float).reshape(MAX_NODES, BLOCK_GENES)
+    now = encode(morph).reshape(MAX_NODES, BLOCK_GENES)
+    moved = {i for i in morph.nodes
+             if i not in parent.nodes or not np.array_equal(now[i], before[i])}
+    kids: dict = {}
+    for i, n in morph.nodes.items():
+        kids.setdefault(n.parent, []).append(i)
+
+    def mark(i):
+        for j in kids.get(i, []):
+            if j not in moved:
+                moved.add(j)
+                mark(j)
+    for i in list(moved):
+        mark(i)
+    return np.array([1.0 if g > 0 and (g - 1) // CTRL_PER_NODE in moved else 0.3
+                     for g in active])
+
+
 def optimise_controller(
     morph: Morphology,
     terrains: Sequence[Terrain],
@@ -124,6 +150,9 @@ def optimise_controller(
     payload: float = 0.0,
     map_many: Optional[Callable] = None,
     recorder=None,
+    strategy: Optional[str] = None,
+    parent_genes: Optional[np.ndarray] = None,
+    on_eval: Optional[Callable[[float], None]] = None,
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
@@ -136,7 +165,17 @@ def optimise_controller(
     not change, only the wall time.
     recorder (trace.Recorder, CPU without map_many): records every evaluation
     for offline analysis; the result does not change.
+    strategy: None (today's CMA-ES), "diagonal" (diagonal covariance),
+    "focused" (per-gene initial steps from parent_genes) or
+    "diagonal+focused". "focused" without parent_genes is the same as None.
+    parent_genes: the parent's body genome; the slots whose block differs from
+    this body, and their descendants, get the wider initial step.
+    on_eval: called with every evaluation's fitness, in order (benchmarks);
+    it changes no result.
     """
+    if strategy not in (None, "diagonal", "focused", "diagonal+focused"):
+        raise ValueError(f"unknown strategy {strategy!r}: use diagonal, focused, "
+                         "diagonal+focused or None")
     if device == "gpu" or map_many:
         recorder = None
     if variants > 0 and device == "gpu":
@@ -196,6 +235,8 @@ def optimise_controller(
             return map_many(cs) if map_many else [run_one(c) for c in cs]
 
         fit, scores, metrics = run_one(base)
+    if on_eval is not None:
+        on_eval(float(fit))
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)
     if len(active) < 2:       # no actuator: only the frequency gene, nothing CMA-ES can search
         best.behaviour = behaviour_vector(morph, _nominal_flat(
@@ -206,6 +247,10 @@ def optimise_controller(
             "maxfevals": max(budget - 1, 1), "verbose": -9}
     if popsize is not None:
         opts["popsize"] = popsize
+    if strategy in ("diagonal", "diagonal+focused"):
+        opts["CMA_diagonal"] = True
+    if strategy in ("focused", "diagonal+focused") and parent_genes is not None:
+        opts["CMA_stds"] = _focused_stds(morph, parent_genes, active)
     es = cma.CMAEvolutionStrategy(base[active], sigma0, opts)
 
     evals = 1
@@ -217,6 +262,8 @@ def optimise_controller(
         cs = [full(np.asarray(z)) for z in candidates]
         for c, (fit, scores, metrics) in zip(cs, run_many(cs)):
             evals += 1
+            if on_eval is not None:
+                on_eval(float(fit))
             losses.append(-fit)
             if fit > best.fitness:
                 best = ControllerResult(c, fit, scores, metrics, evals)

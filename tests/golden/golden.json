@@ -1,0 +1,258 @@
+{
+ "seed0": {
+  "export": {
+   "assembly.md": "9820887e5badef69ae5a13dab99a9c590e95f39c9c16d87e90b1cfed22ae587d",
+   "bom.csv": "ca32b294434bf804d7618096117f4a11c2e9949b9679b3c1c2789d16c31f007a",
+   "bom.md": "ab91ddc49de1f8e7395c6a90e3d7da02c16e3fa001b29c1e8ae5d30a756ec28d",
+   "control.json": "e5038dc3d020b186ae277e6e260c76a24ed80f499759bbafa91ec969ba66415f",
+   "parts/elbow_62mm_90deg_20x6_cpr-146.stl": "42c44828e36a4a3d2502c07cd47fdddca7ab4dc6b934b340143bc75ce5f7cf82",
+   "parts/elbow_62mm_90deg_20x6_cpr-34.stl": "725ed50423322d35031d9679e5143751a7782e5542c7c73486bd4feb156eeef8",
+   "parts/foot_10.stl": "c522b16e8b3e7a5cec1b915a6f183ba8c32c8b765d9389529ef1da4ca2709699",
+   "parts/link_150x20x6_L-34_cpr171.stl": "af811517c858aab1b60ca3bb6d4d930a413dc18296ba942925b20b9cda59240b",
+   "parts/link_150x20x6_L34_cpr-171.stl": "6e011f36e3d53245022bc72de7f3709dd6033e78f25b906a93a1a4e3f043d196",
+   "parts/link_182x20x6_arc-26_up_e23x-24x24_0.stl": "416de0a078e9eadb2dfd66d78faedc0d20b3b07381358da0bceefbd640daccea",
+   "parts/link_182x20x6_arc26_up_e0_-23x-24x24.stl": "b6eccba0d617449b8561440c9c86ab74c4f801988be05ab4c610f23c443d0f9b",
+   "parts/link_182x20x6_up_foot10.stl": "7fc0319f825e6b02a94d06b0bc514d01851d1fc7ffe1d33d330b6ce565744568",
+   "parts/link_88x20x6_foot10.stl": "6bd428a7f210e8157c1b200a99249d869e8f3ece20675c109039c002df938e2b",
+   "parts/splice_plate_170.stl": "313d8678fb48c642db806dd9c465bfd8b3f3a024327a35f6904a9fbd417b0e58",
+   "parts/torso_tile_1.stl": "fcbac68e62e8d52a8a94f51ceebd7e7a7d7f4f493cc0267ec47ca27caeb78dc0",
+   "parts/torso_tile_2.stl": "33cc4e35a1625e01e596e3ada3c9cccb568eb7d4eda1e3bd2b72de298aa5c99e",
+   "robot.urdf": "31ad1f86c9ad95fe56ea5d78f8bbc7b4b2732b45383981dc293ec8998829f373",
+   "robot.xml": "a35f63e57170fd95c8a64e8fac22f0b20dba12ad0b100fdfb7665dae4acd142f"
+  },
+  "sim": {
+   "behaviour": [
+    0.009166667,
+    0.122961437,
+    4.0,
+    0.0,
+    89.165407017,
+    2.0
+   ],
+   "buildable": true,
+   "metrics": {
+    "duty": 0.009166667,
+    "dx": -0.016149727,
+    "energy": 51.009385597,
+    "fell": 0.0,
+    "height": 0.122961437,
+    "progress": -0.021592172
+   },
+   "type": "4servos-low-belly",
+   "xml": "a35f63e57170fd95c8a64e8fac22f0b20dba12ad0b100fdfb7665dae4acd142f"
+  }
+ },
+ "seed1": {
+  "export": {
+   "assembly.md": "eb63fc6a4aae07054063f5999603184509e3788e747792f8da9009b1a2f03155",
+   "bom.csv": "fee55cf4740d84c87a2e5088acea04f27818dd5738becacae3f0a022968c196e",
+   "bom.md": "d551824258937d8149f6a345599ed4903c6a1609e1d545956a4b20c922e2b0e8",
+   "control.json": "3a980951645aa510fe38f3dbe86a3526e4a67a539567bea9e9a1afa18b6e349d",
+   "parts/cradle_pitch_w-15.stl": "d0fd3243628da47672f1341acaf28c0fa32e8cfda9115666bfbae04a3ba4d9d2",
+   "parts/cradle_pitch_w15.stl": "860caeb91726e985654acaedbaca327cb630dfcbe79e1a8e0d7cff6a2885c6ac",
+   "parts/cradle_yaw_back.stl": "ffa846d095a35e5b477480ba83c2d0cd21b712cefef6372b55856264802a7a59",
+   "parts/foot_10.stl": "c522b16e8b3e7a5cec1b915a6f183ba8c32c8b765d9389529ef1da4ca2709699",
+   "parts/link_118x20x6_up_k10618.stl": "9fa2b2c5df3f8dad5e60d42c101b914994763417f636e35815ee877530843d76",
+   "parts/link_118x20x6_up_k79443.stl": "96ed645735a75ec850bb3b5c2d54a75abc50d28744acd632908625bcf4fd1426",
+   "parts/link_140x20x6_L-20_up_cpr-165.stl": "fc90af6d0d5f32636a8fe891e70710f04cb150dada07e99b7eac3b60fecc87eb",
+   "parts/link_140x20x6_L20_up_cpr165.stl": "fa57a7e1f597889682e4310be31db0d868c2acf495f42349dc9131b7a9eb9b26",
+   "parts/link_85x20x6_up_foot10.stl": "ba26fbaac9525d911b1b62b764bbbc788ca88732ff404ca41b918be7e31bd075",
+   "parts/link_93x20x6_L-35_uy_cpr73.stl": "ac728c231ae0eeb18bff0d18b208f047d6f089dd16dfa20ddfd336451babcff9",
+   "parts/splice_plate_159.stl": "6bd0e1c5b5049b5c33ad0fa8a1694e59fb2c88dff54165b9af7a8a48529e21f4",
+   "parts/torso_tile_1.stl": "2a147e38880609e60a43da30adb1d6011cfd6738a2c7b7a955f4b6eb16712dad",
+   "parts/torso_tile_2.stl": "598a517da1fe3333e4d769d1e4cb3aa45170285fd7a7694715affc7c0b23eb2e",
+   "parts/wedge_15.stl": "1a981e89b3c9fcde256e97180dbc8ba4dfdc1b35a705047d4cb3d98bf0e51e7d",
+   "robot.urdf": "d681efbedcdc2f6b80d61f84cc5522b8148c071403d3d40c2148b81d321369ef",
+   "robot.xml": "aec904ec16e640e24f3b48c83d7bfdf4db80ee2be75248eb5f42e26a588046d9"
+  },
+  "sim": {
+   "behaviour": [
+    0.0,
+    0.107646654,
+    6.0,
+    0.0,
+    92.412833791,
+    3.0
+   ],
+   "buildable": true,
+   "metrics": {
+    "duty": 0.0,
+    "dx": -0.024369667,
+    "energy": 73.704872589,
+    "fell": 0.0,
+    "height": 0.107646654,
+    "progress": -0.020731629
+   },
+   "type": "6servos-low-belly",
+   "xml": "aec904ec16e640e24f3b48c83d7bfdf4db80ee2be75248eb5f42e26a588046d9"
+  }
+ },
+ "seed2": {
+  "export": {
+   "assembly.md": "6829829638c92c0ebeea3db3460d390c0c031de46c283f63d67c4eb5d1dbeb23",
+   "bom.csv": "67647bed9751e8fc8d0c553842bcd60a580afbcd7bbe7db603b78c4606d27fc7",
+   "bom.md": "212f539df972eeb16924b923274b45ed4d6fd0898170c7169d737c684321c1a1",
+   "control.json": "5d8c98f27959e878f09dbd99152f59c74730ac124e87b129bd3017364ca51065",
+   "parts/cradle_yaw_back.stl": "ffa846d095a35e5b477480ba83c2d0cd21b712cefef6372b55856264802a7a59",
+   "parts/elbow_50mm_90deg_20x6_cy.stl": "564fee84eab095bff45badf7eb17b54818056154e39f91759c99dd6a7d2fd5e9",
+   "parts/elbow_50mm_90deg_20x6_cyr-180.stl": "28bd9efebff9a8487076038d2836879392c8346e90eb3f0a6ffc1bfaa7ed44d9",
+   "parts/link_66x20x6_uy_cy.stl": "27f40b7d315484ffef62a68732d8232965bbb97233e3d85319ac05ea013e118f",
+   "parts/link_70x20x6_uy_e0_-11x-20x20.stl": "19040c868484bae6e873213c286dfaa32363899485fc940d7770957a2c9bb7cc",
+   "parts/link_70x20x6_uy_e11x-20x20_0.stl": "771e1d7145cc05a4788a88114c01b7a83a85348058c17480077555c9935e344e",
+   "parts/splice_plate_119.stl": "1897448db211640e851257fbfa0666e77da3a3eb54878c518afdc0c4b40fb4af",
+   "parts/splice_plate_155.stl": "a0e49ed0c06f6ed8675383b6b62fec7b4661ec2c1133da603609ceca64843afb",
+   "parts/torso_tile_1.stl": "96bb44372225f14b97e61c1170f50e5efe650f688cbf5dec949fdcac91279394",
+   "parts/torso_tile_2.stl": "5ea147060aa39a729b5941c7721eebcc06a625dfadd6f248bae2e442a8700e75",
+   "parts/torso_tile_3.stl": "e554848d595cdc6b62f2f8a2516ff70639e9bba0875fa7b10eeeb6ae71fd4278",
+   "parts/torso_tile_4.stl": "8a7ee7730c5fbff78b37cba11d1e59956d2595e74b24264afd14f9ecc94cf95d",
+   "parts/torso_tile_5.stl": "893549e38b24ebbf535d279aede81506c6fd5b61e71002e00decc540317ab2f0",
+   "parts/torso_tile_6.stl": "20e3c66667178308b074089bd1faf51f0d630bc893adcbd8a1ebd17cc417fc6a",
+   "parts/wheel_35x20.stl": "fbf9696f64ffcaaafe9d2989f119fdca55ba7e392b44d6565bc531b9b7da8642",
+   "robot.urdf": "587b3e5616423479cb71a28052a92982ac7c3db201eff7adfe58f3bc3ea7e3b8",
+   "robot.xml": "492d2d41864a68455eb034b8b1a2cfc0bd262e076ccf5d965a5eb53beb45188e"
+  },
+  "sim": {
+   "behaviour": [
+    0.550625,
+    0.391665155,
+    12.0,
+    1.0,
+    100.0,
+    0.0
+   ],
+   "buildable": true,
+   "metrics": {
+    "duty": 0.550625,
+    "dx": -0.120103115,
+    "energy": 198.745400376,
+    "fell": 0.0,
+    "height": 0.391665155,
+    "progress": -0.148420819
+   },
+   "type": "12servos-low-roll",
+   "xml": "492d2d41864a68455eb034b8b1a2cfc0bd262e076ccf5d965a5eb53beb45188e"
+  }
+ },
+ "seed3": {
+  "export": {
+   "assembly.md": "5848f8e647ff03bbe09536b2a372381bcd53b2409a5234835740241ce62d380c",
+   "bom.csv": "28367f2f89c5d0898fbba4017bcab565d825b38a098e58f1838208bdbb51dd6a",
+   "bom.md": "3d895ffab8612f6a20758ec3fba8f3f1cbaac305c601a719ab64468bbb5dfa9a",
+   "control.json": "46b95e87c57139be13b7301092081cc4bc000da5d7915d97d9dfe7f288b7fdb9",
+   "parts/cradle_pitch.stl": "bd8c5d3c01403869317fe0af569d98c576f5d647ebe5851d261a59ea98603bdf",
+   "parts/elbow_50mm_90deg_20x6_cp.stl": "d11ee4a47e097a2b2eb7f2096f1047d9dd242edf48063d5ad58ecf8efe24969d",
+   "parts/elbow_50mm_90deg_20x6_cpr-180.stl": "c3ae2ef2e0dde09be31af03860979100c87826d15a72cb9e0abdeedf70328944",
+   "parts/link_117x20x6_up_e0_-11x-17x17.stl": "e3075fbda3051474457bd069a068d3fb965ab7ee78ae78dc7903af73178aed75",
+   "parts/link_117x20x6_up_e11x-17x17_0.stl": "1ec96062378109fed5ae88dccf1337f5581a5fd3df31ac34352863330b75761e",
+   "parts/link_66x20x6_up_cy.stl": "0af1feaf901106d373899db89f843a0600d448e01255af405e9e853f919d6f0e",
+   "parts/splice_plate_198.stl": "0e24c4e375aa7dad09b7bb8634923a75e7b0cbb57d12c9c3b0a82328470ea1cc",
+   "parts/torso_tile_1.stl": "972b9e2fe0a035846f6be49866bf3ac99943a118a0a3672522de747cbc5d43e5",
+   "parts/torso_tile_2.stl": "463cb0538378dc8ed3485732c3a15d6537a6273f7fba8a87793a19d51f7616a0",
+   "parts/wheel_45x20.stl": "0040eb3cb6157a221a67a998a602c919131ddabfe58d3127d07fd06639fe43e6",
+   "robot.urdf": "0db3972ed7fd95d261fe4c368ca1982dcb402870db888532cd039cfed4ab9f60",
+   "robot.xml": "8b4ea903f9e390d78d8887d85c1acbcd9e54f9e2c45a11bcc736297cf3061488"
+  },
+  "sim": {
+   "behaviour": [
+    0.480625,
+    0.436622073,
+    12.0,
+    1.0,
+    100.0,
+    0.0
+   ],
+   "buildable": true,
+   "metrics": {
+    "duty": 0.480625,
+    "dx": -0.01136219,
+    "energy": 193.563197586,
+    "fell": 0.0,
+    "height": 0.436622073,
+    "progress": -0.013912425
+   },
+   "type": "12servos-mid-roll",
+   "xml": "8b4ea903f9e390d78d8887d85c1acbcd9e54f9e2c45a11bcc736297cf3061488"
+  }
+ },
+ "seed4": {
+  "export": {
+   "assembly.md": "74005ebb92cb233da2588955a383b818551cd092f77bf25894ea4526390625e6",
+   "bom.csv": "91c90cd7f764352117a726acd9bbacb60229bd93faf4ad0669a98962abeb0c7b",
+   "bom.md": "7e1a79918078b75cf251c280cb90f2a234a6f81f57e3b1ab637bfbc697a510b8",
+   "control.json": "6fc81d691cf5a3ff6aa7b0182fc74d82da12cb3d88e7a2a11eb355524e63d7b2",
+   "parts/elbow_62mm_90deg_20x6_cpr-22.stl": "50be84a483bb5ba30b1c301fe7a36c189473c809fc9c99268a15bca8334bf4b2",
+   "parts/elbow_62mm_90deg_20x6_cpr178.stl": "4e610fb849483db72f5a9c206372d9a9dad6212483a1e8a48665b832c847369a",
+   "parts/elbow_62mm_90deg_20x6_cyr-83.stl": "57004a94d8386a3975aea6c4ba03003b91a9e53ee725871ee80b8c2329b5d094",
+   "parts/link_189x20x6_up_e23x-19x19_0.stl": "d0d59ab0027d97b99a77a17acb0ca8581256a398820dff89d81aed1f70569b11",
+   "parts/link_68x20x6_L37_e23x-17x17_0.stl": "bb76f7c08eecb3bfa93b0fe827b3cf75d5b34eecaba460570b5d2b31057db0ae",
+   "parts/link_96x20x6_up_e23x-23x23_0.stl": "81d63ff4ce5f8dae78f5353e5ceaa2c62892124f3bd8435e807a13a844d0e090",
+   "parts/splice_plate_155.stl": "a0e49ed0c06f6ed8675383b6b62fec7b4661ec2c1133da603609ceca64843afb",
+   "parts/splice_plate_165.stl": "40db57168946a678e3054c76bf60a3bca7a6022cc2cb2d833297c7e7391fefd1",
+   "parts/torso_tile_1.stl": "95b03a748a020b4850241f6bba484db8bc6ea87d8da99845f949425eee87ef18",
+   "parts/torso_tile_2.stl": "d8ef38269e4d0cff174e36496938c1eeb4e6d6a2dd3f23f288f21aa6388e8557",
+   "parts/torso_tile_3.stl": "8d40d9d112866fc56834e6fa880a009727425dbc9881e191562a70f7594a6933",
+   "parts/torso_tile_4.stl": "a4d1e352ad0b1a7264e76802c6b36ec6cc131a832bedd6ed7c72e6eb5e80015b",
+   "parts/wheel_43x33.stl": "7acaffbfe6879b02e8a16778100d8f3cf44d34fd93131367095828417b156b72",
+   "robot.urdf": "2597a57cc35d75021c5bc1d44ae25b4ecb060b9266f35787c868f4e939ed4ee9",
+   "robot.xml": "1dcb8515e47f50e3b22a7a84dd96ca5c744d660acf2c784cc66b26e2b499986b"
+  },
+  "sim": {
+   "behaviour": [
+    0.0,
+    0.121818879,
+    3.0,
+    0.0,
+    20.805385381,
+    0.0
+   ],
+   "buildable": true,
+   "metrics": {
+    "duty": 0.0,
+    "dx": 0.119292253,
+    "energy": 42.272829417,
+    "fell": 0.0,
+    "height": 0.121818879,
+    "progress": 0.151801435
+   },
+   "type": "3servos-low-belly",
+   "xml": "1dcb8515e47f50e3b22a7a84dd96ca5c744d660acf2c784cc66b26e2b499986b"
+  }
+ },
+ "small-walker": {
+  "export": {
+   "assembly.md": "bb3f2016f33618d69b13e56a7d8e8f1d2a40253d63aa7e474489f47b3fc2e73b",
+   "bom.csv": "a07485e1882cb6cbe55901143dc8117411c9aa19997eb2cc8826ac3d1e6cbbfd",
+   "bom.md": "ef573e1780ea160d0eb6236cf616789215dc37ec445494148c9528338404a58e",
+   "control.json": "cf4b1288382f318c24986372b0ecf146163555357474c7adc058617c59027fc2",
+   "parts/cradle_pitch.stl": "bd8c5d3c01403869317fe0af569d98c576f5d647ebe5851d261a59ea98603bdf",
+   "parts/foot_15.stl": "8f5e1392b0650fefab82947343e4d6a10de589dc97e944b73449fad96a9f3616",
+   "parts/link_80x20x6_up_foot15.stl": "00acf1cf6ed3d9fb821c815769dbba75a73fe4f77e6c42990d45835d2c71a59d",
+   "parts/splice_plate_181.stl": "89cd5280be5fc20827afdd72aa83f5b8962c2b4a7f2560e2108552e6a0088ee3",
+   "parts/torso_tile_1.stl": "0ec68c9a903b7d5e2b511e90d63e7ef9b9c19ab4c729f73bce8d625001600163",
+   "parts/torso_tile_2.stl": "b2ded516b9a860bac822961461a182a5f1f15fc525556433eb2e5f6f1a22a821",
+   "robot.urdf": "4c8bef2ef828c0a33fe79c631e33cf60bc593d722e80e9adba2906c2c431c998",
+   "robot.xml": "4f105df2df0088454d46aeb69b1dea683fd50ac9762e42e2ea039295c4ee55fe"
+  },
+  "sim": {
+   "behaviour": [
+    0.313125,
+    0.155760205,
+    4.0,
+    0.0,
+    100.0,
+    4.0
+   ],
+   "buildable": true,
+   "metrics": {
+    "duty": 0.313125,
+    "dx": -0.012054977,
+    "energy": 80.267170193,
+    "fell": 0.0,
+    "height": 0.155760205,
+    "progress": -0.025353952
+   },
+   "type": "4servos-low-trot",
+   "xml": "4f105df2df0088454d46aeb69b1dea683fd50ac9762e42e2ea039295c4ee55fe"
+  }
+ }
+}

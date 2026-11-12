@@ -314,8 +314,12 @@ on them.
   and the small ones of the toes.
 - **Distance sensing**: a time-of-flight sensor (a VL53L0X, for example) as a
   simple eye that measures how far the obstacle ahead is, and later a camera
-  (the ESP32-S3 takes an OV2640). Needed for avoiding obstacles, navigating and
-  predator and prey, so it comes with a task that has a goal in the world.
+  (the ESP32-S3 takes an OV2640). A small 2D time-of-flight lidar on the
+  ESP32's serial port goes one step further: evolution would see only a few
+  channels of it (free distance ahead, left and right, feeding the steering
+  command), while the full scan serves ROS 2 (below). Needed for avoiding
+  obstacles, navigating and predator and prey, so it comes with a task that has
+  a goal in the world.
 - **Predator and prey**, much later: a pursuer to escape or a target to catch,
   first scripted, then evolving in a second archive. It needs the robot to
   sense the other one, so it waits for sensors.
@@ -345,3 +349,9 @@ than evolve missions. What it would take:
   control core that publishes `joint_states` (position, speed and load of
   every servo, and the IMU once there is one) and takes the `Twist`, mapped to
   the commands the core already takes. The robot does not need ROS 2 to walk.
+  This is also the shape of the missing ESP32 layer: the gait stays on the
+  robot, the brain runs on a PC over Wi-Fi, as in the small micro-ROS robot
+  kits sold for teaching (ESP32, 6-axis IMU, 2D lidar, camera).
+- **Mapping**: with the 2D lidar publishing `/scan`, the usual ROS 2 SLAM and
+  Nav2 stack builds a map and plans routes; the evolved gait follows the
+  `Twist` it sends.

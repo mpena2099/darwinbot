@@ -226,7 +226,7 @@ def _body_model_20_file(archive, tmp_path):
     """A pickle shaped like a showcase-1 archive: a four-axis grid, controllers
     of 8 genes per slot, and none of the settings added since."""
     from ribs.archives import CVTArchive
-    grid = CVTArchive(solution_dim=mo.MORPH_LENGTH, centroids=60,
+    grid = CVTArchive(solution_dim=mo.MORPH_LENGTH, centroids=60, seed=0,
                       ranges=[(0.0, 1.0)] * 4,
                       extra_fields={"ctrl": ((1 + mo.MAX_NODES * 8,), np.float64),
                                     "scores": ((len(archive.cells[next(iter(archive.cells))].scores),),
@@ -255,7 +255,8 @@ def test_showcase_shaped_archive_loads_and_migrates(tiny, tmp_path):
     with pytest.raises(ValueError, match="migrate_archive.py"), open(path, "rb") as f:
         pickle.load(f)
     old = _load(path)
-    assert old.body_model == 20 and len(old.cells) == len(tiny.cells)
+    # two tiny elites may share a cell of the coarse four-axis grid
+    assert old.body_model == 20 and 0 < len(old.cells) <= len(tiny.cells)
     assert old.profile == hardware.default_profile()
     assert old.task == "forward" and old.plugin == {} and old.lineage == {}
     old.activate()

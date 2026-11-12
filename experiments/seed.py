@@ -85,7 +85,7 @@ def main():
     p.add_argument("--terrains", default="flat")
     p.add_argument("--task", choices=task_names(), default="steer")
     p.add_argument("--payload", type=float, default=0.0, metavar="KG")
-    p.add_argument("--seconds", type=float, default=5.0)
+    p.add_argument("--seconds", type=float, default=8.0)
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain (default 2)")
     p.add_argument("--profile", default=None, metavar="PATH", help="hardware profile YAML")

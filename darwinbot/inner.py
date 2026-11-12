@@ -47,21 +47,28 @@ class ControllerResult:
 
 
 def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
-             task: str = "forward"):
+             task: str = "forward", collect: Optional[list] = None):
     """
     variants: None, or one list of randomize.Variant per episode. The terrain
     score is then the mean over its variants (metrics keep the first one).
+    collect (tracing only): a list that gets one entry per call, the Metrics of
+    every episode as [terrain][variant][command].
     """
     cmds = commands(task)
     if not variants:
         runs = [[ep.run(ctrl, None, *c) for c in cmds] for ep in episodes]
         scores = [task_score(ms, task) for ms in runs]
+        if collect is not None:
+            collect.append([[ms] for ms in runs])
         return aggregate(scores), scores, [ms[0] for ms in runs]
-    metrics, scores = [], []
+    metrics, scores, every = [], [], []
     for ep, vs in zip(episodes, variants):
         runs = [[ep.run(ctrl, v, *c) for c in cmds] for v in vs]
+        every.append(runs)
         metrics.append(runs[0][0])
         scores.append(float(np.mean([task_score(ms, task) for ms in runs])))
+    if collect is not None:
+        collect.append(every)
     return aggregate(scores), scores, metrics
 
 
@@ -88,7 +95,8 @@ def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:
 
 
 def cpu_evaluator(morph: Morphology, terrains: Sequence[Terrain], seconds: float,
-                  payload: float, variants: int, seed: int, task: str):
+                  payload: float, variants: int, seed: int, task: str,
+                  collect: Optional[list] = None):
     """Episodes of a body and the function that scores one full controller on
     them; the physics variants come from the seed alone, so every process that
     builds this with the same arguments scores a controller the same way."""
@@ -98,7 +106,7 @@ def cpu_evaluator(morph: Morphology, terrains: Sequence[Terrain], seconds: float
         vrng = np.random.default_rng([seed, 1])
         var_sets = [[randomize.perturb(ep.model, vrng) for _ in range(variants)]
                     for ep in episodes]
-    return episodes, lambda c: evaluate(episodes, c, var_sets, task)
+    return episodes, lambda c: evaluate(episodes, c, var_sets, task, collect)
 
 
 def optimise_controller(
@@ -115,6 +123,7 @@ def optimise_controller(
     task: str = "forward",
     payload: float = 0.0,
     map_many: Optional[Callable] = None,
+    recorder=None,
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
@@ -125,7 +134,11 @@ def optimise_controller(
     map_many (CPU only): scores a list of full controllers, for example on a
     process pool whose workers built the same cpu_evaluator; the result does
     not change, only the wall time.
+    recorder (trace.Recorder, CPU without map_many): records every evaluation
+    for offline analysis; the result does not change.
     """
+    if device == "gpu" or map_many:
+        recorder = None
     if variants > 0 and device == "gpu":
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     rng = np.random.default_rng(seed)
@@ -168,12 +181,16 @@ def optimise_controller(
         fit, scores, metrics = run_one(base, popsize or 1)
     else:
         episodes, run_cpu = cpu_evaluator(morph, terrains, seconds, payload,
-                                          variants, seed, task)
+                                          variants, seed, task,
+                                          recorder.runs if recorder else None)
         if not episodes[0].buildable:
             return _unbuildable(morph, base, terrains, episodes[0].mass)
 
         def run_one(c, n: int = 1):
-            return run_cpu(c)
+            out = run_cpu(c)
+            if recorder is not None:
+                recorder.record(c[active], out[0], out[1])
+            return out
 
         def run_many(cs):
             return map_many(cs) if map_many else [run_one(c) for c in cs]
@@ -193,6 +210,8 @@ def optimise_controller(
 
     evals = 1
     while not es.stop():
+        if recorder is not None:
+            recorder.gen += 1
         candidates = es.ask()
         losses = []
         cs = [full(np.asarray(z)) for z in candidates]

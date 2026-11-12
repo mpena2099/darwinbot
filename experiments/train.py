@@ -133,7 +133,7 @@ def main():
     def check_profile(path):
         """A run that resumes an archive trains on the archive's hardware and plugin."""
         stored = load_archive(path)
-        if wanted is not None and stored.profile != wanted:
+        if wanted is not None and hardware.normalize(stored.profile) != wanted:
             raise SystemExit(f"{path} was trained on another hardware profile than "
                              f"--profile {a.profile}; drop --profile to keep the archive's")
         plugins.require(stored, a.plugin)

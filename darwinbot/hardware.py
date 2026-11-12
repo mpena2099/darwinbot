@@ -77,6 +77,15 @@ class Electronics:
     mass: float
     current_a: float
     box: tuple
+    # Optional keys: a profile without them (an archive from before they
+    # existed) gets ELECTRONICS_DEFAULTS, the values of the ESP32 board.
+    board_name: str = "ESP32 servo driver board"   # BOM row of the board
+    board_note: str = ("see docs/hardware-dados.md; the torso hole pattern is a "
+                       "PLACEHOLDER, check it against your board before printing")
+    board_label: str = "ESP32 board"    # what the screws that hold it are listed for
+    holes: tuple = (58.0, 23.0)         # mm: [width, height] rectangle or [[x, y], ...]
+    hole_d: float = 3.2                 # mm, clearance hole in the torso plate
+    screw_d: float = 3.0                # mm, one screw per hole (M3)
 
 
 @dataclass(frozen=True)
@@ -92,6 +101,56 @@ class Material:
 @dataclass(frozen=True)
 class Printer:
     bed: float
+
+
+ELECTRONICS_DEFAULTS = {
+    "board_name": Electronics.board_name,
+    "board_note": Electronics.board_note,
+    "board_label": Electronics.board_label,
+    "holes": list(Electronics.holes),
+    "hole_d": Electronics.hole_d,
+    "screw_d": Electronics.screw_d,
+}
+DEFAULTS = {"electronics": ELECTRONICS_DEFAULTS}
+
+
+def hole_points(holes):
+    """[(x, y)] in mm of the board holes: a [width, height] rectangle centred on
+    the origin, or the explicit list of points."""
+    if len(holes) == 2 and not isinstance(holes[0], (list, tuple)):
+        w, h = holes
+        return [(sx * w / 2, sy * h / 2) for sx in (-1, 1) for sy in (-1, 1)]
+    return [(x, y) for x, y in holes]
+
+
+def holes_error(value):
+    """Why `value` is not a hole pattern, or None."""
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    if not isinstance(value, (list, tuple)) or not value:
+        return "must be [width, height] or a list of [x, y] points"
+    if all(num(v) for v in value):
+        if len(value) != 2 or min(value) <= 0:
+            return "a rectangle is [width, height], both above zero"
+        return None
+    for pt in value:
+        if (not isinstance(pt, (list, tuple)) or len(pt) != 2
+                or not all(num(v) for v in pt)):
+            return "must be [width, height] or a list of [x, y] points"
+    return None
+
+
+def normalize(profile):
+    """A copy of a plain profile with the optional keys it lacks filled in, so
+    a profile stored before they existed equals the same hardware read today."""
+    out = {}
+    for name, data in profile.items():
+        data = dict(data) if isinstance(data, dict) else data
+        if isinstance(data, dict):
+            for key, value in DEFAULTS.get(name, {}).items():
+                data.setdefault(key, list(value) if isinstance(value, list) else value)
+        out[name] = data
+    return out
 
 
 SECTIONS = {"servo": Servo, "battery": Battery, "electronics": Electronics,
@@ -123,15 +182,22 @@ def _section(name, data, cls, label):
     if not isinstance(data, dict):
         raise ValueError(f"hardware profile {label}: '{name}' must be a mapping")
     keys = {f.name for f in fields(cls)}
+    data = normalize({name: data})[name]
     missing = sorted(keys - set(data))
     unknown = sorted(set(data) - keys)
     if missing:
         raise ValueError(f"hardware profile {label}: missing key '{name}.{missing[0]}'")
     if unknown:
         raise ValueError(f"hardware profile {label}: unknown key '{name}.{unknown[0]}'")
+    if name == "electronics":
+        why = holes_error(data["holes"])
+        if why:
+            raise ValueError(f"hardware profile {label}: 'electronics.holes' {why}")
     values = {}
     for f in fields(cls):
         value = data[f.name]
+        if f.name == "holes":
+            value = tuple(tuple(v) if isinstance(v, (list, tuple)) else v for v in value)
         values[f.name] = tuple(value) if f.name in _TUPLES else value
     return cls(**values)
 
@@ -180,8 +246,9 @@ def _parse(source, kit_dir=None):
         raise ValueError(f"hardware profile {label}: unknown key '{unknown[0]}'")
     plain, parts = {}, {}
     for name, cls in SECTIONS.items():
-        plain[name], clabel = _component(name, data[name], kit_dir, label)
-        parts[name] = _section(name, plain[name], cls, clabel)
+        raw, clabel = _component(name, data[name], kit_dir, label)
+        parts[name] = _section(name, raw, cls, clabel)
+        plain[name] = normalize({name: raw})[name] if isinstance(raw, dict) else raw
     return plain, parts
 
 
@@ -201,6 +268,7 @@ def require(profile):
     """Make `profile` the active one. When it differs from the profile loaded
     at import, write it to a temporary YAML and re-exec this command with
     DARWINBOT_PROFILE set, so every module reads the same values."""
+    profile = normalize(profile)
     if profile == PROFILE:
         return
     text = yaml.safe_dump(profile, sort_keys=False)

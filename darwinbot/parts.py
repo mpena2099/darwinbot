@@ -794,12 +794,9 @@ def torso_plate(polygon, mounts, electronics: bool = True) -> Part:
             * _mount_holes(t, yaw)
     if not electronics:
         return part
-    # ESP32 board hole pattern, centred behind the origin.
-    # PLACEHOLDER: 58 x 23 mm is a guess. Check it against your board
-    # (candidates in docs/hardware-dados.md) before printing.
-    for sx in (-29, 29):
-        for sy in (-11.5, 11.5):
-            part -= Pos(sx, sy, 0) * Cylinder(1.6, t * 3)
+    # Board hole pattern from the electronics profile, centred behind the origin.
+    for sx, sy in hardware.hole_points(hardware.ELECTRONICS.holes):
+        part -= Pos(sx, sy, 0) * Cylinder(hardware.ELECTRONICS.hole_d / 2, t * 3)
     # battery strap slot across the plate, as far back as the brackets allow
     strap_w = min(width_mm - 20, 30)
     def free(sx):

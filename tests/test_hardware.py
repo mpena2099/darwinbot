@@ -47,7 +47,10 @@ def test_default_kit_resolves_to_the_old_single_file_profile():
     assert d["servo"]["speed"] == 4.71 and d["servo"]["tap_x"] == [5.0, -19.5]
     assert d["servo"]["box"] == [0.045, 0.025, 0.035] and len(d["servo"]) == 31
     assert d["battery"] == {"capacity_ah": 1.2, "c_rating": 20.0, "volts": 11.1}
-    assert d["electronics"] == {"mass": 0.17, "current_a": 0.15, "box": [0.10, 0.06]}
+    assert d["electronics"] == {
+        "mass": 0.17, "current_a": 0.15, "box": [0.10, 0.06],
+        **hardware.ELECTRONICS_DEFAULTS}
+    assert d["electronics"]["holes"] == [58, 23] and d["electronics"]["hole_d"] == 3.2
     assert d["material"] == {"link_density": 1240.0, "shell_density": 300.0,
                              "limb_density": 300.0, "pla_strength": 50e6,
                              "strength_safety": 0.5, "plastic_factor": 0.35}
@@ -168,3 +171,58 @@ def test_merge_refuses_mixed_profiles():
 
 def test_require_same_profile_is_a_no_op():
     hardware.require(copy.deepcopy(hardware.PROFILE))
+
+
+def _old_inline():
+    """The profile an archive from before the board keys stores."""
+    d = copy.deepcopy(hardware.default_profile())
+    for key in hardware.ELECTRONICS_DEFAULTS:
+        del d["electronics"][key]
+    return d
+
+
+def test_old_electronics_profile_gets_the_esp32_defaults(tmp_path):
+    old = _old_inline()
+    assert set(old["electronics"]) == {"mass", "current_a", "box"}
+    assert hardware.normalize(old) == hardware.default_profile()
+    path = tmp_path / "old.yaml"
+    path.write_text(yaml.safe_dump(old, sort_keys=False))
+    assert hardware.load(str(path)) == hardware.default_profile()
+    # the same hardware, so require() has nothing to restart
+    hardware.require(old)
+
+
+def test_board_keys_fail_with_the_section_style(tmp_path):
+    kit = tmp_path / "k.yaml"
+    kit.write_text(open(DEFAULT).read().replace("esp32", "board"))
+    (tmp_path / "electronics").mkdir()
+    comp = tmp_path / "electronics" / "board.yaml"
+    base = hardware.default_profile()["electronics"]
+    comp.write_text(yaml.safe_dump({**base, "mounting": 1}))
+    with pytest.raises(ValueError, match=r"board\.yaml.*electronics\.mounting"):
+        hardware.load(str(kit))
+    comp.write_text(yaml.safe_dump({**base, "holes": [[1, 2, 3]]}))
+    with pytest.raises(ValueError, match=r"board\.yaml.*electronics\.holes"):
+        hardware.load(str(kit))
+    comp.write_text(yaml.safe_dump({**base, "holes": [[-10, 0], [10, 0]]}))
+    assert hardware.load(str(kit))["electronics"]["holes"] == [[-10, 0], [10, 0]]
+
+
+def test_hole_points():
+    assert hardware.hole_points((58, 23)) == [(-29, -11.5), (-29, 11.5), (29, -11.5), (29, 11.5)]
+    assert hardware.hole_points(((1, 2), (3, 4))) == [(1, 2), (3, 4)]
+
+
+def test_example_kit_changes_the_bom_and_the_plate():
+    kit = os.path.join(ROOT, "examples", "kits", "pi-zero-2w", "pi-zero-2w.yaml")
+    code = ("from darwinbot import export, morphology as mo, hardware\n"
+            "rows = {i: (q, n) for i, q, n in export.bom_rows(mo.template(2))}\n"
+            "print(sorted(rows))\n"
+            "assert 'ESP32 servo driver board' not in rows\n"
+            "screws = [v for k, v in rows.items() if k.startswith('M2.5 x ')]\n"
+            "assert [q for q, _ in screws] == [4] and rows['M2.5 nut'][0] == 4\n"
+            "assert hardware.ELECTRONICS.hole_d == 2.7\n")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True,
+                         text=True, env={**os.environ, "DARWINBOT_PROFILE": kit,
+                                         "PYTHONPATH": ROOT})
+    assert out.returncode == 0, out.stderr[-800:]

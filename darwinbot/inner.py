@@ -96,16 +96,20 @@ def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:
 
 def cpu_evaluator(morph: Morphology, terrains: Sequence[Terrain], seconds: float,
                   payload: float, variants: int, seed: int, task: str,
-                  collect: Optional[list] = None):
+                  collect: Optional[list] = None, first_only: bool = False):
     """Episodes of a body and the function that scores one full controller on
     them; the physics variants come from the seed alone, so every process that
-    builds this with the same arguments scores a controller the same way."""
+    builds this with the same arguments scores a controller the same way.
+    first_only keeps the first drawn variant of each terrain (variant_mode
+    "first"); it is the same draw, only the others are dropped."""
     episodes = [Episode(morph, t, seconds, payload) for t in terrains]
     var_sets = None
     if variants > 0 and episodes[0].buildable:
         vrng = np.random.default_rng([seed, 1])
         var_sets = [[randomize.perturb(ep.model, vrng) for _ in range(variants)]
                     for ep in episodes]
+    if var_sets is not None and first_only:
+        var_sets = [[vs[0]] for vs in var_sets]
     return episodes, lambda c: evaluate(episodes, c, var_sets, task, collect)
 
 
@@ -153,6 +157,7 @@ def optimise_controller(
     strategy: Optional[str] = None,
     parent_genes: Optional[np.ndarray] = None,
     on_eval: Optional[Callable[[float], None]] = None,
+    variant_mode: str = "all",
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
@@ -172,7 +177,15 @@ def optimise_controller(
     this body, and their descendants, get the wider initial step.
     on_eval: called with every evaluation's fitness, in order (benchmarks);
     it changes no result.
+    variant_mode: "all" (default) scores every candidate on the whole variant
+    set. "first" uses only the first variant of each terrain while the loop
+    runs, then re-scores the best controller (and only it) on the whole set and
+    returns that score, so the archive never sees the cheap one. The variants
+    are drawn once per body, so the first of each set is the same either way.
+    Ignored with map_many, whose workers always score the whole set.
     """
+    if variant_mode not in ("all", "first"):
+        raise ValueError(f"unknown variant mode {variant_mode!r}: use all or first")
     if strategy not in (None, "diagonal", "focused", "diagonal+focused"):
         raise ValueError(f"unknown strategy {strategy!r}: use diagonal, focused, "
                          "diagonal+focused or None")
@@ -190,6 +203,7 @@ def optimise_controller(
         c[active] = z
         return c
 
+    finish = lambda res: res    # "first" mode overrides it with one full re-score
     if device == "gpu":
         from darwinbot.sim_gpu import BatchEpisode
         batches = [BatchEpisode(morph, t, seconds, payload) for t in terrains]
@@ -219,11 +233,24 @@ def optimise_controller(
         # must not be lost just because CMA-ES never resamples it exactly.
         fit, scores, metrics = run_one(base, popsize or 1)
     else:
+        first = variant_mode == "first" and variants > 0
         episodes, run_cpu = cpu_evaluator(morph, terrains, seconds, payload,
                                           variants, seed, task,
-                                          recorder.runs if recorder else None)
+                                          recorder.runs if recorder else None,
+                                          first)
         if not episodes[0].buildable:
             return _unbuildable(morph, base, terrains, episodes[0].mass)
+        if first:
+            # one full evaluator for the single re-score at the end; same seed,
+            # so it draws the same variants the "all" mode would use.
+            _, run_full = cpu_evaluator(morph, terrains, seconds, payload,
+                                        variants, seed, task)
+
+            def finish(res):
+                f, s, m = run_full(res.ctrl)
+                if on_eval is not None:
+                    on_eval(float(f))
+                return ControllerResult(res.ctrl, f, s, m, res.evals)
 
         def run_one(c, n: int = 1):
             out = run_cpu(c)
@@ -239,6 +266,7 @@ def optimise_controller(
         on_eval(float(fit))
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)
     if len(active) < 2:       # no actuator: only the frequency gene, nothing CMA-ES can search
+        best = finish(best)
         best.behaviour = behaviour_vector(morph, _nominal_flat(
             morph, terrains, best, variants, seconds, device, payload), task)
         return best
@@ -270,6 +298,7 @@ def optimise_controller(
         es.tell(candidates, losses)
 
     best.evals = evals
+    best = finish(best)
     best.behaviour = behaviour_vector(morph, _nominal_flat(
         morph, terrains, best, variants, seconds, device, payload), task)
     return best

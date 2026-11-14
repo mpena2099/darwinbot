@@ -8,8 +8,9 @@ A pair is an elite and a mutated child of it: the child's controller is
 optimised from the parent's controller under every strategy and seed, and the
 best fitness so far is recorded after each evaluation. Strategies are the
 `strategy` argument of inner.optimise_controller: baseline (None), diagonal,
-focused and diagonal+focused. Output: DIR/runs.npz (curves, padded with NaN,
-plus pair/strategy/seed indices) and DIR/summary.md.
+focused and diagonal+focused. `--variant-mode` is inner.optimise_controller's
+`variant_mode`, and every run is named `strategy/mode`. Output: DIR/runs.npz
+(curves, padded with NaN, plus pair/strategy/seed indices) and DIR/summary.md.
 """
 
 import argparse
@@ -55,21 +56,22 @@ def make_pairs(archive, n: int, rng: np.random.Generator, ground):
 
 def _run(job):
     (pair, strategy, seed, child, parent, x0, terrains, seconds, variants,
-     task, payload, budget) = job
+     task, payload, budget, variant_mode) = job
     curve = []
     res = optimise_controller(
         morpho.decode(child), get_terrains(terrains), x0=x0, budget=budget,
         sigma0=SIGMA0, seed=seed, seconds=seconds, variants=variants, task=task,
         payload=payload, strategy=STRATEGIES[strategy], parent_genes=parent,
-        on_eval=curve.append)
-    return pair, strategy, seed, curve, float(res.fitness)
+        on_eval=curve.append, variant_mode=variant_mode)
+    return pair, f"{strategy}/{variant_mode}", seed, curve, float(res.fitness)
 
 
 def _best_at(curve: np.ndarray, frac: float, budget: int) -> float:
     """Best so far at a fraction of the budget; a run that stopped early keeps
-    its last value."""
+    its last value. 100% uses the last point, which for "first" is the full
+    re-score that follows the cheap loop."""
     n = int(np.isfinite(curve).sum())
-    k = min(max(int(np.ceil(frac * budget)) - 1, 0), n - 1)
+    k = min(max(int(np.ceil(frac * budget)) - 1, 0), n - 1) if frac < 1.0 else n - 1
     return float(np.fmax.accumulate(curve)[k])
 
 
@@ -89,13 +91,14 @@ def summary(results, names, budget: int, rng_seed: int) -> str:
         best[(strategy, pair, seed)] = [_best_at(row, f, budget)
                                         for f in (0.25, 0.5, 1.0)]
     rng = np.random.default_rng(rng_seed)
+    base = next((n for n in names if n.split("/")[0] == "baseline"), None)
     rows = []
     for name in names:
         keys = sorted(k for k in best if k[0] == name)
         means = [float(np.mean([best[k][i] for k in keys])) for i in range(3)]
         diff, wtl = "-", "-"
-        if name != "baseline" and any(k[0] == "baseline" for k in best):
-            d = np.array([best[k][2] - best[("baseline", k[1], k[2])][2]
+        if name != base and base and any(k[0] == base for k in best):
+            d = np.array([best[k][2] - best[(base, k[1], k[2])][2]
                           for k in keys])
             lo, hi = _bootstrap(d, rng)
             diff = f"{d.mean():+.4g} [{lo:+.4g}, {hi:+.4g}]"
@@ -131,23 +134,30 @@ def save(out: str, results, names, budget: int, rng_seed: int) -> None:
         f.write(summary(results, names, budget, rng_seed))
 
 
-def main():
+def _parser():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--archive", required=True)
     ap.add_argument("--pairs", type=int, default=8)
     ap.add_argument("--seeds", type=int, default=1)
     ap.add_argument("--budget", type=int, default=400)
     ap.add_argument("--strategies", default=",".join(STRATEGIES))
+    ap.add_argument("--variant-mode", choices=("all", "first"), default="all",
+                    help="first: one variant per terrain in the loop, one full re-score after")
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--out", required=True)
     ap.add_argument("--rng-seed", type=int, default=0)
     ap.add_argument("--plugin", default=None, metavar="FILE.py",
                     help="external tasks and terrains the archive was trained with")
-    a = ap.parse_args()
-    names = [s.strip() for s in a.strategies.split(",") if s.strip()]
-    unknown = [s for s in names if s not in STRATEGIES]
+    return ap
+
+
+def main():
+    a = _parser().parse_args()
+    strategies = [s.strip() for s in a.strategies.split(",") if s.strip()]
+    unknown = [s for s in strategies if s not in STRATEGIES]
     if unknown:
         raise SystemExit(f"unknown strategy {unknown[0]!r}; choose from {list(STRATEGIES)}")
+    names = [f"{s}/{a.variant_mode}" for s in strategies]
     archive = load_archive(a.archive)
     plugins.require(archive, a.plugin)
     hardware.require(archive.profile)
@@ -155,9 +165,10 @@ def main():
     rng = np.random.default_rng(a.rng_seed)
     pairs = make_pairs(archive, a.pairs, rng, get_terrains(archive.terrains)[0])
     jobs = [(i, s, seed, child, parent, x0, archive.terrains, archive.seconds,
-             archive.variants, archive.task, archive.payload, a.budget)
+             archive.variants, archive.task, archive.payload, a.budget,
+             a.variant_mode)
             for i, (child, parent, x0) in enumerate(pairs)
-            for s in names for seed in range(a.seeds)]
+            for s in strategies for seed in range(a.seeds)]
     with Pool(a.workers, plugins.load_all, (plugins.loaded(),)) as pool:
         results = pool.map(_run, jobs)
     save(a.out, results, names, a.budget, a.rng_seed)

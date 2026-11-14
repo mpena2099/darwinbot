@@ -447,7 +447,10 @@ def merge(archives: List[Archive]) -> Archive:
     first = archives[0]
     for a in archives[1:]:
         for k in MERGE_KEYS:
-            if getattr(a, k) != getattr(first, k):
+            x, y = getattr(a, k), getattr(first, k)
+            if k == "profile":      # an older archive lacks the optional keys
+                x, y = hardware.normalize(x), hardware.normalize(y)
+            if x != y:
                 raise ValueError(f"archives differ in {k}: "
                                  f"{getattr(first, k)!r} vs {getattr(a, k)!r}")
     shared = 0

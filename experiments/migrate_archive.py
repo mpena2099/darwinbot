@@ -84,7 +84,8 @@ def _migrate_one(job):
     return genes, res.ctrl, res, False
 
 
-# Body models 20 and 21 used a 4-axis, 500-cell grid; cell ids compare only from 22 on.
+# Body model 20 used a 4-axis, 500-cell grid, and the 5-axis, 800-cell grid came
+# during body model 21, so cell ids are only known to compare from 22 on.
 SAME_GRID_SINCE = 22
 
 

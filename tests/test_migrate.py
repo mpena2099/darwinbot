@@ -264,3 +264,30 @@ def test_showcase_shaped_archive_loads_and_migrates(tiny, tmp_path):
     assert out.body_model == evolve.BODY_MODEL and summary["from"] == 20
     assert summary["dropped"] == 0 and len(out.cells) >= 1
     assert all(len(e.ctrl) == co.CTRL_LENGTH for e in out.cells.values())
+
+
+def test_migrate_counts_every_elite_and_skips_cells_of_another_grid(tiny, tmp_path, monkeypatch):
+    monkeypatch.setitem(evolve.MIGRATIONS, OLD, lambda m, c: (m, c))
+    old = _load(_stale_file(tiny, tmp_path))
+    old.activate()
+    real = ma.optimise_controller
+
+    def worse_after_first(*args, **kwargs):     # all land in the first elite's cell
+        res = real(*args, **kwargs)
+        res.behaviour = first.behaviour
+        res.fitness = first.fitness - len(seen) * 0.1
+        seen.append(1)
+        return res
+
+    first = next(iter(old.cells.values()))
+    seen = []
+    monkeypatch.setattr(ma, "optimise_controller", worse_after_first)
+    out, s = ma.migrate(old, workers=1, budget=4)
+    assert s["dropped"] + s["merged"] + s["cells"] == s["elites"]
+    assert s["merged"] == s["elites"] - 1 if s["elites"] > 1 else s["merged"] == 0
+    assert s["changed_cell"] is not None
+    old.body_model = 21
+    monkeypatch.setitem(evolve.MIGRATIONS, 21, lambda m, c: (m, c))
+    seen.clear()
+    _, s21 = ma.migrate(old, workers=1, budget=4)
+    assert s21["changed_cell"] is None

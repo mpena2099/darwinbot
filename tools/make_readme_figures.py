@@ -13,6 +13,11 @@ Regenerate the README figures in docs/img/ from a MAP-Elites archive.
   nice -n 19 python tools/make_readme_figures.py --only gait,parts
   nice -n 19 python tools/make_readme_figures.py --types a,b --terrains flat,rubble
   python tools/make_readme_figures.py --archive checkpoints/archive.pkl --out docs/img
+  python tools/make_readme_figures.py --robot flat.pkl:a:flat --robot steps.pkl:b:step
+
+--robot takes one robot from its own archive on its own terrain (repeatable,
+in the order given); the map and progress plots need one archive, so they are
+skipped.
 
 Rendering is offscreen (mujoco.Renderer) and small. The output depends only on
 the archive; --seed just breaks fitness ties when choosing elites.
@@ -175,8 +180,33 @@ def parse_terrains(spec, types):
         raise SystemExit(str(e))
 
 
-def make_robots(items, out, seed, types=None, terrains=None):
-    chosen = pick_distinct(items, types=types)
+def parse_robots(specs, seed):
+    """(type, elite) pairs and their terrains, from ARCHIVE:TYPE[:TERRAIN] specs.
+
+    Each robot comes from its own archive, in the order given; the terrain
+    defaults to flat. An archive is opened (and ranked) once and reused.
+    """
+    archives, chosen, terrains = {}, [], []
+    for spec in specs:
+        parts = spec.strip().split(":")
+        if len(parts) not in (2, 3) or not all(parts):
+            raise SystemExit(f"--robot {spec}: give ARCHIVE:TYPE[:TERRAIN]")
+        path, name = parts[0], parts[1]
+        if path not in archives:
+            archives[path] = dict(ranked(open_archive(path), seed))
+        if name not in archives[path]:
+            raise SystemExit(f"{name} is not in {path}")
+        try:
+            terrain = get_terrains(parts[2] if len(parts) == 3 else "flat")[0]
+        except ValueError as e:
+            raise SystemExit(str(e))
+        chosen.append((name, archives[path][name]))
+        terrains.append(terrain)
+    return chosen, terrains
+
+
+def make_robots(items, out, seed, types=None, terrains=None, chosen=None):
+    chosen = chosen[:6] if chosen is not None else pick_distinct(items, types=types)
     labelled = terrains is not None
     terrains = terrains if labelled else [get_terrains("flat")[0]] * len(chosen)
     w, h = 400, 300
@@ -232,12 +262,12 @@ def _record(cell, elite, seconds, fps, size, terrain, label=None):
 
 
 def make_gait(items, out, seed, types=None, terrains=None, seconds=4.0, fps=15,
-              size=(360, 240)):
+              size=(360, 240), chosen=None):
     """2 x 2 grid of four different robots moving at the same time: the
     first SHOWCASE picks (best roller, then the best legged gaits)."""
     from PIL import Image
 
-    chosen = pick_distinct(items, n=4, types=types)
+    chosen = chosen[:4] if chosen is not None else pick_distinct(items, n=4, types=types)
     labelled = terrains is not None
     terrains = terrains if labelled else [get_terrains("flat")[0]] * len(chosen)
     clips = [_record(c, e, seconds, fps, size, t,
@@ -410,29 +440,47 @@ def main():
     p.add_argument("--terrains", default=None,
                    help="comma list of terrains, one per --types robot, in order "
                         "(default: flat for all)")
+    p.add_argument("--robot", action="append", default=None,
+                   metavar="ARCHIVE:TYPE[:TERRAIN]",
+                   help="a robot from its own archive, filmed on its terrain "
+                        "(default flat); repeatable, in the order given, and replaces "
+                        "--archive, --types and --terrains, e.g. "
+                        "--robot flat.pkl:8servos-mid-trot:flat")
     a = p.parse_args()
-    types = [t.strip() for t in a.types.split(",") if t.strip()] if a.types else None
-    terrains = parse_terrains(a.terrains, types)
+    chosen = None
+    archive = None
+    if a.robot:
+        if a.types or a.terrains:
+            raise SystemExit("--robot replaces --archive, --types and --terrains")
+        chosen, terrains = parse_robots(a.robot, a.seed)
+        items, types = chosen, None
+    else:
+        types = [t.strip() for t in a.types.split(",") if t.strip()] if a.types else None
+        terrains = parse_terrains(a.terrains, types)
 
     which = list(FIGURES) if a.only is None else [s.strip() for s in a.only.split(",") if s.strip()]
     unknown = [s for s in which if s not in FIGURES]
     if unknown:
         raise SystemExit(f"unknown figure(s) {unknown}; choose from {list(FIGURES)}")
 
-    archive = open_archive(a.archive)
-    if not archive.cells:
-        raise SystemExit(f"{a.archive} has no elites")
+    if chosen is None:
+        archive = open_archive(a.archive)
+        if not archive.cells:
+            raise SystemExit(f"{a.archive} has no elites")
+        items = ranked(archive, a.seed)
     os.makedirs(a.out, exist_ok=True)
-    items = ranked(archive, a.seed)
 
     written, t0 = [], time.time()
-    steps = {"robots": lambda: make_robots(items, a.out, a.seed, types, terrains),
-             "gait": lambda: make_gait(items, a.out, a.seed, types, terrains),
+    steps = {"robots": lambda: make_robots(items, a.out, a.seed, types, terrains, chosen),
+             "gait": lambda: make_gait(items, a.out, a.seed, types, terrains, chosen=chosen),
              "parts": lambda: make_parts(items, a.out, a.seed)}
     for name in which:
         if name in steps:
             written += steps[name]()
-    written += make_plots(archive, a.out, which)
+    if chosen is None:
+        written += make_plots(archive, a.out, which)
+    elif {"map", "progress"} & set(which):
+        print("map/progress: skipped, each robot comes from its own archive")
 
     for path in written:
         print(f"wrote {path} ({fmt_size(path)})")

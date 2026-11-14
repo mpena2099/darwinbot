@@ -21,7 +21,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from darwinbot import builder, hardware, power
+from darwinbot import builder, dims, hardware, power
 from darwinbot import morphology as morpho
 from darwinbot import urdf
 from darwinbot.control_file import make_control_file, write_control_file
@@ -35,10 +35,6 @@ CORE_SLOTS = ("front", "back", "left-front", "left-middle", "left-rear",
               "right-front", "right-middle", "right-rear",
               "top front", "top rear", "bottom front", "bottom rear")
 ELBOW_SLOTS = {1: "left elbow", 2: "right elbow"}
-
-
-def _mm(m):
-    return int(round(m * 1000))
 
 
 def link_name(profile, bend_deg, length, width, thick, axis=None, foot_r=None,
@@ -74,12 +70,11 @@ def has_elbows(elbow):
     return any(e is not None for e in elbow[:2]) or any(elbow[2:])
 
 
-# Servo and cradle measures, equal to parts.SERVO_* and parts.CRADLE_T
-# (parts needs build123d, the bill of materials does not).
-SERVO_BODY = (hardware.SERVO.length, hardware.SERVO.width, hardware.SERVO.body_height)      # length, width, body height
-SERVO_AXIS_X = hardware.SERVO.axis_x
-CRADLE_SLACK = hardware.SERVO.clearance + 2.5              # servo clearance plus cradle wall
-MIN_FIN = 1.0                         # thinnest link tip fin left under a tongue
+# Servo and cradle measures (mm), defined in morphology.py with the helpers
+# the simulation shares with the export; imported here under the same names.
+from darwinbot.morphology import (CRADLE_GAP, CRADLE_SLACK, MIN_FIN, MOUNT_DROP,  # noqa: E402,F401
+                                  SERVO_AXIS_X, SERVO_BODY, _mm, elbow_trim,
+                                  plate_drop, servo_axis, servo_roll, torso_mounted)
 
 
 def print_owner(morph, i):
@@ -91,39 +86,6 @@ def print_owner(morph, i):
         i = n.parent
         n = morph.nodes[i]
     return i
-
-
-def servo_roll(morph, i, side=1):
-    """Whole degrees the module of servo i is rolled about its own X, as the
-    frame its cradle is drawn in: on the other side of a link (slot 2) the
-    elbow plate is printed turned over, so the roll gains half a turn."""
-    deg = int(round(np.degrees(morph.nodes[i].rot))) + (180 if side < 0 else 0)
-    return (deg + 180) % 360 - 180
-
-
-def elbow_trim(dist, angle, axis, roll=0):
-    """(at, x0, x1) of the link tip fin under the tongue of an elbow plate, whole
-    mm in the tip frame: the fin ends at `at` from the link axis, the nearest
-    point of the child's cradle for this distance and angle less the clearance
-    (never under MIN_FIN, which leaves the clash the check reports when the
-    cradle reaches back to the link), and the plate beside the fin is cut away
-    from x0 to x1, the span of that cradle along the link."""
-    L, W, H = SERVO_BODY
-    half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
-            "roll": (H / 2, W / 2, L / 2)}[axis]
-    centre = (0.0, 0.0, -SERVO_AXIS_X) if axis == "roll" else (-SERVO_AXIS_X, 0.0, 0.0)
-    r, a = np.radians(roll), np.radians(angle)
-    rx = np.array([[1, 0, 0], [0, np.cos(r), -np.sin(r)], [0, np.sin(r), np.cos(r)]])
-    rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
-    pts = np.array([[centre[0] + sx * (half[0] + CRADLE_SLACK),
-                     centre[1] + sy * (half[1] + CRADLE_SLACK),
-                     centre[2] + sz * (half[2] + CRADLE_SLACK)]
-                    for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
-    world = pts @ (rz @ rx).T
-    ys = dist + world[:, 1]
-    xs = world[:, 0]
-    at = max(int(np.floor(min(ys) - CRADLE_GAP)), int(MIN_FIN))
-    return at, int(np.floor(min(xs) - 1.0)), int(np.ceil(max(xs) + 1.0))
 
 
 def elbow_name(dist, angle, width, thick, axis=None):
@@ -201,24 +163,6 @@ def elbow_args(morph, parent, child):
             if servo_axis(morph, child) else None)
 
 
-def servo_axis(morph, i):
-    """Module axis of the servo at node i, or None for a passive module."""
-    n = morph.nodes[i]
-    if n.kind == "wheel":
-        return "yaw"
-    if n.kind in ("joint", "segment"):
-        return n.axis
-    return None
-
-
-def torso_mounted(morph, i):
-    """True when the servo at i is bolted to the torso: its cradle is a part
-    of its own, not the tip of a link or the end of an elbow."""
-    n = morph.nodes[i]
-    return servo_axis(morph, i) is not None and morph.nodes[n.parent].kind in (
-        "core", "segment")
-
-
 def _rot_x(deg):
     a = np.radians(deg)
     c, s = np.cos(a), np.sin(a)
@@ -253,32 +197,6 @@ def cradle_name(axis, angle=0.0, foot="side"):
 def wedge_name(angle):
     """STL name of a rolled-mount wedge."""
     return f"wedge_{int(round(angle))}"
-
-
-def plate_drop(morph):
-    """How far below the joint plane the top of the torso plate is, in mm, for
-    this robot: MOUNT_DROP, or lower when a servo on a torso edge hangs below
-    that (a roll joint stands 35 mm of body below its axis) so no cradle or
-    servo reaches into the plate. Face mounts sit above or below the torso and
-    are not counted."""
-    L, W, H = SERVO_BODY
-    need = 0.0
-    for i, n in morph.nodes.items():
-        axis = servo_axis(morph, i) if i else None
-        if not axis or not torso_mounted(morph, i) or (
-                n.parent == 0 and n.slot in morpho.FACE_SLOTS):
-            continue
-        off, rot = morph.rel_frame(n)
-        half = {"pitch": (L / 2, W / 2, H / 2), "yaw": (L / 2, H / 2, W / 2),
-                "roll": (H / 2, W / 2, L / 2)}[axis]
-        centre = np.array((0.0, 0.0, -SERVO_AXIS_X) if axis == "roll"
-                          else (-SERVO_AXIS_X, 0.0, 0.0))
-        corners = np.array([centre + np.array((sx, sy, sz)) * (
-            np.array(half) + CRADLE_SLACK)
-            for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
-        low = float(off[2] * 1000.0 + (corners @ rot.T)[:, 2].min())
-        need = max(need, -low)
-    return max(MOUNT_DROP, float(np.ceil(need + 0.5)))
 
 
 class Mount(NamedTuple):
@@ -350,16 +268,14 @@ def foot_name(shape, radius):
 
 # Stack-up constants, equal to parts.WALL, parts.PLATE_T (parts needs build123d,
 # the bill of materials does not).
-FLOOR_T = 3.0            # cradle foot, under the servo on a torso tab
-PLATE_T = 6.0            # torso plate and splice strip
-CRADLE_BACK = 38.1       # parts.CRADLE_BACK: cradle back wall behind the axis
-CRADLE_GAP = 0.2         # parts.CRADLE_GAP
-MOUNT_DROP = 22.0        # torso plate face below a joint axis (parts.MOUNT_DROP)
-WEDGE_T = 2.0            # thinnest edge of a rolled-mount wedge
-WEDGE_W = 23.0           # wedge side (parts.MOUNT_SIDE + 2 * parts.WALL + 2)
-BACK_FOOT_X = 31.0       # M3 pattern of a back foot behind the axis (parts.BACK_FOOT_X)
+FLOOR_T = dims.MOUNT_FOOT_T_MM            # cradle foot, under the servo on a torso tab
+PLATE_T = dims.PLATE_T_MM            # torso plate and splice strip
+CRADLE_BACK = dims.CRADLE_BACK_MM       # parts.CRADLE_BACK: cradle back wall behind the axis
+WEDGE_T = dims.WEDGE_T_MM            # thinnest edge of a rolled-mount wedge
+WEDGE_W = dims.WEDGE_W_MM           # wedge side (parts.MOUNT_SIDE + 2 * parts.WALL + 2)
+BACK_FOOT_X = dims.BACK_FOOT_X_MM       # M3 pattern of a back foot behind the axis (parts.BACK_FOOT_X)
 MOUNT_MIN_DROP = 12.0    # shortest cradle foot: it merges into the sleeve below
-TONGUE_T = 0.45          # elbow tongue lapped on a link tip (parts.TONGUE_T)
+TONGUE_T = dims.TONGUE_T_MM          # elbow tongue lapped on a link tip (parts.TONGUE_T)
 NUT_T = 2.4              # M3 nut
 M3_LENGTHS = (6, 8, 10, 12, 16, 20, 25, 30)
 
@@ -607,9 +523,7 @@ def bom_rows(morph):
     for span, q in sorted(splices.items()):
         rows.append((f"splice_plate_{span}.stl", q, "PLA, across a torso cut"))
     screws = screw_counts(morph, elbows, springs, splices)
-    rows.append(("ESP32 servo driver board", 1,
-                 "see docs/hardware-dados.md; the torso hole pattern is a "
-                 "PLACEHOLDER, check it against your board before printing"))
+    rows.append((hardware.ELECTRONICS.board_name, 1, hardware.ELECTRONICS.board_note))
     rows.append(("M2 x 6 screw", 8 * n,
                  "four into each tapped face of every servo, through its cradle"))
     rows += [("3S LiPo battery 11.1 V", 1, "1000 to 1500 mAh, feeds the servos directly"),
@@ -618,6 +532,7 @@ def bom_rows(morph):
         rows.append((f"M3 x {length} screw", q, what))
     rows.append(("M3 nut", sum(q for q, _ in screws.values()),
                  "one per screw"))
+    rows += board_screw_rows()
     return rows
 
 
@@ -647,8 +562,27 @@ def screw_counts(morph, elbows, springs, splices):
         add(2 * max(6, blade), 8 * q, "spring blocks")
     for span, q in splices.items():
         add(2 * PLATE_T, 4 * q, "torso splice")
-    add(PLATE_T, 4, "ESP32 board")
+    if board_screws_are_m3():
+        add(PLATE_T, len(hardware.hole_points(hardware.ELECTRONICS.holes)),
+            hardware.ELECTRONICS.board_label)
     return {L: (q, ", ".join(w)) for L, (q, w) in use.items()}
+
+
+def board_screws_are_m3():
+    return hardware.ELECTRONICS.screw_d == 3.0
+
+
+def board_screw_rows():
+    """BOM rows of the screws that hold a board whose screws are not M3: they
+    do not share the M3 lengths and nuts of the joints. Empty for M3."""
+    if board_screws_are_m3():
+        return []
+    e = hardware.ELECTRONICS
+    n = len(hardware.hole_points(e.holes))
+    size = f"M{e.screw_d:g}"
+    length = screw_length(PLATE_T)
+    return [(f"{size} x {length} screw", n, e.board_label),
+            (f"{size} nut", n, "one per screw")]
 
 
 def printed_parts(rows):

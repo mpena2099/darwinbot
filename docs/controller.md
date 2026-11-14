@@ -36,6 +36,6 @@ gaits can appear without programmed coupling between legs (Tegotae, Owaki et
 al.). With `sigma = 0` it is an open-loop CPG. `ramp` fades the gait in over
 `RAMP_TIME = 0.5 s`. Genes of absent modules are ignored, and a wheel only uses
 its `offset` gene. The total amplitude is clipped so that
-`(amp1 + 2 * amp2) * omega <= 4.71 rad/s`, the servo speed limit. The
+`(amp1 + 2 * amp2) * (omega + |sigma|) <= 4.71 rad/s`, the servo speed limit. The
 simulation updates the servo targets at 50 Hz and holds them in between, like
 the ESP32.

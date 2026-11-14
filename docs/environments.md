@@ -35,7 +35,7 @@ staircase); more make a generalist. The choice is saved in the archive, so
 
 **How hard `steps` is.** It is not a house staircase: each step is 3 cm high
 (a house step is 17 to 18 cm, taller than most of these robots) and 50 cm deep.
-In a 5 s episode a good robot covers 1.5 to 2.3 m, so it meets the first two to
+A good robot covers 1.5 to 2.3 m in its first 5 s, so it meets the first two to
 four steps, at x = 0.6, 1.1, 1.6 and 2.1 m. A wheel climbs an edge up to about
 its own radius, and wheels here are 30 to 100 mm, so a low robot on wheels rolls
 up a 3 cm step; a low body without wheels can push its torso over the edge like
@@ -116,8 +116,8 @@ is a real limit, not a formality.
 Evolution then keeps the bodies and gaits that do best there. A few things
 decide whether the result is what you expect:
 
-- **Episodes are short.** Each test lasts 5 s and good robots cover about
-  1.5 m, so the challenge has to sit within the first metre or two after the
+- **Episodes are short.** Each test lasts 8 s and good robots cover about
+  1.5 m in the first 5, so the challenge has to sit within the first metre or two after the
   spawn (x = 0, robots head towards +x).
 - **The score stays the same.** It rewards distance along x, turning when told
   to, low energy and not falling. A tunnel rewards going through it forwards;

@@ -66,13 +66,16 @@ and pass it with `--profile`. To start from a robot you drew yourself, write
 it as YAML and seed an archive with `experiments/seed.py`
 ([Starting from your own design](https://mpena2099.github.io/darwinbot/own-design/)).
 
-To watch the showcase robots without training, download their archive from
+To watch the showcase robots without training, download their snapshot from
 the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
 
 ```bash
-curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.pkl
-python experiments/replay.py --archive showcase.pkl --type 13servos-mid-trot --speed 0.5
+curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.snap.pkl
+python experiments/replay.py --snapshot showcase.snap.pkl --type 13servos-mid-trot --speed 0.5
 ```
+
+The release also carries the archive (`showcase.pkl`, body model 20);
+`experiments/migrate_archive.py` brings it up to the current code.
 
 ## Documentation
 
@@ -99,7 +102,7 @@ O DarwinBot inventa robôs e ensina cada um a andar, numa simulação física
 (MuJoCo). A evolução decide o corpo, uma árvore de módulos: quantas pernas, de que
 tamanho (medidas contínuas, em milímetros), em que direção cada junta gira, onde
 cada peça se prende no tronco, e se a perna termina numa roda. Há também módulos
-passivos sem servo: mola de TPU, cauda com contrapeso, patim, espeto e roda
+passivos sem servo: cauda com contrapeso, patim, espeto e roda
 livre. Só entram corpos que a impressora e o servo aguentam: peças de até
 220 mm, links que não dobram sob o torque do servo e tronco cortado em placas
 emendadas. Para cada

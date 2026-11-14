@@ -71,6 +71,16 @@ It prints a summary of the body and any printing rule it breaks or parts that
 overlap at the start (`seed.py` lists which ones). `--terrain` picks the ground
 and `--record out.mp4` saves a video instead of opening the window.
 
+Add `--watch` to keep the window open while you edit: each time you save the
+file, the body is rebuilt in the same window and the summary and any broken
+rules print again. A file that does not parse, breaks a printing rule or has
+parts that overlap at the start leaves the last good body on screen and prints
+the error. `--watch` needs the window, so it does not combine with `--record`.
+
+```bash
+python experiments/replay.py --robot my_robot.yaml --watch
+```
+
 To see it move, give it a controller first: a short `seed.py` run is enough for
 a first look, then replay the robot from the archive it wrote:
 

@@ -23,15 +23,11 @@ from darwinbot.terrain import get_terrains
 
 
 def load_archive(path, plugin=None):
-    try:
-        with open(path, "rb") as f:
-            archive = pickle.load(f)
-        plugins.require(archive, plugin)
-        hardware.require(archive.profile)
-        archive.activate()
-        return archive
-    except FileNotFoundError:
-        raise SystemExit(f"{path} not found: train first with experiments/train.py")
+    archive = evolve.load_archive(path)
+    plugins.require(archive, plugin)
+    hardware.require(archive.profile)
+    archive.activate()
+    return archive
 
 
 def record(episode, ctrl, fps):

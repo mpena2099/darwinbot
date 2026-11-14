@@ -17,7 +17,9 @@ def test_default_values_are_the_old_literals():
     assert controller.SERVO_SPEED == 4.71
     assert controller.LOAD_FULL_SCALE == 0.7
     assert controller.SERVO_TORQUE == 2.94 * 0.7
-    assert builder.SERVO_MASS == 0.060 + 0.015
+    assert builder.SERVO_MASS == 0.060
+    assert hardware.SERVO.cradle_mass_plate == 0.0227
+    assert hardware.SERVO.cradle_mass_link == 0.0173
     assert builder.PAYLOAD_MASS == 0.17
     assert builder.LINK_DENSITY == 1240.0
     assert builder.SHELL_DENSITY == 300.0
@@ -43,9 +45,12 @@ def test_default_kit_resolves_to_the_old_single_file_profile():
     assert list(d) == ["servo", "battery", "electronics", "material", "printer"]
     assert d == hardware.PROFILE and hardware.NAME == "default"
     assert d["servo"]["speed"] == 4.71 and d["servo"]["tap_x"] == [5.0, -19.5]
-    assert d["servo"]["box"] == [0.045, 0.025, 0.035] and len(d["servo"]) == 30
+    assert d["servo"]["box"] == [0.045, 0.025, 0.035] and len(d["servo"]) == 31
     assert d["battery"] == {"capacity_ah": 1.2, "c_rating": 20.0, "volts": 11.1}
-    assert d["electronics"] == {"mass": 0.17, "current_a": 0.15, "box": [0.10, 0.06]}
+    assert d["electronics"] == {
+        "mass": 0.17, "current_a": 0.15, "box": [0.10, 0.06],
+        **hardware.ELECTRONICS_DEFAULTS}
+    assert d["electronics"]["holes"] == [58, 23] and d["electronics"]["hole_d"] == 3.2
     assert d["material"] == {"link_density": 1240.0, "shell_density": 300.0,
                              "limb_density": 300.0, "pla_strength": 50e6,
                              "strength_safety": 0.5, "plastic_factor": 0.35}
@@ -124,7 +129,7 @@ def test_changed_profile_changes_constants(tmp_path):
              "print(controller.SERVO_SPEED, builder.SERVO_MASS)")
     assert r.returncode == 0, r.stderr
     assert r.stdout.split()[0] == "5.5"
-    assert float(r.stdout.split()[1]) == 0.07 + 0.015
+    assert float(r.stdout.split()[1]) == 0.07
 
 
 def test_missing_and_unknown_keys_name_the_key(tmp_path):
@@ -166,3 +171,73 @@ def test_merge_refuses_mixed_profiles():
 
 def test_require_same_profile_is_a_no_op():
     hardware.require(copy.deepcopy(hardware.PROFILE))
+
+
+def _old_inline():
+    """The profile an archive from before the board keys stores."""
+    d = copy.deepcopy(hardware.default_profile())
+    for key in hardware.ELECTRONICS_DEFAULTS:
+        del d["electronics"][key]
+    return d
+
+
+def test_old_electronics_profile_gets_the_esp32_defaults(tmp_path):
+    old = _old_inline()
+    assert set(old["electronics"]) == {"mass", "current_a", "box"}
+    assert hardware.normalize(old) == hardware.default_profile()
+    path = tmp_path / "old.yaml"
+    path.write_text(yaml.safe_dump(old, sort_keys=False))
+    assert hardware.load(str(path)) == hardware.default_profile()
+    # the same hardware, so require() has nothing to restart
+    hardware.require(old)
+
+
+def test_board_keys_fail_with_the_section_style(tmp_path):
+    kit = tmp_path / "k.yaml"
+    kit.write_text(open(DEFAULT).read().replace("esp32", "board"))
+    (tmp_path / "electronics").mkdir()
+    comp = tmp_path / "electronics" / "board.yaml"
+    base = hardware.default_profile()["electronics"]
+    comp.write_text(yaml.safe_dump({**base, "mounting": 1}))
+    with pytest.raises(ValueError, match=r"board\.yaml.*electronics\.mounting"):
+        hardware.load(str(kit))
+    comp.write_text(yaml.safe_dump({**base, "holes": [[1, 2, 3]]}))
+    with pytest.raises(ValueError, match=r"board\.yaml.*electronics\.holes"):
+        hardware.load(str(kit))
+    comp.write_text(yaml.safe_dump({**base, "holes": [[-10, 0], [10, 0]]}))
+    assert hardware.load(str(kit))["electronics"]["holes"] == [[-10, 0], [10, 0]]
+
+
+def test_hole_points():
+    assert hardware.hole_points((58, 23)) == [(-29, -11.5), (-29, 11.5), (29, -11.5), (29, 11.5)]
+    assert hardware.hole_points(((1, 2), (3, 4))) == [(1, 2), (3, 4)]
+
+
+def test_example_kit_changes_the_bom_and_the_plate():
+    kit = os.path.join(ROOT, "examples", "kits", "pi-zero-2w", "pi-zero-2w.yaml")
+    code = ("from darwinbot import export, morphology as mo, hardware\n"
+            "rows = {i: (q, n) for i, q, n in export.bom_rows(mo.template(2))}\n"
+            "print(sorted(rows))\n"
+            "assert 'ESP32 servo driver board' not in rows\n"
+            "screws = [v for k, v in rows.items() if k.startswith('M2.5 x ')]\n"
+            "assert [q for q, _ in screws] == [4] and rows['M2.5 nut'][0] == 4\n"
+            "assert hardware.ELECTRONICS.hole_d == 2.7\n")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True,
+                         text=True, env={**os.environ, "DARWINBOT_PROFILE": kit,
+                                         "PYTHONPATH": ROOT})
+    assert out.returncode == 0, out.stderr[-800:]
+
+
+def test_merge_accepts_profiles_that_differ_only_by_default_electronics_keys():
+    from tests.test_evolve import _archive_with, _elite
+    near = [0.9, 0.3, 8, 0.0, 1.0, 2]
+    a = _archive_with(_elite(1.0, near))
+    b = _archive_with(_elite(2.0, near))
+    b.profile = copy.deepcopy(a.profile)
+    for key in hardware.ELECTRONICS_DEFAULTS:
+        b.profile["electronics"].pop(key, None)
+    assert b.profile != a.profile
+    assert evolve.merge([a, b]).profile == a.profile
+    b.profile["electronics"]["mass"] += 0.1
+    with pytest.raises(ValueError, match="profile"):
+        evolve.merge([a, b])

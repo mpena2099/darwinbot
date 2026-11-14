@@ -24,6 +24,7 @@ optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
 
+import contextlib
 import copy
 import hashlib
 import multiprocessing
@@ -40,20 +41,113 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, hardware, plugins, rules
+from darwinbot import ablate, body_options, fastloop, hardware, plugins, rules
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import task_names
 from darwinbot.inner import optimise_controller
-from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX
+from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX, Behaviour
 from darwinbot.terrain import get_terrains
 
-BODY_MODEL = 22                     # bump when the genome meaning changes
+BODY_MODEL = 23                     # bump when the genome meaning changes
 N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
 PARENT_SELECTIONS = ("novelty", "uniform")
+
+# from-version -> function translating one elite's (morph, ctrl) genes to the
+# next version. Identity when only the physics or the printed parts changed. A
+# version with no entry cannot be migrated: its archives are refused. A genome
+# change adds its entry: decode with the old constants (kept next to the
+# function as a small frozen dict) and encode with the new ones; new genes get
+# the neutral value.
+# Frozen constants of the versions a translation reads. Not the old code.
+_V20 = {"wheel_range": (0.03, 0.06),          # m, wheel radius gene range
+        "ctrl_per_node": 8}                    # amp1 .. steer_shift
+_V21 = {"wheel_range": (0.03, 0.10),
+        "wheel_width": lambda rad: max(0.02, 0.5 * rad)}   # m: the wheel was
+                                               # 2 * max(10 mm, rad / 4) wide, no gene
+
+
+def _wheel_nodes(genes) -> List[int]:
+    """Slots that decode to a wheel (the kind does not depend on the ranges)."""
+    return [i for i, n in morpho.decode(genes).nodes.items() if n.kind == "wheel"]
+
+
+def _migrate_20(genes, cvec):
+    """20 -> 21: the wheel radius range grew from 60 to 100 mm; each wheel gene
+    is rescaled so its radius in metres stays."""
+    genes = np.array(genes, dtype=float)
+    blocks = genes.reshape(morpho.MAX_NODES, morpho.BLOCK_GENES)
+    for i in _wheel_nodes(genes):
+        rad = morpho._scale(blocks[i, morpho.WHEEL], *_V20["wheel_range"])
+        blocks[i, morpho.WHEEL] = morpho._unscale(rad, *_V21["wheel_range"])
+    return genes, cvec
+
+
+def _migrate_21(genes, cvec):
+    """21 -> 22: a wheel's width became the WIDTH gene (the old code derived it
+    from the radius: the gene is set to that width), and every controller slot
+    gained speed_gain and speed_shift (neutral: 0.5 is a gain and a shift of 0,
+    the same gait at every speed command)."""
+    genes = np.array(genes, dtype=float)
+    blocks = genes.reshape(morpho.MAX_NODES, morpho.BLOCK_GENES)
+    for i in _wheel_nodes(genes):
+        rad = morpho._scale(blocks[i, morpho.WHEEL], *_V21["wheel_range"])
+        blocks[i, morpho.WIDTH] = morpho._unscale(_V21["wheel_width"](rad),
+                                                  *morpho.WHEEL_WIDTH_RANGE)
+    cvec = np.asarray(cvec, dtype=float)
+    per = _V20["ctrl_per_node"]
+    if len(cvec) == 1 + morpho.MAX_NODES * per:
+        slots = cvec[1:].reshape(morpho.MAX_NODES, per)
+        neutral = np.full((morpho.MAX_NODES, ctrl.CTRL_PER_NODE - per), 0.5)
+        cvec = np.concatenate([cvec[:1], np.hstack([slots, neutral]).reshape(-1)])
+    return genes, cvec
+
+
+MIGRATIONS = {20: _migrate_20, 21: _migrate_21,
+              22: lambda morph, cvec: (morph, cvec)}
+_stale_ok = False                   # set by loading_stale()
+
+
+def migration_path(version) -> Optional[List[int]]:
+    """Versions whose MIGRATIONS entries take an archive from `version` to
+    BODY_MODEL, or None when one is missing (or the archive is newer)."""
+    if not isinstance(version, int) or version > BODY_MODEL:
+        return None
+    path = list(range(version, BODY_MODEL))
+    return path if all(v in MIGRATIONS for v in path) else None
+
+
+@contextlib.contextmanager
+def loading_stale():
+    """Let pickle.load return an archive of an older body model. Such an
+    archive carries its old body_model and must go through
+    experiments/migrate_archive.py before it is trained, scored or replayed."""
+    global _stale_ok
+    _stale_ok = True
+    try:
+        yield
+    finally:
+        _stale_ok = False
+
+def load_archive(path, stale: bool = False):
+    """Open an archive pickle. A missing file or an archive of another body model
+    stops with a plain message; stale=True returns an archive of an older body
+    model instead (for experiments/migrate_archive.py)."""
+    try:
+        with open(path, "rb") as f:
+            if stale:
+                with loading_stale():
+                    return pickle.load(f)
+            return pickle.load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"{path} not found: train first with experiments/train.py")
+    except ValueError as e:
+        raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
+                         f"(or pass --archive with a newer one).")
+
 
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
@@ -67,12 +161,12 @@ N_DESCRIPTORS = 5
 
 
 def normalise(behaviour) -> np.ndarray:
-    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot) from a behaviour vector, so that every axis
-    weighs the same. Cost of transport spans decades, so it is taken in log."""
-    duty, height, servos, _, cot, legs = np.asarray(behaviour, dtype=float)[:6]
-    cot = np.log(np.clip(cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([duty, height / HEIGHT_MAX, servos / morpho.MAX_SERVOS,
-                    legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
+    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot: the archive axes, not
+    the order of the Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost of transport spans decades, so it is taken in log."""
+    b = Behaviour.of(behaviour)
+    cot = np.log(np.clip(b.cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
+    return np.clip([b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
+                    b.legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
 
 
 @lru_cache(maxsize=1)
@@ -83,27 +177,27 @@ def _centroids() -> np.ndarray:
 
 
 def cell_of(behaviour) -> Cell:
-    """CVT cell of a behaviour vector (duty, height, servos, wheel share, cot, legs)."""
+    """CVT cell of a Behaviour."""
     point = normalise(behaviour)
     return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
-    """Readable type from a behaviour vector, e.g. '8servos-low-crawl'."""
-    duty, height, servos, wheel_share = (float(v) for v in behaviour[:4])
-    band = next(name for top, name in HEIGHT_BINS if height < top)
-    if wheel_share > ROLL_SHARE:
+    """Readable type from a Behaviour, e.g. '8servos-low-crawl'."""
+    b = Behaviour.of(behaviour)
+    band = next(name for top, name in HEIGHT_BINS if b.height < top)
+    if b.wheel_share > ROLL_SHARE:
         gait = "roll"
-    elif duty > CRAWL_DUTY:
+    elif b.duty > CRAWL_DUTY:
         gait = "crawl"
-    elif duty >= WALK_DUTY:
+    elif b.duty >= WALK_DUTY:
         gait = "walk"
-    elif duty >= BELLY_DUTY:
+    elif b.duty >= BELLY_DUTY:
         gait = "trot"
     else:
         # tips barely touch the ground: the robot slides on its body
         gait = "belly"
-    return f"{int(round(servos))}servos-{band}-{gait}"
+    return f"{int(round(b.servos))}servos-{band}-{gait}"
 
 
 _NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll)(?:-(\d+))?$")
@@ -125,15 +219,21 @@ class Elite:
     fitness: float
     scores:  List[float]
     born:    int          # batch index
-    # (duty, height, servos, wheel share, cot, legs); None: a body never simulated
-    behaviour: Optional[np.ndarray] = None
+    # None: a body never simulated
+    behaviour: Optional[Behaviour] = None
 
     def __post_init__(self):
         if self.behaviour is None:
             m = morpho.decode(self.morph)
-            self.behaviour = np.array(
-                [0.0, 0.0, float(m.n_servos), 0.0, COT_MAX, float(m.n_legs)])
-        self.behaviour = np.asarray(self.behaviour, dtype=float)
+            self.behaviour = Behaviour(0.0, 0.0, float(m.n_servos), 0.0, COT_MAX,
+                                       float(m.n_legs))
+        self.behaviour = Behaviour.of(self.behaviour)
+
+    def __setstate__(self, state):
+        # elites pickled before Behaviour carry a plain array or tuple
+        self.__dict__.update(state)
+        if self.__dict__.get("behaviour") is not None:
+            self.behaviour = Behaviour.of(self.behaviour)
 
 
 def elite_id(morph_genes, ctrl_genes) -> str:
@@ -219,9 +319,6 @@ class Archive:
             count[n] = count.get(n, 0) + 1
         return {c: n if count[n] == 1 else f"{n}-{c}" for c, n in base.items()}
 
-    def cell_name(self, cell: Cell) -> str:
-        return self.names()[cell]
-
     def find(self, name: str) -> Cell:
         """Cell of a name printed by names(); ValueError when absent or ambiguous."""
         base, index = parse_cell_name(name)
@@ -291,10 +388,16 @@ class Archive:
 
     def __setstate__(self, state):
         grid = state.get("_grid")
-        if (state.get("body_model") != BODY_MODEL or "cells" in state
-                or (grid is not None and not isinstance(grid, CVTArchive))):
+        old = state.get("body_model")
+        if "cells" in state or (grid is not None and not isinstance(grid, CVTArchive)):
             raise ValueError("archive from an older body model, retrain")
-        if grid is not None and grid.measure_dim != N_DESCRIPTORS:
+        if old != BODY_MODEL and not _stale_ok:
+            if migration_path(old):
+                raise ValueError(
+                    f"archive from body model {old}, this code is {BODY_MODEL}: "
+                    "run experiments/migrate_archive.py to bring it up to date")
+            raise ValueError("archive from an older body model, retrain")
+        if grid is not None and grid.measure_dim != N_DESCRIPTORS and not _stale_ok:
             raise ValueError(
                 f"archive with {grid.measure_dim} archive axes, this code uses "
                 f"{N_DESCRIPTORS} (the servo count is an axis again): retrain")
@@ -344,7 +447,10 @@ def merge(archives: List[Archive]) -> Archive:
     first = archives[0]
     for a in archives[1:]:
         for k in MERGE_KEYS:
-            if getattr(a, k) != getattr(first, k):
+            x, y = getattr(a, k), getattr(first, k)
+            if k == "profile":      # an older archive lacks the optional keys
+                x, y = hardware.normalize(x), hardware.normalize(y)
+            if x != y:
                 raise ValueError(f"archives differ in {k}: "
                                  f"{getattr(first, k)!r} vs {getattr(a, k)!r}")
     shared = 0
@@ -417,6 +523,22 @@ def scaled_budget(budget: int, morph) -> int:
     return int(round(budget * scale))
 
 
+def job_cost(job) -> float:
+    """Expected cost of a pool job, relative to the others of its batch: the
+    CMA-ES evaluations (`scaled_budget`) times the actuators, which set the
+    time per evaluation. Only used to order the jobs of a batch."""
+    morph = morpho.decode(job[0])
+    return scaled_budget(job[3], morph) * max(len(morph.layout()), 1)
+
+
+def longest_first(tasks: list) -> list:
+    """The jobs of a batch with the most expensive first, so the last ones to
+    finish are short and the workers wait less for the slowest body. Stable for
+    equal costs. Only the submission order changes: every result carries its
+    body, and the archive already takes results in completion order."""
+    return sorted(tasks, key=job_cost, reverse=True)
+
+
 def _work(job):
     """Pool worker: optimise one body's controller. Runs in a subprocess.
     An exception in one body (a compile error, a numerical failure) must not end
@@ -479,8 +601,7 @@ def run(
         workers = workers or max(1, multiprocessing.cpu_count() - 1)
 
     if resume:
-        with open(resume, "rb") as f:
-            archive: Archive = pickle.load(f)
+        archive: Archive = load_archive(resume)
         terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:
@@ -539,6 +660,8 @@ def run(
           + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
           + (f" rules={list(archive.rules)}" if archive.rules else "")
           + (f" body={archive.body}" if archive.body else ""))
+    if device != "gpu":
+        fastloop.warmup()        # compiled before the fork, so workers inherit it
     pool = None if device == "gpu" else multiprocessing.Pool(
         workers, _init_worker,
         (archive.ablate, archive.rules, archive.body, plugins.loaded()))
@@ -560,7 +683,7 @@ def run(
             added = failed = 0
             tasks = make_batch()
             results = ([_work(t) for t in tasks] if pool is None
-                       else pool.imap_unordered(_work, tasks))
+                       else pool.imap_unordered(_work, longest_first(tasks)))
             for genes, ctrl, fit, scores, evals, behaviour, parent, bad in results:
                 archive.evals += evals
                 failed += bad

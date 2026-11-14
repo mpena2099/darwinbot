@@ -13,7 +13,7 @@ from darwinbot import fitness
 from darwinbot import morphology as mo
 from darwinbot import randomize
 from darwinbot import terrain as te
-from darwinbot.sim import Episode, Metrics, cost_of_transport, heading, wrap_angle
+from darwinbot.sim import Episode, Metrics, cost_of_transport, wrap_angle
 
 
 LEGS = mo.encode(mo.template(2, wheels=False, yaw=True))
@@ -292,6 +292,8 @@ def test_variant_none_is_bit_identical():
 
 
 def test_latency_delays_first_command(monkeypatch):
+    # spies on mujoco.mj_step, which only the Python loop calls; the compiled
+    # loop's latency is checked against it in test_fastloop.py
     ctrl = np.random.default_rng(3).random(co.CTRL_LENGTH)
 
     def first_nonzero(latency):
@@ -306,6 +308,7 @@ def test_latency_delays_first_command(monkeypatch):
                 applied.append(np.abs(data.ctrl).max())
 
         monkeypatch.setattr(mujoco, "mj_step", spy)
+        monkeypatch.setenv("DARWINBOT_PY_LOOP", "1")
         ep.run(ctrl, randomize.Variant(ep.model, latency))
         monkeypatch.undo()
         return next(i for i, a in enumerate(applied) if a > 0)
@@ -432,7 +435,8 @@ def test_episode_yaw_follows_spin_and_sign(spin):
     m = ep.run(_ctrl(mo.decode(LEGS)))
     assert np.sign(m.yaw) == np.sign(spin) and abs(m.yaw) > np.pi      # crosses +-pi
     # the unwrapped total agrees with the final wrapped heading
-    final = float(heading(ep.data.xmat[ep.torso]))
+    xmat = ep.data.xmat[ep.torso]
+    final = float(np.arctan2(xmat[3], xmat[0]))
     assert float(wrap_angle(m.yaw - final)) == pytest.approx(0.0, abs=1e-6)
 
 
@@ -497,6 +501,7 @@ def test_nan_in_qvel_mid_episode_is_unstable(monkeypatch):
         real(model, data, *a)
 
     monkeypatch.setattr(mujoco, "mj_step", poisoned)
+    monkeypatch.setenv("DARWINBOT_PY_LOOP", "1")      # the spy only sees the Python loop
     m = ep.run(_ctrl(morph, amp=0.3))
     assert m.unstable
     assert fitness.score(m) == fitness.UNSTABLE_SCORE
@@ -700,3 +705,73 @@ def test_wheel_mass_follows_width():
         return float(Episode(mo.decode(mo.encode(m)), te.flat(),
                              seconds=0.1).model.body_mass.sum())
     assert mass(0.060) > mass(0.030) > mass(0.010)
+
+
+def test_perturb_keeps_derived_masses_consistent():
+    """mj_setConst after the mass change: the subtree masses are the sums of
+    the scaled body masses."""
+    from darwinbot import builder
+    flat = te.get_terrains("flat")[0]
+    xml, _ = builder.build_mjcf(mo.template(2), flat.assets, flat.world)
+    base = mujoco.MjModel.from_xml_string(xml)
+    m = randomize.perturb(base, np.random.default_rng(0)).model
+    assert not np.allclose(m.body_mass, base.body_mass)
+    for b in range(m.nbody):
+        kids = [c for c in range(1, m.nbody) if m.body_parentid[c] == b]
+        total = m.body_mass[b] + sum(m.body_subtreemass[c] for c in kids)
+        assert m.body_subtreemass[b] == pytest.approx(total, rel=1e-9)
+
+
+def _lowest_geom_z(model, data):
+    """Lowest world z of any collision shape of the compiled model."""
+    low = np.inf
+    for g in range(model.ngeom):
+        c, r, t = data.geom_xpos[g], data.geom_xmat[g].reshape(3, 3), model.geom_type[g]
+        s = model.geom_size[g]
+        if t == mujoco.mjtGeom.mjGEOM_MESH:
+            v = model.mesh_vert[model.mesh_vertadr[model.geom_dataid[g]]:][
+                :model.mesh_vertnum[model.geom_dataid[g]]]
+            z = (c + v @ r.T)[:, 2].min()
+        elif t == mujoco.mjtGeom.mjGEOM_BOX:
+            z = c[2] - np.abs(r[2]) @ s
+        elif t == mujoco.mjtGeom.mjGEOM_SPHERE:
+            z = c[2] - s[0]
+        elif t == mujoco.mjtGeom.mjGEOM_CAPSULE:
+            z = c[2] - abs(r[2, 2]) * s[1] - s[0]
+        elif t == mujoco.mjtGeom.mjGEOM_CYLINDER:
+            z = c[2] - abs(r[2, 2]) * s[1] - np.sqrt(max(0.0, 1 - r[2, 2] ** 2)) * s[0]
+        else:
+            continue
+        low = min(low, z)
+    return low
+
+
+@pytest.mark.parametrize("kind", ["skid", "tail", "caster"])
+@pytest.mark.parametrize("slot", [1, 10])
+@pytest.mark.parametrize("rot", [0.0, 0.7, 1.57, 2.4, 4.0])
+def test_spawn_height_follows_the_real_orientation_of_passive_parts(kind, slot, rot):
+    from darwinbot import builder
+    m = mo.template(1)
+    j = max(m.nodes) + 1
+    m.nodes[j] = mo.Node(j, "joint", 0, slot, 0, axis="roll", length=0.14)
+    i = j + 1
+    extra = dict(length=0.12, tail_mass=0.05) if kind == "tail" else (
+        dict(wheel_rad=0.025) if kind == "caster" else {})
+    m.nodes[i] = mo.Node(i, kind, j, 0, rot, **extra)
+    flat = te.get_terrains("flat")[0]
+    xml, _ = builder.build_mjcf(m, flat.assets, flat.world)
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert _lowest_geom_z(model, data) == pytest.approx(builder.SPAWN_CLEARANCE, abs=1e-3)
+
+
+def test_fall_before_the_half_way_mark_has_no_progress(monkeypatch):
+    from darwinbot import sim
+    flat = te.get_terrains("flat")[0]
+    ep = Episode(mo.template(2), flat, seconds=2.0)
+    ctrl = co.random_controller(np.random.default_rng(0))
+    monkeypatch.setattr(sim, "UPRIGHT_MIN", 2.0)      # every tick counts as a fall
+    m = ep.run(ctrl)
+    assert m.fell and m.duration < 1.0
+    assert m.progress == 0.0

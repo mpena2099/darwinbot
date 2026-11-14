@@ -1,0 +1,30 @@
+# Worked example: a Raspberry Pi Zero 2 W instead of the ESP32 board. Not an
+# official component; copy it and replace the numbers with your own.
+#
+# Sources:
+#   - Board size 65 x 30 mm and weight 10 g: Raspberry Pi Zero 2 W announcement
+#     datasheet, https://www.farnell.com/datasheets/3677657.pdf (Adafruit
+#     lists the same 65.0 x 30.0 mm and 10.0 g).
+#   - Four M2.5 holes on a 58 x 23 mm rectangle, 3.5 mm in from the edges:
+#     Raspberry Pi Zero 2 W mechanical drawing, raspberrypi.com.
+# ESTIMATES, not measured or taken from a datasheet: everything marked below.
+
+# ESTIMATE: Pi 10 g + 5 V step-down regulator ~8 g + half-duplex bus adapter
+# ~5 g + wiring ~7 g + 3S LiPo 110 to 140 g (docs/hardware-dados.md) = ~0.17 kg.
+mass: 0.17                  # kg: Pi + regulator + bus adapter + 3S LiPo
+# ESTIMATE: about 0.5 A at 5 V under load (the supply range quoted by board
+# databases is 0.5 to 1.0 A) is ~0.25 A from the pack through a 90 % regulator;
+# the bus adapter adds a few mA.
+current_a: 0.25             # A from the pack for the board and its radio
+box: [0.10, 0.06]           # m, Pi 65 x 30 mm + regulator + LiPo footprint, centred
+
+board_name: Raspberry Pi Zero 2 W with 5 V regulator and half-duplex bus adapter
+board_note: >-
+  65 x 30 mm, M2.5 holes on 58 x 23 mm; 5 V step-down regulator and a
+  half-duplex adapter (tri-state buffer on the UART) for the STS3215 bus are
+  extra parts, their mass and size are estimates; the program on the board is
+  not written yet (firmware/README.md)
+board_label: Raspberry Pi Zero 2 W
+holes: [58, 23]             # mm, rectangle centred behind the origin
+hole_d: 2.7                 # mm, clearance for an M2.5 screw
+screw_d: 2.5                # mm, M2.5

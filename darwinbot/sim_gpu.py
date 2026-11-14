@@ -124,8 +124,9 @@ class BatchEpisode:
         def keep(v):
             return jnp.where(unstable, 0.0, v)
         # As in Episode, a blow up is reported as unstable, not as a fall.
-        # progress = 2 * (x_end - x_mid) if the half-way step was reached, else dx.
-        progress = jnp.where(reached, 2.0 * (dx - x_mid), dx)
+        # progress = 2 * (x_end - x_mid) if the half-way step was reached, 0 after
+        # a fall before it.
+        progress = jnp.where(reached, 2.0 * (dx - x_mid), jnp.where(done, 0.0, dx))
         return (keep(dx), keep(dy), energy, done & ~unstable, unstable, duration,
                 touch, zsum, upsum, ticks, keep(yaw), keep(progress),
                 tiltsum, slipsum, sgsum)

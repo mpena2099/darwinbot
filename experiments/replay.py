@@ -9,19 +9,24 @@ Replay an evolved body and gait from an archive checkpoint.
   python experiments/replay.py --type 8servos-low-crawl --terrain rough
   python experiments/replay.py --record out.mp4 --seconds 8
   python experiments/replay.py --robot my_robot.yaml         # a hand-written body, standing
+  python experiments/replay.py --robot my_robot.yaml --watch # and reload it whenever the file is saved
 """
 
 import argparse
 import operator
+import os
 import pickle
 import re
 import signal
 import time
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 import mujoco
 import numpy as np
 
 from darwinbot import hardware, plugins, robot_file
+from darwinbot.evolve import load_archive
 from darwinbot import controller as ctl
 from darwinbot.controller import Params
 from darwinbot import morphology as morpho
@@ -66,14 +71,7 @@ def matches(row, conds):
 def open_archive(path, plugin=None):
     """Unpickle an archive, turning the usual failures into a plain message, and
     turn on the ablations, score rules and body limits it was trained with."""
-    try:
-        with open(path, "rb") as f:
-            archive = pickle.load(f)
-    except FileNotFoundError:
-        raise SystemExit(f"{path} not found: train first with experiments/train.py")
-    except ValueError as e:
-        raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
-                         f"(or pass --archive with a newer one).")
+    archive = load_archive(path)
     plugins.require(archive, plugin)
     hardware.require(archive.profile)    # re-runs the command under the archive's hardware
     archive.activate()
@@ -197,11 +195,14 @@ STEER_KEYS = {263: -1.0, 262: 1.0, 265: 0.0, 264: 0.0}   # GLFW left, right, up,
 SPEED_KEYS = {266: 0.1, 267: -0.1}   # GLFW page up, page down: speed command step
 
 
-def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0):
+def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0, reload=None):
     """Open the viewer. The arrow keys steer while it runs: left -1, right +1,
     up or down straight. Page up and page down raise and lower the speed
     command by 0.1 (0 slowest, 1 full). The phases carry on, only the command
-    changes."""
+    changes.
+
+    reload, when given, is called about twice a second; it returns None or a new
+    (episode, ctrl), which replaces the body in the same window."""
     from mujoco import viewer
 
     cpg = episode.reset(ctrl, command=command, speed=speed_command)
@@ -213,12 +214,23 @@ def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0):
     # while the render thread is still drawing, the close hangs and repeated
     # Ctrl+C ends in a segfault. A flag lets the loop exit and close cleanly.
     stop = []
+    next_poll = 0.0
     previous = signal.signal(signal.SIGINT, lambda *_: stop.append(True))
     try:
         with viewer.launch_passive(episode.model, episode.data,
                                    key_callback=keys.append) as handle:
             while handle.is_running() and not stop:
                 t0 = time.perf_counter()
+                if reload is not None and t0 >= next_poll:
+                    next_poll = t0 + RELOAD_POLL
+                    new = reload()
+                    if new is not None:
+                        episode, ctrl = new
+                        cpg = episode.reset(ctrl, command=command, speed=speed_command)
+                        dt = episode.model.opt.timestep
+                        wall_dt = dt / speed
+                        # no public call swaps the model of a passive viewer
+                        handle._get_sim().load(episode.model, episode.data, "")
                 while keys:
                     key = keys.pop(0)
                     if key in STEER_KEYS:
@@ -242,6 +254,53 @@ def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0):
         print("stopped")
 
 
+RELOAD_POLL = 0.5   # seconds between looks at the robot file under --watch
+
+
+@dataclass
+class RobotState:
+    """The body on screen: where it came from, the file's mtime when it was read,
+    and what was built from it."""
+    path: str
+    mtime: float
+    morph: object
+    episode: Episode
+
+
+def reload_robot(path, previous: Optional[RobotState], terrain
+                 ) -> Tuple[Optional[RobotState], List[str], bool]:
+    """Look at a robot file again: (state, messages to print, whether the body on
+    screen changed). Nothing happens while the mtime is the one already seen. A
+    file that does not parse, breaks a printing rule or has parts that overlap at
+    the start keeps the previous state (with the new mtime, so the error prints
+    once) and says why; with no previous state, a body that parses is taken as it
+    is, as show_robot does, and one that does not parse gives state None."""
+    mtime = os.stat(path).st_mtime
+    if previous is not None and mtime == previous.mtime:
+        return previous, [], False
+    try:
+        morph, _ = robot_file.load(path)
+    except Exception as e:
+        msg = str(e) if str(path) in str(e) else f"{path}: {e}"
+        return _kept(previous, mtime), [msg], False
+    msgs = [morpho.summary(morph)]
+    problems = morpho.violations(morph)
+    msgs += [f"  not buildable: {p}" for p in problems]
+    episode = Episode(morph, terrain)
+    if not episode.buildable:
+        msgs.append("  parts overlap at the start; seed.py lists them")
+    if (problems or not episode.buildable) and previous is not None:
+        msgs.append("  keeping the last good body")
+        return _kept(previous, mtime), msgs, False
+    return RobotState(str(path), mtime, morph, episode), msgs, True
+
+
+def _kept(previous: Optional[RobotState], mtime: float) -> Optional[RobotState]:
+    if previous is None:
+        return None
+    return RobotState(previous.path, mtime, previous.morph, previous.episode)
+
+
 def standing(morph) -> np.ndarray:
     """A controller that holds every joint at its middle and every wheel still:
     no amplitude, offsets at the middle of their range."""
@@ -255,20 +314,34 @@ def show_robot(a):
     """Open a hand-written robot file in the viewer, with no archive."""
     if a.plugin:
         plugins.load(a.plugin)
-    morph, _ = robot_file.load(a.robot)
-    print(morpho.summary(morph))
-    problems = morpho.violations(morph)
-    for p in problems:
-        print(f"  not buildable: {p}")
     terrain = get_terrains(a.terrain)[0]
-    episode = Episode(morph, terrain)
-    if not episode.buildable:
-        print("  parts overlap at the start; seed.py lists them")
+    if a.watch and a.record:
+        raise SystemExit("--watch needs the window; drop --record")
+    state, msgs, _ = reload_robot(a.robot, None, terrain)
+    print("\n".join(msgs))
+    if state is None:
+        raise SystemExit(1)
     print(f"terrain {terrain.name}, standing still (no controller yet)")
     if a.record:
-        record(episode, standing(morph), a.record, a.seconds)
-    else:
-        watch(episode, standing(morph), a.speed)
+        record(state.episode, standing(state.morph), a.record, a.seconds or 8.0)
+        return
+    if not a.watch:
+        watch(state.episode, standing(state.morph), a.speed)
+        return
+    print(f"watching {a.robot}: save the file to reload it")
+    box = [state]
+
+    def poll():
+        try:
+            new, msgs, changed = reload_robot(a.robot, box[0], terrain)
+        except OSError:     # the editor is replacing the file
+            return None
+        box[0] = new
+        if msgs:
+            print("\n".join(msgs), flush=True)
+        return (new.episode, standing(new.morph)) if changed else None
+
+    watch(state.episode, standing(state.morph), a.speed, reload=poll)
 
 
 def main():
@@ -278,6 +351,8 @@ def main():
                    help="external tasks and terrains the archive was trained with")
     p.add_argument("--robot", default=None, metavar="FILE.yaml",
                    help="show a hand-written robot file standing, without an archive")
+    p.add_argument("--watch", action="store_true",
+                   help="with --robot, reload the body in the same window when the file is saved")
     p.add_argument("--snapshot", default=None, metavar="FILE",
                    help="play a snapshot from experiments/snapshot.py without the archive")
     p.add_argument("--type", dest="cell", default=None,
@@ -286,8 +361,8 @@ def main():
     p.add_argument("--terrain", default="flat")
     p.add_argument("--record", default=None, metavar="OUT.mp4",
                    help="render offscreen instead of opening the viewer")
-    p.add_argument("--seconds", type=float, default=8.0,
-                   help="recording length")
+    p.add_argument("--seconds", type=float, default=None,
+                   help="recording length (default: the episode length the archive was scored with)")
     p.add_argument("--speed", type=float, default=1.0,
                    help="viewer playback speed, e.g. 0.25 for slow motion")
     p.add_argument("--command", type=float, default=0.0,
@@ -302,6 +377,8 @@ def main():
                    help="with --list, keep the robots that match, e.g. "
                         "\"wheels=0,legs>=4,fitness>0.3\" (fields: " + ", ".join(WHERE_FIELDS) + ")")
     a = p.parse_args()
+    if a.watch and not a.robot:
+        raise SystemExit("--watch needs --robot")
     if a.where and not a.list:
         raise SystemExit("--where needs --list")
     conds = parse_where(a.where) if a.where else []
@@ -336,18 +413,18 @@ def main():
               "  wheels  feet  segments  passive  nodes")
         shown = 0
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
-            duty, height, servos, _, cot, legs = e.behaviour
+            b = e.behaviour
             morph = morpho.decode(e.morph)
             kinds = [n.kind for n in morph.nodes.values()]
-            row = dict(fitness=e.fitness, duty=duty, height=height, servos=int(servos),
-                       legs=int(legs), cot=cot, wheels=morph.n_wheels,
+            row = dict(fitness=e.fitness, duty=b.duty, height=b.height, servos=int(b.servos),
+                       legs=int(b.legs), cot=b.cot, wheels=morph.n_wheels,
                        feet=kinds.count("foot"), segments=morph.n_segments,
                        passive=sum(k in PASSIVE_KINDS for k in kinds), nodes=len(kinds))
             if not matches(row, conds):
                 continue
             shown += 1
-            print(f"{names[cell]:26s} {e.fitness:7.2f}  {duty:4.2f}  {height:6.2f}  "
-                  f"{int(servos):6d}  {int(legs):4d}  {cot:5.1f}  {row['wheels']:6d}  "
+            print(f"{names[cell]:26s} {e.fitness:7.2f}  {b.duty:4.2f}  {b.height:6.2f}  "
+                  f"{row['servos']:6d}  {row['legs']:4d}  {b.cot:5.1f}  {row['wheels']:6d}  "
                   f"{row['feet']:4d}  {row['segments']:8d}  {row['passive']:7d}  "
                   f"{row['nodes']:5d}")
         print(f"{shown} of {len(archive.cells)} robots")
@@ -361,10 +438,10 @@ def main():
         print(f"  {terrain.name:9s} {s:+.3f}")
 
     terrain = get_terrains(a.terrain)[0]
-    episode = Episode(morph, terrain, payload=archive.payload)
+    episode = Episode(morph, terrain, seconds=archive.seconds, payload=archive.payload)
     print(f"terrain {terrain.name}")
     if a.record:
-        record(episode, elite.ctrl, a.record, a.seconds, command=a.command,
+        record(episode, elite.ctrl, a.record, a.seconds or archive.seconds, command=a.command,
                speed_command=a.speed_command)
     else:
         watch(episode, elite.ctrl, a.speed, a.command, a.speed_command)

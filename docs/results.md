@@ -30,13 +30,20 @@ early.
 ![Printable parts of the best robot](img/parts.png)
 
 The archive of these robots is attached to the
-[showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
+[showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1),
+with a snapshot of their gaits that any later version of the code can play. The
+archive itself is of body model 20: the current code refuses it until
+`experiments/migrate_archive.py` brings it up to date, which simulates every
+robot again under the current rules ([resuming after a code change](long-runs.md#resuming-after-a-code-change)).
 
 ```bash
+curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.snap.pkl
+python experiments/replay.py --snapshot showcase.snap.pkl --list
+python experiments/replay.py --snapshot showcase.snap.pkl --type 13servos-mid-trot --speed 0.5
+
 curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.pkl
-python experiments/replay.py --archive showcase.pkl --list
-python experiments/replay.py --archive showcase.pkl --type 13servos-mid-trot --speed 0.5
-python experiments/export.py --archive showcase.pkl --type 13servos-mid-trot
+python experiments/migrate_archive.py showcase.pkl --out showcase-migrated.pkl --seconds 8
+python experiments/export.py --archive showcase-migrated.pkl --type 13servos-mid-trot
 ```
 
 To train a showcase like it from scratch, run the `steer` preset (the `steer`

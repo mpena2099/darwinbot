@@ -3,13 +3,15 @@
 Portable control math for the real DarwinBot, in plain C++17 (no Arduino, no
 external libraries, float math), so it can be tested without the ESP32.
 
-`core/darwin_control.{h,cpp}` implements the format 2 controller of
-`docs/formato-controle.md`: one phase oscillator per position servo with
+`core/darwin_control.{h,cpp}` implements the controller of
+`docs/formato-controle.md` (format 4; formats 2 and 3 load with the missing gains at zero): one phase oscillator per position servo with
 Tegotae load feedback (`dtheta = omega - sigma * N * cos(theta)`, five
 substeps per control tick), the start ramp, the speed clip
-`(amp1 + 2 * amp2) * omega <= servo_speed` (control.json, default 4.71 rad/s), joint clamping and the servo step
+`(amp1 + 2 * amp2) * (omega + |sigma|) <= servo_speed` (control.json, default 4.71 rad/s), joint clamping and the servo step
 conversion (`zero + sign * target * 4096 / 2pi`, rounded). Wheels get only a
-ramped, signed speed and ignore phase and load.
+ramped, signed speed and ignore phase and load. `set_command(c)` applies the
+steering command and `set_speed(s)` the speed command, both from the values the
+file carries before them.
 
 The core takes loads as bus load over the servo maximum torque and divides
 them by `load_full_scale` (control.json, default 0.7: the simulation treats
@@ -48,7 +50,7 @@ that error exceeds `1e-3 rad`.
 
 ## ESP32 layer
 
-Not written yet. When the hardware arrives, a thin Arduino layer will read the
+Not written yet, for any board. When the hardware arrives, a thin Arduino layer will read the
 control JSON, poll each STS3215 load register (`0x3C`/`0x3D`), apply the
 calibration (`zero`, `sign`) and write targets on the bus. All control math
 stays in this portable core.

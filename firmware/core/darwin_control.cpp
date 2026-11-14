@@ -57,7 +57,8 @@ void Controller::apply() {
         p.amp1 = b.amp1 * gain;
         p.amp2 = b.amp2 * gain;
         // A servo cannot follow a signal whose peak speed exceeds its own.
-        const float peak = (p.amp1 + 2.0f * p.amp2) * omega_;
+        // The phase advances at up to omega + |sigma| under load feedback.
+        const float peak = (p.amp1 + 2.0f * p.amp2) * (omega_ + std::fabs(b.sigma));
         const float k = std::min(1.0f, servo_speed_ / std::max(peak, 1e-12f));
         p.amp1 *= k;
         p.amp2 *= k;

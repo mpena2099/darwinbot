@@ -86,6 +86,15 @@ def main():
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
+    p.add_argument("--inner-strategy", choices=("default", "diagonal", "focused",
+                                                "diagonal+focused"),
+                   default="default",
+                   help="inner-loop CMA-ES (default: plain CMA-ES; diagonal: "
+                        "diagonal covariance; focused: wider initial steps where the "
+                        "body changed; diagonal+focused: both); not stored in the archive")
+    p.add_argument("--variant-mode", choices=evolve.VARIANT_MODES, default="all",
+                   help="all (default): every candidate on the whole variant set; "
+                        "first: one variant in the loop, one full re-score at the end")
     p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -159,7 +168,9 @@ def main():
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
                   parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
-                  body=a.body, plugin=record)
+                  body=a.body, plugin=record,
+                  inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
+                  variant_mode=a.variant_mode)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

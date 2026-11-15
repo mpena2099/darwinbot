@@ -56,6 +56,8 @@ CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
 PARENT_SELECTIONS = ("novelty", "uniform")
+INNER_STRATEGIES = (None, "diagonal", "focused", "diagonal+focused")   # inner.optimise_controller
+VARIANT_MODES = ("all", "first")
 
 # from-version -> function translating one elite's (morph, ctrl) genes to the
 # next version. Identity when only the physics or the printed parts changed. A
@@ -544,7 +546,8 @@ def _work(job):
     back with evals == 0 and the failed flag set, which the loop counts."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
      device, popsize, variants, parent, task, payload) = job[:13]
-    tdir = trace.directory()      # tracing: a 14th job element is the batch index
+    opts = job[13] if len(job) > 13 else {}     # inner-loop options of this job
+    tdir = trace.directory()      # tracing: a 15th job element is the batch index
     t0 = time.time()
     rec = trace.Recorder() if tdir else None
     extra = None
@@ -555,9 +558,12 @@ def _work(job):
                                   budget=scaled_budget(budget, morph), sigma0=sigma0,
                                   seed=seed, seconds=seconds, device=device,
                                   popsize=popsize, variants=variants, task=task,
-                                  payload=payload, recorder=rec)
+                                  payload=payload, recorder=rec,
+                                  strategy=opts.get("strategy"),
+                                  parent_genes=opts.get("parent_genes"),
+                                  variant_mode=opts.get("variant_mode", "all"))
         if tdir:
-            extra = {"idx": job[13] if len(job) > 13 else None,
+            extra = {"idx": job[14] if len(job) > 14 else None,
                      "id": trace.body_id(morph_genes), "file": None,
                      "budget": scaled_budget(budget, morph),
                      "seconds": round(time.time() - t0, 3)}
@@ -620,9 +626,15 @@ def run(
     score_rules: tuple = (),
     body: str = "",
     plugin: Optional[dict] = None,
+    inner_strategy: Optional[str] = None,
+    variant_mode: str = "all",
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
+    if inner_strategy not in INNER_STRATEGIES:
+        raise ValueError(f"inner_strategy must be one of {INNER_STRATEGIES}")
+    if variant_mode not in VARIANT_MODES:
+        raise ValueError(f"variant_mode must be one of {VARIANT_MODES}")
     if task not in task_names():
         raise ValueError(f"task must be one of {task_names()}")
     if device == "gpu" and variants > 0 and not resume:
@@ -667,6 +679,11 @@ def run(
         return {"origin": origin, "changed_slots": int((np.abs(d).max(axis=1) > 0).sum()),
                 "l2": float(np.sqrt((d ** 2).sum()))}
 
+    def inner_opts(parent_genes=None) -> dict:
+        """Inner-loop options of one job; focused needs the parent's body genes."""
+        return {"strategy": inner_strategy, "variant_mode": variant_mode,
+                "parent_genes": None if parent_genes is None else np.array(parent_genes)}
+
     def make_batch() -> list:
         batch_meta.clear()
         tasks = _make_batch()
@@ -679,7 +696,8 @@ def run(
             tasks = [(morpho.random_morphology(rng), None, terrains,
                       budget_init, 0.25, new_seed(), archive.seconds,
                       device, popsize, archive.variants, None,
-                      archive.task, archive.payload) for _ in range(n_init)]
+                      archive.task, archive.payload, inner_opts(None))
+                     for _ in range(n_init)]
             batch_meta.extend(meta(t[0]) for t in tasks)
             return tasks
         parents = archive.sample_elites(batch_size, rng, parent_selection)
@@ -690,7 +708,7 @@ def run(
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
                               device, popsize, archive.variants, None,
-                              archive.task, archive.payload))
+                              archive.task, archive.payload, inner_opts(None)))
                 batch_meta.append(meta(tasks[-1][0]))
             else:
                 parent = parents["solution"][i]
@@ -712,7 +730,7 @@ def run(
                               budget_child, 0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,
                               elite_id(parents["solution"][i], parents["ctrl"][i]),
-                              archive.task, archive.payload))
+                              archive.task, archive.payload, inner_opts(parent)))
         return tasks
 
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
@@ -720,7 +738,9 @@ def run(
           f"task={archive.task} payload={archive.payload} kg"
           + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
           + (f" rules={list(archive.rules)}" if archive.rules else "")
-          + (f" body={archive.body}" if archive.body else ""))
+          + (f" body={archive.body}" if archive.body else "")
+          + (f" inner_strategy={inner_strategy}" if inner_strategy else "")
+          + (f" variant_mode={variant_mode}" if variant_mode != "all" else ""))
     if device != "gpu":
         fastloop.warmup()        # compiled before the fork, so workers inherit it
     pool = None if device == "gpu" else multiprocessing.Pool(

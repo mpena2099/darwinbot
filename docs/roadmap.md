@@ -56,6 +56,11 @@ against the current rules:
   is worse (Cheney et al., 2018). A grace period, or a larger budget after a
   big body mutation, lets an innovation live long enough to show what it can
   do.
+- **Mirrored mutation**: a mutation changes one part at a time, so a body
+  that started symmetric drifts away from it and nothing brings it back. With
+  some probability the same change also goes to the mirror part. The score
+  still says nothing about symmetry: a symmetric body only becomes easier to
+  reach, and keeps its cell only if it moves better.
 - **Coupled oscillators**: each joint's oscillator also feels its neighbours'
   phases, the way the spinal circuits of each leg synchronise a gait, instead
   of coordinating only through the body and the phase genes. Control only, no

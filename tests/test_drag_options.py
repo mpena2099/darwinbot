@@ -110,6 +110,28 @@ def test_train_accepts_the_body_axes_and_rule(tmp_path, monkeypatch):
     assert calls[-1]["score_rules"] == ("body_ground",)
 
 
+def test_fall_zero_rule_drops_the_progress_of_a_fallen_episode():
+    def ep(fell, progress=1.0):
+        return Metrics(dx=1.0, dy=0.0, energy=0.0, fell=fell, unstable=False,
+                       duration=8.0, mass=1.0, progress=progress)
+    fallen, walked = ep(True), ep(False)
+    rules.set_active(())
+    assert fitness.score(fallen) == pytest.approx(1.0 - fitness.FALL_PENALTY)
+    assert fitness.score(walked) == pytest.approx(1.0)
+    rules.set_active(("fall_zero",))
+    assert fitness.score(fallen) == pytest.approx(-fitness.FALL_PENALTY)
+    assert fitness.score(walked) == pytest.approx(1.0)
+    # turn task: the heading change of a fallen episode earns nothing either
+    turner = Metrics(dx=0.0, dy=0.0, energy=0.0, fell=True, unstable=False,
+                     duration=8.0, mass=1.0, yaw=2.0)
+    assert fitness.score(turner, "turn") == pytest.approx(-fitness.FALL_PENALTY)
+    # steer task: a fallen straight episode loses its progress credit
+    on = fitness.task_score([ep(True), walked, walked, ep(False, progress=0.5)], "steer")
+    rules.set_active(())
+    off = fitness.task_score([ep(True), walked, walked, ep(False, progress=0.5)], "steer")
+    assert on < off
+
+
 def test_energy_abs_rule_charges_the_energy_against_a_fixed_mass():
     from darwinbot import fitness, rules
     from darwinbot.sim import Metrics

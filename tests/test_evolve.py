@@ -590,3 +590,60 @@ def test_trace_leaves_the_archive_unchanged_and_files_agree(tmp_path, monkeypatc
 def test_trace_off_writes_nothing(tmp_path, monkeypatch):
     _tiny_run(tmp_path / "a", monkeypatch)
     assert sorted(p.name for p in (tmp_path / "a").iterdir()) == ["archive.pkl"]
+
+
+def test_graft_that_fits_no_slot_is_a_mutation(monkeypatch):
+    rng = np.random.default_rng(0)
+    parent = mo.random_morphology(rng)
+    mutant = np.array(parent) + 1e-3
+    monkeypatch.setattr(mo, "mutate", lambda genes, rng, mirror_p=0.0: mutant)
+    monkeypatch.setattr(mo, "graft", lambda genes, donor, rng: np.array(genes))
+    child, origin = evolve.offspring(parent, parent, True, rng)
+    assert origin == "mutate" and child is mutant
+    grown = np.array(parent)
+    grown[0] += 0.1
+    monkeypatch.setattr(mo, "graft", lambda genes, donor, rng: grown)
+    child, origin = evolve.offspring(parent, parent, True, rng)
+    assert origin == "graft" and child is grown
+
+
+def test_stats_counts_the_symmetric_elites():
+    archive = evolve.Archive(terrains="flat")
+    rng = np.random.default_rng(4)
+    for i in range(3):
+        archive.insert(_elite(float(i), [rng.uniform(), rng.uniform(0, 1.5),
+                                         int(rng.integers(4, 17)), rng.choice([0.0, 1.0]),
+                                         rng.uniform(0.1, 100), int(rng.integers(0, 9))]))
+    expected = sum(1 for e in archive.cells.values()
+                   if mo.symmetry(mo.decode(e.morph)) == 1.0)
+    assert archive.stats()["symmetric"] == evolve.count_symmetric(archive) == expected
+
+
+def test_default_episode_length_is_the_simulator_one():
+    import inspect
+    from darwinbot import sim
+    assert inspect.signature(evolve.run).parameters["episode_seconds"].default == sim.EPISODE_SECONDS
+
+
+def test_resume_refuses_other_rules_and_reports_search_options(tmp_path, monkeypatch, capsys):
+    _tiny_run(tmp_path / "a", monkeypatch)
+    path = str(tmp_path / "a" / "archive.pkl")
+    with pytest.raises(ValueError, match="--rules"):
+        evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+                   out_dir=str(tmp_path / "b"), score_rules=("tilt",))
+    again = evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+                       out_dir=str(tmp_path / "c"), mirror_p=0.3)
+    assert "resume: --mirror-p 0.3 differs from the archive's 0.0" in capsys.readouterr().out
+    assert again.search["mirror_p"] == 0.3
+    # a resume that repeats the archive's rules is accepted (none given: kept)
+    evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+               out_dir=str(tmp_path / "d"), score_rules=())
+
+
+def test_archive_without_search_field_still_loads(tmp_path):
+    old = evolve.Archive(terrains="flat")
+    old.__dict__.pop("search")
+    path = tmp_path / "old.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(old, f)
+    assert evolve.load_archive(str(path)).search == {}

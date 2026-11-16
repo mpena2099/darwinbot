@@ -1280,7 +1280,7 @@ def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
     for _ in range(tries):
         try:
             pairs = builder.spawn_clashes(morph)
-        except Exception:
+        except Exception:       # a body MuJoCo cannot compile; a long run must not die here
             return morph
         if not pairs:
             break

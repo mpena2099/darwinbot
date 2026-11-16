@@ -51,7 +51,7 @@ from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import commands, task_names, task_score
 from darwinbot.inner import optimise_controller
-from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX, Behaviour
+from darwinbot.sim import COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behaviour
 from darwinbot.terrain import get_terrains
 
 BODY_MODEL = 23                     # bump when the genome meaning changes
@@ -283,6 +283,8 @@ class Archive:
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
     plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
+    # search options of the run that wrote it (not the score): SEARCH_FLAGS keys
+    search:   dict = field(default_factory=dict)
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
@@ -444,6 +446,7 @@ class Archive:
         self.__dict__.setdefault("axes", "default")   # nor a sixth archive axis
         self.__dict__.setdefault("locked", ())        # nor locked parts
         self.__dict__.setdefault("plugin", {})        # nor plugins
+        self.__dict__.setdefault("search", {})        # nor search options
         if "profile" not in state:                    # nor hardware profiles
             self.__dict__["profile"] = hardware.default_profile()
 
@@ -457,7 +460,14 @@ class Archive:
                 "best": max(fits), "mean": float(np.mean(fits)),
                 "novelty": float(nov.mean()) if len(nov) else 0.0,
                 # QD-score: sum of fitness shifted to be positive per cell
-                "qd_score": float(sum(f + 5.0 for f in fits))}
+                "qd_score": float(sum(f + 5.0 for f in fits)),
+                "symmetric": count_symmetric(self)}
+
+
+def count_symmetric(archive: Archive) -> int:
+    """Elites whose body is fully mirrored (morphology.symmetry is 1.0)."""
+    return sum(1 for e in archive.cells.values()
+               if morpho.symmetry(morpho.decode(e.morph)) == 1.0)
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
@@ -545,8 +555,8 @@ PROTECT_SLOTS = 2       # changed slots that make a child's body a new body
 
 
 def scaled_budget(budget: int, morph) -> int:
-    """CMA-ES evaluations for a body: every joint adds six controller genes, so
-    a body with many joints gets up to BUDGET_SCALE_MAX times the base budget
+    """CMA-ES evaluations for a body: every joint adds CTRL_PER_NODE controller
+    genes, so a body with many joints gets up to BUDGET_SCALE_MAX times the base budget
     to learn a coordinated gait instead of losing its cell to a simpler one."""
     scale = min(max(morph.n_joints / BUDGET_JOINTS, 1.0), BUDGET_SCALE_MAX)
     return int(round(budget * scale))
@@ -564,6 +574,26 @@ def child_budget(m: dict, budget: int, protect_new: float = 1.0) -> int:
     big = (m["origin"] == "graft" or m["changed_slots"] >= PROTECT_SLOTS
            or not m["same_slots"])
     return int(round(budget * protect_new)) if big else budget
+
+
+SEARCH_FLAGS = {"parent_selection": "--parent-selection", "inner_strategy": "--inner-strategy",
+                "variant_mode": "--variant-mode", "protect_new": "--protect-new",
+                "mirror_p": "--mirror-p"}       # Archive.search keys and their train.py flags
+
+
+def _shown(value):
+    return "default" if value is None else value
+
+
+def offspring(parent, donor, grafted: bool, rng, mirror_p: float = 0.0) -> tuple:
+    """(child, origin) of one offspring: a graft of a donor's limb, or a mutation
+    of the parent. A graft that fits no slot gives the parent's body back, so it
+    is a plain mutation."""
+    if grafted:
+        child = morpho.graft(parent, donor, rng)
+        if not np.array_equal(child, parent):
+            return child, "graft"
+    return morpho.mutate(parent, rng, mirror_p=mirror_p), "mutate"
 
 
 def job_cost(job) -> float:
@@ -653,7 +683,7 @@ def run(
     batch_size: int = 16,
     budget_init: int = 400,
     budget_child: int = 120,
-    episode_seconds: float = 5.0,
+    episode_seconds: float = EPISODE_SECONDS,
     random_frac: float = 0.1,
     workers: Optional[int] = None,
     seed: int = 0,
@@ -666,7 +696,7 @@ def run(
     task: str = "forward",
     payload: float = 0.0,
     ablations: tuple = (),
-    score_rules: tuple = (),
+    score_rules: Optional[tuple] = None,   # None: not given, so a resume keeps the archive's
     body: str = "",
     axes: str = "default",
     plugin: Optional[dict] = None,
@@ -706,6 +736,10 @@ def run(
         if axes != "default" and axes != archive.axes:
             raise ValueError(f"{resume} uses --axes {archive.axes}; --axes {axes} "
                              "applies to a new archive only")
+        if score_rules is not None and rules.normalise(score_rules) != archive.rules:
+            raise ValueError(f"{resume} uses --rules {','.join(archive.rules) or 'none'}, "
+                             f"not {','.join(rules.normalise(score_rules)) or 'none'}; "
+                             "--rules applies to a new archive only")
         terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:
@@ -715,6 +749,16 @@ def run(
                           rules=rules.normalise(score_rules),
                           body=body_options.parse(body).to_string(),
                           axes=axes, plugin=plugin or {})
+    search = {"parent_selection": parent_selection, "inner_strategy": inner_strategy,
+              "variant_mode": variant_mode, "protect_new": protect_new,
+              "mirror_p": mirror_p}
+    if resume:                                  # the new values win, and are stored
+        for key, value in search.items():
+            old = archive.search.get(key, value)
+            if old != value:
+                print(f"resume: {SEARCH_FLAGS[key]} {_shown(value)} differs from the "
+                      f"archive's {_shown(old)}")
+    archive.search = search
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
     rules.set_active(archive.rules)             # and its score rules
     body_options.set_active(archive.body)       # and its body limits
@@ -770,20 +814,15 @@ def run(
                 batch_meta.append(meta(tasks[-1][0]))
             else:
                 parent = parents["solution"][i]
+                donor = parents["solution"][(i + 1) % batch_size]
                 for _ in range(LOCK_TRIES):
-                    grafted = rng.random() < GRAFT_P
-                    if grafted:                       # crossover with another elite
-                        donor = parents["solution"][(i + 1) % batch_size]
-                        child = morpho.graft(parent, donor, rng)
-                    else:
-                        child = morpho.mutate(parent, rng, mirror_p=mirror_p)
+                    child, origin = offspring(parent, donor, rng.random() < GRAFT_P,
+                                              rng, mirror_p)
                     if morpho.keeps_locked(child, parent, archive.locked):
                         break
                 else:                    # same body, its controller searched again
-                    child = np.array(parent)
-                    grafted = None
-                batch_meta.append(meta(child, parent, "same" if grafted is None
-                                       else "graft" if grafted else "mutate"))
+                    child, origin = np.array(parent), "same"
+                batch_meta.append(meta(child, parent, origin))
                 tasks.append((child, parents["ctrl"][i], terrains,
                               child_budget(batch_meta[-1], budget_child, protect_new),
                               0.12, new_seed(), archive.seconds,

@@ -42,7 +42,7 @@ from darwinbot import ablate, body_options, plugins, power, rules, randomize
 from darwinbot.evolve import BODY_SHARE
 from darwinbot.fitness import commands
 from darwinbot.sim import Episode
-from darwinbot.terrain import SEEDED, TERRAINS, get_terrains, parse_spec
+from darwinbot.terrain import EVAL_ONLY, SEEDED, TERRAINS, get_terrains, parse_spec
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from replay import load  # noqa: E402
@@ -162,7 +162,8 @@ def unseen_terrains(archive, seed):
     so they are not the fixed default either."""
     seen = {n for n, _ in parse_spec(archive.terrains)}
     return [TERRAINS[n](seed=(seed + 7919 * i) % 2**31) if n in SEEDED else TERRAINS[n]()
-            for i, n in enumerate(n for n in TERRAINS if n not in seen)]
+            for i, n in enumerate(n for n in TERRAINS
+                                   if n not in seen and n not in EVAL_ONLY)]
 
 
 def shown(value: float) -> str:

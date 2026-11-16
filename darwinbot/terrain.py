@@ -164,11 +164,25 @@ def steep(degrees: float = 15.0) -> Terrain:
     return Terrain("steep", world=slope(degrees).world)
 
 
+def strip(at: float = 0.5, length: float = 0.3, mu: float = 0.2) -> Terrain:
+    """Flat ground with one low-friction strip across the path, `length` metres
+    long from `at` metres ahead of the spawn: a change of grip mid-stride. The
+    strip's top is 1 mm above the plane (a box flush with it would give a
+    second, gripping contact under every foot), a step too low to trip on. For
+    evaluation only (experiments/strip_test.py); in no preset."""
+    top = 0.001
+    return Terrain("strip", world=_plane() + (
+        f'<geom name="strip" type="box" pos="{at + length / 2:.4f} 0 {top - 0.05:.4f}" '
+        f'size="{length / 2:.4f} 2 0.05" rgba="0.55 0.75 0.90 1" '
+        f'friction="{mu} 0.02 0.001" {GROUND}/>'))
+
+
 TERRAINS = {
     "flat": flat, "rough": rough, "steps": steps, "step": step,
     "slope": slope, "slippery": slippery, "rubble": rubble, "ledges": ledges,
-    "soft": soft, "downhill": downhill, "steep": steep,
+    "soft": soft, "downhill": downhill, "steep": steep, "strip": strip,
 }
+EVAL_ONLY = ["strip"]   # evaluation tools only: in no preset, not an unseen ground
 SEEDED = ["rough", "rubble"]    # terrains drawn anew for every body in training
 
 

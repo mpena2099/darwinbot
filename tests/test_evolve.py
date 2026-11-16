@@ -635,6 +635,14 @@ def test_resume_refuses_other_rules_and_reports_search_options(tmp_path, monkeyp
                        out_dir=str(tmp_path / "c"), mirror_p=0.3)
     assert "resume: --mirror-p 0.3 differs from the archive's 0.0" in capsys.readouterr().out
     assert again.search["mirror_p"] == 0.3
+    again = evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+                       out_dir=str(tmp_path / "e"), batch_size=5, budget_child=7,
+                       deterministic=True)
+    out = capsys.readouterr().out
+    assert "resume: --batch-size 5 differs from the archive's" in out
+    assert "resume: --budget-child 7 differs from the archive's" in out
+    assert "resume: --deterministic" in out
+    assert again.search["batch_size"] == 5 and again.search["deterministic"] is True
     # a resume that repeats the archive's rules is accepted (none given: kept)
     evolve.run(resume=path, n_batches=0, workers=1, seed=3,
                out_dir=str(tmp_path / "d"), score_rules=())

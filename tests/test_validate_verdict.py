@@ -83,3 +83,10 @@ def test_max_body_one_turns_the_check_off():
 
 def test_mean_body_of_no_rows_is_zero():
     assert mean_body([]) == 0.0
+
+
+def test_all_zero_nominal_has_a_plain_reason_and_fails():
+    ok, reasons = verdict([row(nominal=0.0, mean=0.0, p5=0.0, worst=0.0)])
+    assert not ok
+    assert "no mean loss: the robot makes no nominal progress on any row" in reasons
+    assert not any("nan" in r for r in reasons)

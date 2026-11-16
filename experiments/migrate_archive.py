@@ -123,7 +123,7 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60, seconds: float
             uid = elite_id(new.morph, new.ctrl)
             if uid == old_id and old_id in archive.lineage:
                 out.lineage[uid] = (archive.lineage[old_id][0],) + out.lineage[uid][1:]
-        changed += evolve.cell_of(res.behaviour) != cell
+        changed += evolve.cell_of(res.behaviour, out.n_descriptors) != cell
     if not out.cells:
         raise ValueError("no elite survived the migration")
     after = [e.fitness for e in out.cells.values()]

@@ -62,6 +62,7 @@ Optional rules (darwinbot/rules.py, off by default, switched on per run with
   tilt          every episode: - TILT_W * Metrics.tilt (mean tilt, rad)
   slip          every episode: - SLIP_W * Metrics.slip (m/s of sliding feet)
   servo_ground  every episode: - SERVO_GROUND_W * Metrics.servo_ground (share of ticks)
+  body_ground   every episode: - BODY_GROUND_W * Metrics.body_ground (share of ticks)
 """
 
 import math
@@ -87,6 +88,7 @@ TURN_CAP     = math.pi / 2   # rad: no credit for turning more than 90 degrees
 TILT_W         = 0.2   # m per radian of mean tilt (rule `tilt`): 10 degrees costs 0.035 m
 SLIP_W         = 0.2   # m per m/s of summed foot sliding speed (rule `slip`)
 SERVO_GROUND_W = 0.1   # m per share of ticks a servo housing is on the ground (rule `servo_ground`)
+BODY_GROUND_W  = 0.2   # m per share of ticks the torso itself is on the ground (rule `body_ground`)
 UNSTABLE_SCORE = -5.0
 G = 9.81
 
@@ -131,6 +133,8 @@ def rule_cost(m: Metrics) -> float:
         c += SLIP_W * m.slip
     if rules.active("servo_ground"):
         c += SERVO_GROUND_W * m.servo_ground
+    if rules.active("body_ground"):
+        c += BODY_GROUND_W * m.body_ground
     return c
 
 

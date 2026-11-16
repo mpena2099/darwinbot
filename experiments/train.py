@@ -122,6 +122,10 @@ def main():
                    help="limits on the bodies evolution may build, comma list of "
                         "no-wheels, no-passive, no-segments, max-servos=N, "
                         "legs=A..B, max-size=MM, bed=MM; stored in the archive")
+    p.add_argument("--axes", choices=evolve.AXES, default="default",
+                   help="archive descriptors: default (five) or body (five plus the "
+                        "share of ticks the torso touches the ground); stored in the "
+                        "archive, new archives only")
     a = p.parse_args()
     a.rules = tuple(n for n in a.rules.split(",") if n)
     try:
@@ -168,7 +172,7 @@ def main():
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
                   parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
-                  body=a.body, plugin=record,
+                  body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
                   variant_mode=a.variant_mode)
     forward = "forward" in a.ablate     # the forward task replaces steer

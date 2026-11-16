@@ -160,6 +160,10 @@ python experiments/showcase.py --archive merged.pkl --types 13servos-mid-trot,6s
 
 `--skip polish,prune` leaves stages out (the next stage then reads the previous
 stage's archive), and `--budget` sets polish's CMA-ES evaluations.
+`--max-body SHARE` (default `evolve.BODY_SHARE`, 0.5) warns before the chain about
+each robot whose body is on the ground more than that share of the time, and
+`validate.py` fails it under the same limit; `--strict-body` drops those robots
+from the chain instead.
 
 - `polish.py` runs a longer CMA-ES (1200 evaluations, up to three times more
   for bodies with many joints) from each robot's own controller, on the same
@@ -168,11 +172,15 @@ stage's archive), and `--budget` sets polish's CMA-ES evaluations.
   generation is scored on all the workers, which gives the same result
   sooner. A 16-servo robot takes about 3.5 hours on one core.
 - `prune.py` removes, one at a time, each part whose removal does not lower
-  the score, with a short controller search after each cut. A pruned robot
-  can change its name (a 7-servo trotter became a 6-servo one).
+  the score, with a short controller search after each cut. The cuts of a round
+  are tried in parallel (`--workers`, default: all CPUs); the result does not
+  depend on the number of workers. A pruned robot can change its name (a
+  7-servo trotter became a 6-servo one).
 - `validate.py` passes a robot only when it is robust: mean loss under 30%,
   5th-percentile loss under 60% and fall rate at most 10% on every terrain and
-  command, and no terrain where it fails to move at all. `--unseen` also
+  command, and no terrain where it fails to move at all. It also fails a robot
+  whose body touches the ground more than `--max-body` of the time on average
+  over the trained terrains (`--max-body 1` turns that off). `--unseen` also
   checks the grounds the archive never trained on.
 - `check_assembly.py` builds the printed parts and reports clashes.
 

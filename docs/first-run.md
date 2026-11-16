@@ -14,7 +14,8 @@ python experiments/replay.py --type 8servos-mid-trot
 `--list --where` keeps only the robots that match every condition, separated by
 commas. The fields are `fitness`, `duty`, `height`, `servos`, `legs`, `cot`,
 `wheels`, `feet`, `segments`, `passive` (springs, tails, skids, spikes and
-casters) and `nodes`; the operators are `= != < <= > >=`. For example, robots
+casters), `nodes` and `body` (the share of time the body touches the ground, in
+percent, as the `body` column shows it); the operators are `= != < <= > >=`. For example, robots
 without wheels, with at least four legs and a fitness above 0.3:
 
 ```bash

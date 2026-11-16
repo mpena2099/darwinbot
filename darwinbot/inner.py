@@ -97,13 +97,16 @@ def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:
 
 def cpu_evaluator(morph: Morphology, terrains: Sequence[Terrain], seconds: float,
                   payload: float, variants: int, seed: int, task: str,
-                  collect: Optional[list] = None, first_only: bool = False):
+                  collect: Optional[list] = None, first_only: bool = False,
+                  episodes: Optional[list] = None):
     """Episodes of a body and the function that scores one full controller on
     them; the physics variants come from the seed alone, so every process that
     builds this with the same arguments scores a controller the same way.
     first_only keeps the first drawn variant of each terrain (variant_mode
-    "first"); it is the same draw, only the others are dropped."""
-    episodes = [Episode(morph, t, seconds, payload) for t in terrains]
+    "first"); it is the same draw, only the others are dropped. episodes: the
+    Episodes already built for these terrains (prune reuses them), or None."""
+    if episodes is None:
+        episodes = [Episode(morph, t, seconds, payload) for t in terrains]
     var_sets = None
     if variants > 0 and episodes[0].buildable:
         vrng = np.random.default_rng([seed, 1])
@@ -159,6 +162,7 @@ def optimise_controller(
     parent_genes: Optional[np.ndarray] = None,
     on_eval: Optional[Callable[[float], None]] = None,
     variant_mode: str = "all",
+    episodes: Optional[list] = None,
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
@@ -184,6 +188,8 @@ def optimise_controller(
     returns that score, so the archive never sees the cheap one. The variants
     are drawn once per body, so the first of each set is the same either way.
     Ignored with map_many, whose workers always score the whole set.
+    episodes: the body's Episodes for these terrains, when the caller has built
+    them already (CPU only); the result does not change.
     """
     if variant_mode not in ("all", "first"):
         raise ValueError(f"unknown variant mode {variant_mode!r}: use all or first")
@@ -238,14 +244,14 @@ def optimise_controller(
         episodes, run_cpu = cpu_evaluator(morph, terrains, seconds, payload,
                                           variants, seed, task,
                                           recorder.runs if recorder else None,
-                                          first)
+                                          first, episodes)
         if not episodes[0].buildable:
             return _unbuildable(morph, base, terrains, episodes[0].mass)
         if first:
             # one full evaluator for the single re-score at the end; same seed,
             # so it draws the same variants the "all" mode would use.
             _, run_full = cpu_evaluator(morph, terrains, seconds, payload,
-                                        variants, seed, task)
+                                        variants, seed, task, episodes=episodes)
 
             def finish(res):
                 f, s, m = run_full(res.ctrl)

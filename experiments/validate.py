@@ -21,6 +21,10 @@ terrain moving on the nominal model. A row with ~0 nominal progress has no
 loss, but still counts for falls and its terrain still has to move: a ground
 where the robot does not move at all is a failure.
 
+It also fails a robot that slides on its body: the mean share of ticks its
+body touches the ground (over the trained terrains) above --max-body, which
+defaults to evolve.BODY_SHARE. --max-body 1 turns that check off.
+
 --unseen also runs the terrains the archive was not trained on (random ones
 with another seed), reported and judged separately; the last verdict line is
 the trained-terrain one. Exit 0 only when every checked set passes.
@@ -29,12 +33,13 @@ the trained-terrain one. Exit 0 only when every checked set passes.
 import argparse
 import multiprocessing
 import sys
-from typing import List, NamedTuple, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 import numpy as np
 
 from darwinbot import morphology as morpho
 from darwinbot import ablate, body_options, plugins, power, rules, randomize
+from darwinbot.evolve import BODY_SHARE
 from darwinbot.fitness import commands
 from darwinbot.sim import Episode
 from darwinbot.terrain import SEEDED, TERRAINS, get_terrains, parse_spec
@@ -61,6 +66,7 @@ class Row(NamedTuple):
     p5: float
     worst: float
     fall: float
+    body: float = 0.0    # mean share of ticks the body (not a terminal point) touches the ground
 
     @property
     def label(self) -> str:
@@ -78,10 +84,11 @@ class Row(NamedTuple):
         return self.loss(self.p5)
 
 
-def verdict(rows: List[Row]) -> Tuple[bool, List[str]]:
+def verdict(rows: List[Row], max_body: Optional[float] = None) -> Tuple[bool, List[str]]:
     """(ok, reasons) of a set of rows, with no I/O. Rows with ~0 nominal
     progress carry no loss; they are still judged on falls and on whether
-    their terrain moves."""
+    their terrain moves. max_body: the mean body share above which the robot
+    slides on its body and fails; None leaves that check out."""
     if not rows:
         return False, ["no rows"]
     reasons = []
@@ -98,7 +105,15 @@ def verdict(rows: List[Row]) -> Tuple[bool, List[str]]:
     for terrain in dict.fromkeys(r.terrain for r in rows):
         if all(r.nominal <= 1e-6 for r in rows if r.terrain == terrain):
             reasons.append(f"no progress on {terrain}")
+    body = mean_body(rows)
+    if max_body is not None and body > max_body:
+        reasons.append(f"slides on its body: {body:.0%} of the time")
     return not reasons, reasons
+
+
+def mean_body(rows: List[Row]) -> float:
+    """Mean body-ground share over the rows (0 with no rows)."""
+    return float(np.mean([r.body for r in rows])) if rows else 0.0
 
 
 def progress(m, task, command=(0.0, 1.0)):
@@ -122,9 +137,11 @@ def validate_terrain(task) -> Row:
     runs = [ep.run(ctrl, randomize.perturb(ep.model, rng), *command) for _ in range(n)]
     prog = np.array([progress(r, task, command) for r in runs])
     fell = np.array([r.fell or r.unstable for r in runs])
+    body = float(np.mean([r.body_ground for r in [nominal, *runs]]))
     return Row(terrain.name, COMMAND_NAMES.get(tuple(command), str(command)),
                progress(nominal, task, command), float(prog.mean()),
-               float(np.percentile(prog, 5)), float(prog.min()), float(fell.mean()))
+               float(np.percentile(prog, 5)), float(prog.min()), float(fell.mean()),
+               body)
 
 
 def run_rows(elite, archive, terrains, n, seed, workers) -> List[Row]:
@@ -150,16 +167,17 @@ def shown(value: float) -> str:
     return "     -" if np.isnan(value) else f"{value:6.0%}"
 
 
-def report(title: str, rows: List[Row]) -> bool:
+def report(title: str, rows: List[Row], max_body: Optional[float] = None) -> bool:
     """Print a table and one line per failed criterion; return the verdict."""
     print(f"\n{title}")
     print(f"{'terrain':9s} {'command':10s} {'nominal':>7s} {'mean':>6s} {'p5':>6s} "
-          f"{'min':>6s} {'fall':>5s} {'loss':>6s} {'p5 loss':>7s}")
+          f"{'min':>6s} {'fall':>5s} {'loss':>6s} {'p5 loss':>7s} {'body':>5s}")
     for r in rows:
         print(f"{r.terrain:9s} {r.command:10s} {r.nominal:7.2f} {r.mean:6.2f} "
               f"{r.p5:6.2f} {r.worst:6.2f} {r.fall:5.0%} {shown(r.mean_loss)} "
-              f"{shown(r.p5_loss)}")
-    ok, reasons = verdict(rows)
+              f"{shown(r.p5_loss)} {r.body:5.0%}")
+    print(f"body on the ground: {mean_body(rows):.0%} of the time on average")
+    ok, reasons = verdict(rows, max_body)
     for reason in reasons:
         print(f"  FAILED: {reason}")
     return ok
@@ -177,6 +195,9 @@ def main():
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--unseen", action="store_true",
                    help="also check the terrains the archive was not trained on")
+    p.add_argument("--max-body", type=float, default=BODY_SHARE, metavar="SHARE",
+                   help="fail when the robot's body is on the ground more than this share "
+                        "of the time (default: %(default)s; 1 turns the check off)")
     a = p.parse_args()
 
     archive, elite = load(a.archive, a.cell, a.plugin)
@@ -187,7 +208,8 @@ def main():
 
     rows = run_rows(elite, archive, get_terrains(archive.terrains), a.n, a.seed,
                     a.workers)
-    ok = report(f"{a.n} variants per terrain, task {archive.task} ({units})", rows)
+    ok = report(f"{a.n} variants per terrain, task {archive.task} ({units})", rows,
+                a.max_body)
     unseen_ok = True
 
     if a.unseen:
@@ -196,7 +218,7 @@ def main():
             unseen_ok = report("unseen terrains (not trained on): " +
                                ", ".join(t.name for t in extra),
                                run_rows(elite, archive, extra, a.n, a.seed + 1000,
-                                        a.workers))
+                                        a.workers), max_body=None)
             print(f"unseen: {'PASS' if unseen_ok else 'FAIL'}")
         else:
             print("\nunseen: the archive trained on every terrain")

@@ -62,3 +62,58 @@ def test_unknown_skip_stage(tmp_path):
     with pytest.raises(SystemExit, match="unknown stage"):
         showcase.main(["--archive", "a.pkl", "--types", "x",
                        "--out", str(tmp_path / "s"), "--skip", "polish,bake"])
+
+
+def test_validate_gets_the_body_limit(tmp_path):
+    argv = showcase.command("validate", "p.pkl", ["x"], str(tmp_path), max_body=0.3)
+    assert argv[argv.index("--max-body") + 1] == "0.3"
+    assert "--max-body" not in showcase.command("validate", "p.pkl", ["x"], str(tmp_path))
+    assert "--max-body" not in showcase.command("prune", "p.pkl", ["x"], str(tmp_path),
+                                                max_body=0.3)
+
+
+
+def _archive_with_belly(path):
+    """Two robots, one stored with its body on the ground 93% of the time."""
+    import pickle
+    import numpy as np
+    from darwinbot import controller as ctl, evolve, morphology as mo
+    from darwinbot.sim import Behaviour
+    a = evolve.Archive(terrains="flat", seconds=1.0, variants=0, task="forward")
+    rng = np.random.default_rng(0)
+    for duty, bg, fit in ((0.3, 0.1, 0.5), (0.6, 0.93, 0.9)):   # other duty: another cell
+        b = Behaviour(duty, 0.5, 4.0, 0.0, 2.0, 4.0, bg)
+        a.insert(evolve.Elite(mo.encode(mo.template(2)), rng.random(ctl.CTRL_LENGTH),
+                              fit, [fit], 0, b))
+    with open(path, "wb") as f:
+        pickle.dump(a, f)
+    return {bg: a.names()[c] for c, bg in ((c, a.cells[c].behaviour.body_ground)
+                                           for c in a.cells)}
+
+
+def test_warns_about_a_belly_robot_before_the_chain(tmp_path, capsys):
+    names = _archive_with_belly(tmp_path / "a.pkl")
+    showcase.main(["--archive", str(tmp_path / "a.pkl"), "--types", ",".join(names.values()),
+                   "--out", str(tmp_path / "s"), "--skip", ",".join(showcase.STAGES)])
+    out = capsys.readouterr().out
+    assert f"warning: {names[0.93]}: slides on its body 93% of the time" in out
+    assert names[0.1] + ":" not in out
+
+
+def test_strict_body_drops_the_belly_robot(tmp_path, monkeypatch):
+    names = _archive_with_belly(tmp_path / "a.pkl")
+    ran = []
+    monkeypatch.setattr(showcase, "_run", lambda stage, argv, log=None: ran.append(argv) or "")
+    monkeypatch.setattr(showcase, "_ordered", lambda path, n: [(0.5, names[0.1])])
+    showcase.main(["--archive", str(tmp_path / "a.pkl"),
+                   "--types", ",".join(names.values()), "--out", str(tmp_path / "s"),
+                   "--strict-body", "--skip", "assembly,snapshot,validate"])
+    assert all(names[0.93] not in " ".join(argv) for argv in ran)
+    assert any(names[0.1] in " ".join(argv) for argv in ran)
+
+
+def test_strict_body_with_only_belly_robots_stops(tmp_path):
+    names = _archive_with_belly(tmp_path / "a.pkl")
+    with pytest.raises(SystemExit, match="slides on its body"):
+        showcase.main(["--archive", str(tmp_path / "a.pkl"), "--types", names[0.93],
+                       "--out", str(tmp_path / "s"), "--strict-body"])

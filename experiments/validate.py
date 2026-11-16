@@ -94,7 +94,9 @@ def verdict(rows: List[Row], max_body: Optional[float] = None) -> Tuple[bool, Li
     reasons = []
     losses = [r.mean_loss for r in rows if not np.isnan(r.mean_loss)]
     mean_loss = float(np.mean(losses)) if losses else float("nan")
-    if not mean_loss < MAX_LOSS:
+    if not losses:
+        reasons.append("no mean loss: the robot makes no nominal progress on any row")
+    elif not mean_loss < MAX_LOSS:
         reasons.append(f"mean loss {mean_loss:.0%} (limit {MAX_LOSS:.0%})")
     slow = [r.label for r in rows if not np.isnan(r.p5_loss) and not r.p5_loss < P5_LOSS]
     if slow:

@@ -121,7 +121,7 @@ def test_unbuildable_elite_is_dropped(tiny, tmp_path, monkeypatch):
     monkeypatch.setattr(ma, "optimise_controller", fake)
     n = len(old.cells)
     if n < 2:
-        pytest.skip("tiny archive has one elite")
+        pytest.fail("the tiny archive has one elite; the test needs at least two")
     out, summary = ma.migrate(old, workers=1, budget=4)
     assert summary["dropped"] == 1 and summary["elites"] == n
 
@@ -176,7 +176,7 @@ def _wheeled_genes():
         genes = mo.random_morphology(rng)
         if any(n.kind == "wheel" for n in mo.decode(genes).nodes.values()):
             return genes
-    pytest.skip("no random wheeled body found")
+    pytest.fail("no wheeled body found in 200 draws of seed 3")
 
 
 def test_wheel_radius_survives_20_and_width_is_the_old_one():

@@ -595,7 +595,9 @@ def child_budget(m: dict, budget: int, protect_new: float = 1.0) -> int:
 
 SEARCH_FLAGS = {"parent_selection": "--parent-selection", "inner_strategy": "--inner-strategy",
                 "variant_mode": "--variant-mode", "protect_new": "--protect-new",
-                "mirror_p": "--mirror-p"}       # Archive.search keys and their train.py flags
+                "mirror_p": "--mirror-p", "batch_size": "--batch-size",
+                "budget_init": "--budget-init", "budget_child": "--budget-child",
+                "deterministic": "--deterministic"}       # Archive.search keys and their train.py flags
 
 
 def _shown(value):
@@ -773,7 +775,9 @@ def run(
                           axes=axes, plugin=plugin or {})
     search = {"parent_selection": parent_selection, "inner_strategy": inner_strategy,
               "variant_mode": variant_mode, "protect_new": protect_new,
-              "mirror_p": mirror_p}
+              "mirror_p": mirror_p, "batch_size": batch_size,
+              "budget_init": budget_init, "budget_child": budget_child,
+              "deterministic": deterministic}
     if resume:                                  # the new values win, and are stored
         for key, value in search.items():
             old = archive.search.get(key, value)

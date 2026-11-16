@@ -94,6 +94,16 @@ keeps its 5th-percentile loss under 60% and its fall rate at most 10%, and
 every terrain moves at all on the nominal model. `--unseen` checks the
 terrains the archive was not trained on as well, reported on their own.
 
+`strip_test.py` checks a change of grip mid-stride: it runs the robot straight
+ahead across a short low-friction strip (`--length` 0.3 m, `--mu` 0.2) placed
+at each of `--positions` (metres from the spawn) on the nominal model and
+`--n` variants. Per position it prints the share of episodes that stayed
+upright and the share that also ended a body length (twice the robot's reach)
+past the strip's far edge. A position the robot does not reach on flat ground
+is marked "not reached". PASS when that second share is at least `--min-pass`
+(0.8) at every reached position, otherwise exit code 1. It is an evaluation
+only and never enters the score.
+
 ## Viewing the different robot types
 
 The archive keeps one robot per **cell** of the behaviour map: the best one found

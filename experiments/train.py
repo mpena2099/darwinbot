@@ -138,6 +138,11 @@ def main():
                         "mirror slot, so symmetric bodies can arise and compete; "
                         "0 (default) turns it off and changes nothing; not stored in "
                         "the archive and never part of the score")
+    p.add_argument("--screen", type=float, default=1.0, metavar="SHARE",
+                   help="cheap evaluation first: every child whose body changed gets "
+                        "one quick score (its inherited controller, one flat episode), "
+                        "and only the best SHARE of them (0 to 1) go on to the "
+                        "inner loop; 1.0 (default) turns it off; CPU only")
     p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -182,6 +187,8 @@ def main():
         raise SystemExit("--protect-new must be >= 1.0 (1.0 turns it off)")
     if not 0.0 <= a.mirror_p <= 1.0:
         raise SystemExit("--mirror-p must be in [0, 1] (0 turns it off)")
+    if not 0.0 < a.screen <= 1.0:
+        raise SystemExit("--screen must be in (0, 1] (1.0 turns it off)")
 
     a.device, a.workers = resolve_device(a.device, a.workers)
     wanted = None
@@ -232,7 +239,8 @@ def main():
                   body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
                   variant_mode=a.variant_mode, protect_new=a.protect_new,
-                  mirror_p=a.mirror_p, deterministic=a.deterministic)
+                  mirror_p=a.mirror_p, deterministic=a.deterministic,
+                  screen=a.screen)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

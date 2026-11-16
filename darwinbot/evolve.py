@@ -32,6 +32,7 @@ import contextlib
 import copy
 import hashlib
 import json
+import math
 import multiprocessing
 import os
 import pickle
@@ -50,9 +51,10 @@ from darwinbot import ablate, body_options, fastloop, hardware, plugins, rules, 
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import commands, task_names, task_score
-from darwinbot.inner import optimise_controller
-from darwinbot.sim import COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behaviour
-from darwinbot.terrain import get_terrains
+from darwinbot.inner import evaluate, optimise_controller
+from darwinbot.sim import (COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behaviour,
+                           Episode)
+from darwinbot.terrain import flat, get_terrains
 
 BODY_MODEL = 23                     # bump when the genome meaning changes
 N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
@@ -597,7 +599,8 @@ SEARCH_FLAGS = {"parent_selection": "--parent-selection", "inner_strategy": "--i
                 "variant_mode": "--variant-mode", "protect_new": "--protect-new",
                 "mirror_p": "--mirror-p", "batch_size": "--batch-size",
                 "budget_init": "--budget-init", "budget_child": "--budget-child",
-                "deterministic": "--deterministic"}       # Archive.search keys and their train.py flags
+                "deterministic": "--deterministic",
+                "screen": "--screen"}           # Archive.search keys and their train.py flags
 
 
 def _shown(value):
@@ -613,6 +616,9 @@ def offspring(parent, donor, grafted: bool, rng, mirror_p: float = 0.0) -> tuple
         if not np.array_equal(child, parent):
             return child, "graft"
     return morpho.mutate(parent, rng, mirror_p=mirror_p), "mutate"
+
+
+SCREENED_ORIGINS = ("mutate", "graft")
 
 
 def job_cost(job) -> float:
@@ -677,6 +683,31 @@ def _work(job):
     return out + (extra,) if tdir else out
 
 
+def _screen_work(job):
+    """Pool worker: quick score of one changed body, the controller it inherits
+    on one nominal flat episode of the "forward" task. -inf if unbuildable or if
+    the episode fails."""
+    i, genes, ctrl_, seconds, payload = job
+    try:
+        ep = Episode(morpho.decode(genes), flat(), seconds, payload)
+        if not ep.buildable:
+            return i, -np.inf
+        return i, float(evaluate([ep], ctrl_, None, "forward")[0])
+    except Exception:
+        body = hashlib.sha1(np.asarray(genes, float).tobytes()).hexdigest()[:8]
+        print(f"screen of body {body} failed:\n{traceback.format_exc()}", flush=True)
+        return i, -np.inf
+
+
+def screen_keep(origins: list, scores: dict, keep: float) -> set:
+    """Indices that survive the screen: every body that was not screened (origin
+    not mutate or graft) and the best ceil(keep * n) of the n screened ones by
+    quick score (ties: batch order)."""
+    screened = [i for i, o in enumerate(origins) if o in SCREENED_ORIGINS]
+    best = sorted(screened, key=lambda i: (-scores[i], i))[:math.ceil(keep * len(screened))]
+    return (set(range(len(origins))) - set(screened)) | set(best)
+
+
 def _trace_body(tdir, archive, batch_meta, res, cell, before, accepted):
     """Tracing: one line of bodies.jsonl for a finished body (main process)."""
     genes, ctrl_, fit, scores, evals, behaviour, parent, bad = res[:8]
@@ -724,6 +755,7 @@ def run(
     protect_new: float = 1.0,
     mirror_p: float = 0.0,
     deterministic: bool = False,
+    screen: float = 1.0,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -737,6 +769,10 @@ def run(
         raise ValueError("protect_new must be >= 1.0 (1.0 turns it off)")
     if not 0.0 <= mirror_p <= 1.0:
         raise ValueError("mirror_p must be in [0, 1] (0 turns it off)")
+    if not 0.0 < screen <= 1.0:
+        raise ValueError("screen must be in (0, 1] (1.0 turns it off)")
+    if screen < 1.0 and device in ("gpu", "warp"):
+        raise ValueError(f"--screen is CPU only; use --screen 1 with --device {device}")
     if axes not in AXES:
         raise ValueError(f"axes must be one of {AXES}")
     if task not in task_names():
@@ -777,7 +813,8 @@ def run(
               "variant_mode": variant_mode, "protect_new": protect_new,
               "mirror_p": mirror_p, "batch_size": batch_size,
               "budget_init": budget_init, "budget_child": budget_child,
-              "deterministic": deterministic}
+              "deterministic": deterministic,
+              "screen": screen}
     if resume:                                  # the new values win, and are stored
         for key, value in search.items():
             old = archive.search.get(key, value)
@@ -868,6 +905,7 @@ def run(
           + (f" variant_mode={variant_mode}" if variant_mode != "all" else "")
           + (f" protect_new={protect_new}" if protect_new != 1.0 else "")
           + (f" mirror_p={mirror_p}" if mirror_p else "")
+          + (f" screen={screen}" if screen != 1.0 else "")
           + (" deterministic" if deterministic else ""))
     if device == "gpu" or (device == "warp" and workers == 1):
         pool = None
@@ -900,6 +938,19 @@ def run(
             t0 = time.time()
             added = failed = 0
             tasks = make_batch()
+            n_screened = 0
+            if screen < 1.0 and any(m["origin"] in SCREENED_ORIGINS for m in batch_meta):
+                # quick score of the changed bodies on the same pool; the
+                # results are matched by index, so the order does not matter
+                jobs = [(i, t[0], t[1], t[6], t[12]) for i, t in enumerate(tasks)
+                        if batch_meta[i]["origin"] in SCREENED_ORIGINS]
+                quick = (map(_screen_work, jobs) if pool is None else
+                         (pool.imap if deterministic else pool.imap_unordered)(
+                             _screen_work, jobs))
+                kept = screen_keep([m["origin"] for m in batch_meta],
+                                   dict(quick), screen)
+                n_screened = len(tasks) - len(kept)
+                tasks = [t for i, t in enumerate(tasks) if i in kept]
             # deterministic: results in submission order, so the same seed and
             # worker count give the same run; otherwise in completion order
             results = ([_work(t) for t in tasks] if pool is None
@@ -935,6 +986,7 @@ def run(
             print(f"batch {s['batch']:3d}  cells {s['cells']:3d}  +{added:2d}  "
                   f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "
                   f"nov {s['novelty']:.3f}  evals {s['evals']}  {s['seconds']}s"
+                  + (f"  screened={n_screened}" if screen < 1.0 else "")
                   + (f"  failed {failed}" if failed else ""), flush=True)
             archive.batch += 1
             with open(path + ".tmp", "wb") as f:

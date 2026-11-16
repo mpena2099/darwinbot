@@ -100,6 +100,10 @@ def main():
                         "a lot (a graft, two genome slots or an added/removed node), "
                         "so a new body is not judged on a poorly tuned controller; "
                         "1.0 (default) turns it off; not stored in the archive")
+    p.add_argument("--deterministic", action="store_true",
+                   help="take each batch's results in submission order instead of "
+                        "completion order, so the same --seed and --workers repeat a "
+                        "run exactly; a little slower; not stored in the archive")
     p.add_argument("--mirror-p", type=float, default=0.0, metavar="P",
                    help="share of mutations that copy the limb that changed onto its "
                         "mirror slot, so symmetric bodies can arise and compete; "
@@ -189,7 +193,7 @@ def main():
                   body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
                   variant_mode=a.variant_mode, protect_new=a.protect_new,
-                  mirror_p=a.mirror_p)
+                  mirror_p=a.mirror_p, deterministic=a.deterministic)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

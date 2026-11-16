@@ -547,6 +547,23 @@ def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=()):
     plugins.load_all(plugin_paths)
 
 
+def _cuda_devices() -> int:
+    import warp as wp
+    return max(1, wp.get_cuda_device_count())
+
+
+def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body="",
+                 plugin_paths=()):
+    """Pool initializer for --device warp: bind this worker to the next GPU."""
+    _init_worker(ablations, score_rules, body, plugin_paths)
+    with counter.get_lock():
+        i = counter.value
+        counter.value += 1
+    import warp as wp
+    if wp.get_cuda_device_count() > 0:
+        wp.set_device(f"cuda:{i % n_gpus}")
+
+
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
 LOCK_TRIES = 8          # offspring drawn until one keeps the archive's locked parts
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
@@ -728,6 +745,9 @@ def run(
         print("[darwinbot] gpu: workers ignored, tasks run one at a time")
         workers = 1
         popsize = 64 if popsize is None else popsize
+    elif device == "warp":
+        # One process per worker, spread over the GPUs; by default one per GPU.
+        workers = workers or _cuda_devices()
     else:
         workers = workers or max(1, multiprocessing.cpu_count() - 1)
 
@@ -843,11 +863,18 @@ def run(
           + (f" protect_new={protect_new}" if protect_new != 1.0 else "")
           + (f" mirror_p={mirror_p}" if mirror_p else "")
           + (" deterministic" if deterministic else ""))
-    if device != "gpu":
+    if device == "gpu" or (device == "warp" and workers == 1):
+        pool = None
+    elif device == "warp":
+        # CUDA does not survive fork: spawned workers, each bound to one GPU.
+        ctx = multiprocessing.get_context("spawn")
+        pool = ctx.Pool(workers, _warp_worker,
+                        (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules,
+                         archive.body, plugins.loaded()))
+    else:
         fastloop.warmup()        # compiled before the fork, so workers inherit it
-    pool = None if device == "gpu" else multiprocessing.Pool(
-        workers, _init_worker,
-        (archive.ablate, archive.rules, archive.body, plugins.loaded()))
+        pool = multiprocessing.Pool(workers, _init_worker,
+                                    (archive.ablate, archive.rules, archive.body, plugins.loaded()))
     if tdir:
         os.makedirs(tdir, exist_ok=True)
     path = os.path.join(out_dir, "archive.pkl")

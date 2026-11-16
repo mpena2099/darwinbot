@@ -7,12 +7,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
 
-from validate import Row, verdict  # noqa: E402
+from validate import Row, mean_body, verdict  # noqa: E402
 
 
 def row(terrain="flat", command="straight", nominal=1.0, mean=1.0, p5=1.0,
-        worst=1.0, fall=0.0):
-    return Row(terrain, command, nominal, mean, p5, worst, fall)
+        worst=1.0, fall=0.0, body=0.0):
+    return Row(terrain, command, nominal, mean, p5, worst, fall, body)
 
 
 def test_all_criteria_pass():
@@ -60,3 +60,26 @@ def test_one_dead_command_on_a_moving_terrain_passes():
 
 def test_empty_rows_fail():
     assert verdict([]) == (False, ["no rows"])
+
+
+def test_body_check_is_off_by_default():
+    assert verdict([row(body=0.9)]) == (True, [])
+
+
+def test_sliding_on_the_body_alone_fails():
+    ok, reasons = verdict([row(body=0.9)], max_body=0.5)
+    assert not ok
+    assert reasons == ["slides on its body: 90% of the time"]
+
+
+def test_body_limit_is_on_the_mean_over_the_rows():
+    assert verdict([row(body=0.2), row("rough", body=0.8)], max_body=0.5) == (True, [])
+    assert not verdict([row(body=0.4), row("rough", body=0.9)], max_body=0.5)[0]
+
+
+def test_max_body_one_turns_the_check_off():
+    assert verdict([row(body=1.0)], max_body=1.0) == (True, [])
+
+
+def test_mean_body_of_no_rows_is_zero():
+    assert mean_body([]) == 0.0

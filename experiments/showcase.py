@@ -6,11 +6,15 @@ command: polish, prune, validate, check the printed assembly, and snapshot.
 
     python experiments/showcase.py --archive merged.pkl --types a,b --out showcase --workers 8
     python experiments/showcase.py --archive a.pkl --types a --out s --skip polish,prune
+    python experiments/showcase.py --archive a.pkl --types a,b --out s --strict-body   # drop belly robots
 
 The output directory must not exist yet. It receives polished.pkl, pruned.pkl,
 validate.txt, assembly.txt, showcase.snap.pkl and summary.txt (each robot's
 score before and after polish and prune, its validate verdict and its clash
 count). --skip leaves stages out, --budget is polish's CMA-ES budget.
+--max-body SHARE (default evolve.BODY_SHARE) warns, before the chain, about each
+robot whose stored body-ground share is above it, and validate fails it under the
+same limit; --strict-body drops those robots from the chain instead.
 """
 
 import argparse
@@ -20,6 +24,9 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from darwinbot.evolve import BODY_SHARE   # noqa: E402
 
 STAGES = ("polish", "prune", "validate", "assembly", "snapshot")
 FILES = {"polish": "polished.pkl", "prune": "pruned.pkl",
@@ -33,11 +40,14 @@ def plan(skip=()):
     return [s for s in STAGES if s not in skip]
 
 
-def command(stage, archive, types, out, workers=1, budget=1200, plugin=None):
+def command(stage, archive, types, out, workers=1, budget=1200, plugin=None,
+            max_body=None):
     """argv of one stage, sys.executable first. Pure: nothing is read or run."""
     argv = _stage_argv(stage, archive, types, out, workers, budget)
     if plugin and stage in PLUGIN_STAGES:
         argv += ["--plugin", plugin]
+    if max_body is not None and stage == "validate":
+        argv += ["--max-body", str(max_body)]
     return argv
 
 
@@ -68,13 +78,14 @@ def _load(path):
     return load_archive(path)
 
 
-def _fitnesses(path, types):
-    """Fitness of each named robot, in the given order."""
+def _stored(path, types):
+    """(fitness, body-ground share) of each named robot, in the given order."""
     a = _load(path)
     try:
-        return [a.cells[a.find(t)].fitness for t in types]
+        cells = [a.cells[a.find(t)] for t in types]
     except ValueError as e:
         raise SystemExit(f"{e}; see the types with replay.py --list")
+    return [c.fitness for c in cells], [c.behaviour.body_ground for c in cells]
 
 
 def _ordered(path, expected):
@@ -116,6 +127,11 @@ def main(argv=None):
                    help="external tasks and terrains the archive was trained with")
     p.add_argument("--skip", default="",
                    help="comma list of stages to leave out: " + ", ".join(STAGES))
+    p.add_argument("--max-body", type=float, default=BODY_SHARE, metavar="SHARE",
+                   help="warn about, and validate fail, a robot whose body is on the ground "
+                        "more than this share of the time (default: %(default)s)")
+    p.add_argument("--strict-body", action="store_true",
+                   help="drop the robots over --max-body from the chain instead of warning")
     a = p.parse_args(argv)
 
     skip = [s.strip() for s in a.skip.split(",") if s.strip()]
@@ -129,7 +145,17 @@ def main(argv=None):
         raise SystemExit("--types is empty: name at least one robot")
     run = plan(skip)
 
-    fit_before = _fitnesses(a.archive, types)
+    fit_before, bodies = _stored(a.archive, types)
+    slid = {t for t, b in zip(types, bodies) if b > a.max_body}
+    for t, b in zip(types, bodies):
+        if t in slid:
+            print(f"warning: {t}: slides on its body {b:.0%} of the time", flush=True)
+    if a.strict_body and slid:
+        keep = [i for i, t in enumerate(types) if t not in slid]
+        if not keep:
+            raise SystemExit("every requested robot slides on its body; nothing to run")
+        types = [types[i] for i in keep]
+        fit_before = [fit_before[i] for i in keep]
     os.makedirs(a.out)
     fit_polish = fit_prune = fit_before
     names, verdicts = list(types), ["-"] * len(types)
@@ -148,7 +174,7 @@ def main(argv=None):
         elif stage in ("validate", "assembly"):
             for i, name in enumerate(names):
                 text = _run(stage, command(stage, src, [name], a.out, a.workers,
-                                           plugin=a.plugin),
+                                           plugin=a.plugin, max_body=a.max_body),
                             os.path.join(a.out, FILES[stage]))
                 if stage == "validate":
                     m = re.findall(r"\): (PASS|FAIL)", text)

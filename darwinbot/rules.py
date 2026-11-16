@@ -15,11 +15,13 @@ metrics the rules read (`tilt`, `slip`, `servo_ground`) are always measured, in
                 housing touches the ground
   body_ground   subtract BODY_GROUND_W * share of control ticks the torso
                 itself touches the ground
+  energy_abs    subtract ENERGY_ABS_W * energy / (M_REF g): the servo work
+                itself, not divided by the robot's own mass, so dead weight costs
 """
 from typing import Iterable
 
 NAMES = ("worse_turn", "turn_forward", "tilt", "slip", "servo_ground",
-         "body_ground")
+         "body_ground", "energy_abs")
 
 _active: frozenset = frozenset()
 

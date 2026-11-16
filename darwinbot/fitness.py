@@ -63,6 +63,7 @@ Optional rules (darwinbot/rules.py, off by default, switched on per run with
   slip          every episode: - SLIP_W * Metrics.slip (m/s of sliding feet)
   servo_ground  every episode: - SERVO_GROUND_W * Metrics.servo_ground (share of ticks)
   body_ground   every episode: - BODY_GROUND_W * Metrics.body_ground (share of ticks)
+  energy_abs    every episode: - ENERGY_ABS_W * energy / (M_REF g), M_REF = 1 kg
 """
 
 import math
@@ -75,6 +76,8 @@ from darwinbot.sim import Metrics
 
 LATERAL_W    = 0.5
 ENERGY_W     = 0.05
+ENERGY_ABS_W = 0.05   # rule `energy_abs`: m per (energy / (M_REF g))
+M_REF        = 1.0    # kg: reference mass of rule `energy_abs`
 FALL_PENALTY = 0.5
 TURN_DRIFT_W = 0.5
 BUILTIN_TASKS = ("forward", "turn", "steer")
@@ -135,6 +138,10 @@ def rule_cost(m: Metrics) -> float:
         c += SERVO_GROUND_W * m.servo_ground
     if rules.active("body_ground"):
         c += BODY_GROUND_W * m.body_ground
+    if rules.active("energy_abs"):
+        # the energy term divides by the robot's own mass, so a heavy idle part
+        # lowers it; this charges the energy itself, against a fixed mass
+        c += ENERGY_ABS_W * m.energy / (M_REF * G)
     return c
 
 

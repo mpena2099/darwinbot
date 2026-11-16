@@ -541,6 +541,7 @@ GRAFT_P = 0.2           # share of children made by grafting a limb of a second 
 LOCK_TRIES = 8          # offspring drawn until one keeps the archive's locked parts
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
+PROTECT_SLOTS = 2       # changed slots that make a child's body a new body
 
 
 def scaled_budget(budget: int, morph) -> int:
@@ -549,6 +550,20 @@ def scaled_budget(budget: int, morph) -> int:
     to learn a coordinated gait instead of losing its cell to a simpler one."""
     scale = min(max(morph.n_joints / BUDGET_JOINTS, 1.0), BUDGET_SCALE_MAX)
     return int(round(budget * scale))
+
+
+def child_budget(m: dict, budget: int, protect_new: float = 1.0) -> int:
+    """CMA-ES evaluations of one child, before `scaled_budget`: a body that
+    changed a lot (a graft, PROTECT_SLOTS or more slots of the genome, or
+    another set of node slots) gets its budget times protect_new, so a new body
+    is not judged on a controller tuned for its parent (Cheney et al. 2018).
+    The child that is the parent's own body ("same") and random bodies keep
+    their budget; 1.0 turns the option off and returns the budget untouched."""
+    if protect_new == 1.0 or m["changed_slots"] is None or m["origin"] == "same":
+        return budget
+    big = (m["origin"] == "graft" or m["changed_slots"] >= PROTECT_SLOTS
+           or not m["same_slots"])
+    return int(round(budget * protect_new)) if big else budget
 
 
 def job_cost(job) -> float:
@@ -657,6 +672,7 @@ def run(
     plugin: Optional[dict] = None,
     inner_strategy: Optional[str] = None,
     variant_mode: str = "all",
+    protect_new: float = 1.0,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -664,6 +680,8 @@ def run(
         raise ValueError(f"inner_strategy must be one of {INNER_STRATEGIES}")
     if variant_mode not in VARIANT_MODES:
         raise ValueError(f"variant_mode must be one of {VARIANT_MODES}")
+    if protect_new < 1.0:
+        raise ValueError("protect_new must be >= 1.0 (1.0 turns it off)")
     if axes not in AXES:
         raise ValueError(f"axes must be one of {AXES}")
     if task not in task_names():
@@ -711,7 +729,9 @@ def run(
         d = (np.asarray(child, float) - np.asarray(parent, float)).reshape(
             morpho.MAX_NODES, morpho.BLOCK_GENES)
         return {"origin": origin, "changed_slots": int((np.abs(d).max(axis=1) > 0).sum()),
-                "l2": float(np.sqrt((d ** 2).sum()))}
+                "l2": float(np.sqrt((d ** 2).sum())),
+                "same_slots": set(morpho.decode(child).nodes)
+                == set(morpho.decode(parent).nodes)}
 
     def inner_opts(parent_genes=None) -> dict:
         """Inner-loop options of one job; focused needs the parent's body genes."""
@@ -761,7 +781,8 @@ def run(
                 batch_meta.append(meta(child, parent, "same" if grafted is None
                                        else "graft" if grafted else "mutate"))
                 tasks.append((child, parents["ctrl"][i], terrains,
-                              budget_child, 0.12, new_seed(), archive.seconds,
+                              child_budget(batch_meta[-1], budget_child, protect_new),
+                              0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,
                               elite_id(parents["solution"][i], parents["ctrl"][i]),
                               archive.task, archive.payload, inner_opts(parent)))
@@ -775,7 +796,8 @@ def run(
           + (f" body={archive.body}" if archive.body else "")
           + (f" axes={archive.axes}" if archive.axes != "default" else "")
           + (f" inner_strategy={inner_strategy}" if inner_strategy else "")
-          + (f" variant_mode={variant_mode}" if variant_mode != "all" else ""))
+          + (f" variant_mode={variant_mode}" if variant_mode != "all" else "")
+          + (f" protect_new={protect_new}" if protect_new != 1.0 else ""))
     if device != "gpu":
         fastloop.warmup()        # compiled before the fork, so workers inherit it
     pool = None if device == "gpu" else multiprocessing.Pool(

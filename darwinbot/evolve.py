@@ -674,6 +674,7 @@ def run(
     variant_mode: str = "all",
     protect_new: float = 1.0,
     mirror_p: float = 0.0,
+    deterministic: bool = False,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -801,7 +802,8 @@ def run(
           + (f" inner_strategy={inner_strategy}" if inner_strategy else "")
           + (f" variant_mode={variant_mode}" if variant_mode != "all" else "")
           + (f" protect_new={protect_new}" if protect_new != 1.0 else "")
-          + (f" mirror_p={mirror_p}" if mirror_p else ""))
+          + (f" mirror_p={mirror_p}" if mirror_p else "")
+          + (" deterministic" if deterministic else ""))
     if device != "gpu":
         fastloop.warmup()        # compiled before the fork, so workers inherit it
     pool = None if device == "gpu" else multiprocessing.Pool(
@@ -826,8 +828,11 @@ def run(
             t0 = time.time()
             added = failed = 0
             tasks = make_batch()
+            # deterministic: results in submission order, so the same seed and
+            # worker count give the same run; otherwise in completion order
             results = ([_work(t) for t in tasks] if pool is None
-                       else pool.imap_unordered(_work, longest_first(tasks)))
+                       else (pool.imap if deterministic else pool.imap_unordered)(
+                           _work, longest_first(tasks)))
             for res in results:
                 genes, ctrl, fit, scores, evals, behaviour, parent, bad = res[:8]
                 archive.evals += evals

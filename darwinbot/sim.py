@@ -59,6 +59,7 @@ class Metrics:
     tilt:     float = 0.0   # mean torso tilt over the control ticks (rad)
     slip:     float = 0.0   # mean over ticks of the summed horizontal speed (m/s) of non-wheel terminals that touched the ground on two consecutive ticks
     servo_ground: float = 0.0   # share of control ticks a servo housing touches the ground
+    body_ground: float = 0.0    # share of control ticks the body (not a terminal point) touches the ground
 
     def __post_init__(self):
         # progress = 2 * (x_end - x_mid): only the second half of the episode
@@ -133,24 +134,40 @@ def servo_geoms(model: mujoco.MjModel) -> np.ndarray:
                      .startswith("servo")], dtype=int)
 
 
+def body_geoms(model: mujoco.MjModel, morph: Morphology) -> np.ndarray:
+    """MuJoCo geom ids of the robot's body: every collision geom of a robot
+    part or of the torso volume (never the terrain, which sits on the world
+    body) that is not a terminal point."""
+    tips, _ = terminal_geoms(model, morph)
+    terminal = np.zeros(model.ngeom, dtype=bool)
+    terminal[tips] = True
+    return np.array([g for g in range(model.ngeom)
+                     if model.geom_contype[g] and model.geom_bodyid[g] != 0
+                     and not terminal[g]], dtype=int)
+
+
 class Behaviour(NamedTuple):
     """What a body does on the nominal flat episode: the record stored in the
     archive and read by name everywhere. The field order is the order of the
-    `behaviour` array of old archives and checkpoints."""
+    `behaviour` array of old archives and checkpoints; body_ground was added
+    after it, so an old record of six values still loads."""
     duty:        float   # mean fraction of control ticks a terminal point touches the ground
     height:      float   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     servos:      float   # number of servos
     wheel_share: float   # share of terminal contact time that belongs to wheels
     cot:         float   # cost of transport
     legs:        float   # number of legs
+    body_ground: float = 0.0   # share of control ticks the body (not a terminal point) touches the ground
 
     @classmethod
     def of(cls, values) -> "Behaviour":
-        """A Behaviour from any sequence of six numbers (a tuple or array from an
-        old archive, a list); a Behaviour passes through."""
+        """A Behaviour from any sequence of six or seven numbers (a tuple or
+        array from an old archive, a list); six get body_ground 0.0. A
+        Behaviour passes through."""
         if isinstance(values, cls):
             return values
-        return cls(*(float(v) for v in values[:6]))
+        v = [float(x) for x in values[:7]]
+        return cls(*(v if len(v) == 7 else v + [0.0]))
 
 
 def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
@@ -231,6 +248,7 @@ class Episode:
         self._tgeoms, self._twheel = terminal_geoms(self.model, morph)
         self._hit = np.zeros(self.model.ngeom, dtype=bool)
         self._sgeoms = servo_geoms(self.model)
+        self._bgeoms = body_geoms(self.model, morph)
         self._k = 0
         assert self.model.nu == len(self.layout)
 
@@ -293,6 +311,7 @@ class Episode:
         touch = np.zeros(len(self._tgeoms))
         zsum, upsum, ticks = 0.0, 0.0, 0
         tiltsum, slipsum, sgsum = 0.0, 0.0, 0
+        bgsum = 0
         prev_pos = np.zeros((len(self._tgeoms), 2))
         prev_touch = np.zeros(len(self._tgeoms), dtype=bool)
         tick_dt = hold * dt
@@ -327,6 +346,7 @@ class Episode:
                 now_touch = self._touching()
                 touch += now_touch
                 sgsum += bool(self._hit[self._sgeoms].any())
+                bgsum += bool(self._hit[self._bgeoms].any())
                 pos = d.geom_xpos[self._tgeoms, :2]
                 on = now_touch & prev_touch & feet
                 if on.any():
@@ -338,7 +358,7 @@ class Episode:
                 ticks += 1
 
         return (energy, yaw, fell, unstable, x_mid, touch, zsum, upsum, ticks,
-                tiltsum, slipsum, sgsum)
+                tiltsum, slipsum, sgsum, bgsum)
 
     def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0,
             speed: float = 1.0) -> Metrics:
@@ -367,11 +387,12 @@ class Episode:
             x_mid = None if math.isnan(out[4]) else float(out[4])
             zsum, upsum, ticks = float(out[5]), float(out[6]), int(out[7])
             tiltsum, slipsum, sgsum = float(out[8]), float(out[9]), int(out[10])
+            bgsum = int(out[12])
             self._k = int(out[11])
             touch = touch.copy()
         else:
             (energy, yaw, fell, unstable, x_mid, touch, zsum, upsum, ticks,
-             tiltsum, slipsum, sgsum) = self._loop_py(controller, sim_model, variant)
+             tiltsum, slipsum, sgsum, bgsum) = self._loop_py(controller, sim_model, variant)
 
         x, y = d.xpos[self.torso][:2]
         duty, height, share = behaviour(touch, self._twheel, zsum, ticks, self.reach)
@@ -388,4 +409,5 @@ class Episode:
             tilt=tiltsum / ticks if ticks else 0.0,
             slip=slipsum / ticks if ticks else 0.0,
             servo_ground=sgsum / ticks if ticks else 0.0,
+            body_ground=bgsum / ticks if ticks else 0.0,
         )

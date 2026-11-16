@@ -64,6 +64,8 @@ Optional rules (darwinbot/rules.py, off by default, switched on per run with
   servo_ground  every episode: - SERVO_GROUND_W * Metrics.servo_ground (share of ticks)
   body_ground   every episode: - BODY_GROUND_W * Metrics.body_ground (share of ticks)
   energy_abs    every episode: - ENERGY_ABS_W * energy / (M_REF g), M_REF = 1 kg
+  fall_zero     an episode that fell: its progress credit (up(progress) or
+                up(|yaw|), and the half-speed credit) is 0; FALL_PENALTY stays
 """
 
 import math
@@ -127,6 +129,13 @@ def up(v: float, m: Metrics) -> float:
     return v * m.upright if v > 0 else v
 
 
+def credit(v: float, m: Metrics) -> float:
+    """up(v), or 0 for a fallen episode under rule `fall_zero`."""
+    if m.fell and rules.active("fall_zero"):
+        return 0.0
+    return up(v, m)
+
+
 def rule_cost(m: Metrics) -> float:
     """Penalty of the active optional rules (0 when none is on)."""
     c = 0.0
@@ -154,9 +163,9 @@ def score(m: Metrics, task: str = "forward") -> float:
         return float(_TASK_SCORES[task](m))
     cost = ENERGY_W * m.energy / (m.mass * G) + rule_cost(m)
     if task == "turn":
-        s = up(abs(m.yaw), m) - TURN_DRIFT_W * math.hypot(m.dx, m.dy) - cost
+        s = credit(abs(m.yaw), m) - TURN_DRIFT_W * math.hypot(m.dx, m.dy) - cost
     else:
-        s = up(m.progress, m) - LATERAL_W * abs(m.dy) - HEADING_W * abs(m.yaw) - cost
+        s = credit(m.progress, m) - LATERAL_W * abs(m.dy) - HEADING_W * abs(m.yaw) - cost
     if m.fell:
         s -= FALL_PENALTY
     return float(s)
@@ -186,10 +195,11 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         if rules.active("turn_forward") and m.dx <= 0:
             dist = 0.0
         turn = min(TURN_SCALE * min(-c * m.yaw, TURN_CAP), dist)
-        s = up(turn, m) - ENERGY_W * m.energy / (m.mass * G) - rule_cost(m)
+        s = credit(turn, m) - ENERGY_W * m.energy / (m.mass * G) - rule_cost(m)
         turns.append(s - FALL_PENALTY if m.fell else s)
     turn = min(turns) if rules.active("worse_turn") else np.mean(turns)
-    full, slow = max(up(ms[0].progress, ms[0]), 0.0), max(up(ms[3].progress, ms[3]), 0.0)
+    full = max(credit(ms[0].progress, ms[0]), 0.0)
+    slow = max(credit(ms[3].progress, ms[3]), 0.0)
     half = (SPEED_ASKED * full - abs(slow - SPEED_ASKED * full)
             - ENERGY_W * ms[3].energy / (ms[3].mass * G) - rule_cost(ms[3]))
     if ms[3].fell:

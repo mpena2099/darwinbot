@@ -69,6 +69,9 @@ in `sim.py` and `sim_gpu.py`.
 | `tilt` | every episode: `- 0.2 * tilt`, the mean torso tilt in radians |
 | `slip` | every episode: `- 0.2 * slip`, the summed horizontal speed (m/s) of non-wheel terminals that touched the ground on two consecutive control ticks, averaged over ticks |
 | `servo_ground` | every episode: `- 0.1 * servo_ground`, the share of control ticks a servo housing touches the ground |
+| `body_ground` | every episode: `- 0.2 * body_ground`, the share of control ticks the torso itself touches the ground |
+| `energy_abs` | every episode: `- 0.05 * energy / (1 kg * g)`, the servo work against a fixed 1 kg instead of the robot's own mass |
+| `fall_zero` | an episode that fell earns no progress credit (`up(progress)`, `up(abs(yaw))` and the half-speed credit); `FALL_PENALTY` still applies |
 
 ## Fitness
 

@@ -103,7 +103,9 @@ def main():
     p.add_argument("--deterministic", action="store_true",
                    help="take each batch's results in submission order instead of "
                         "completion order, so the same --seed and --workers repeat a "
-                        "run exactly; a little slower; not stored in the archive")
+                        "run exactly; a little slower; not stored in the archive. "
+                        "--device gpu always runs in submission order, so it is "
+                        "deterministic with or without this flag")
     p.add_argument("--mirror-p", type=float, default=0.0, metavar="P",
                    help="share of mutations that copy the limb that changed onto its "
                         "mirror slot, so symmetric bodies can arise and compete; "
@@ -129,9 +131,10 @@ def main():
                    choices=ablate.NAMES,
                    help="experiment: switch one realism rule off, repeatable ("
                         + ", ".join(ablate.NAMES) + "); stored in the archive, CPU only")
-    p.add_argument("--rules", default="", metavar="A,B",
+    p.add_argument("--rules", default=None, metavar="A,B",
                    help="experiment: optional score rules to switch on, comma list ("
-                        + ", ".join(rules.NAMES) + "); stored in the archive")
+                        + ", ".join(rules.NAMES) + "); stored in the archive, and a "
+                        "resume must repeat the archive's (or give none)")
     p.add_argument("--body", default="", metavar="A,B",
                    help="limits on the bodies evolution may build, comma list of "
                         "no-wheels, no-passive, no-segments, max-servos=N, "
@@ -141,7 +144,8 @@ def main():
                         "share of ticks the torso touches the ground); stored in the "
                         "archive, new archives only")
     a = p.parse_args()
-    a.rules = tuple(n for n in a.rules.split(",") if n)
+    rules_given = a.rules is not None          # None: keep the archive's rules on resume
+    a.rules = tuple(n for n in (a.rules or "").split(",") if n)
     try:
         rules.normalise(a.rules)
         body_options.parse(a.body)
@@ -189,7 +193,8 @@ def main():
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
-                  parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
+                  parent_selection=a.parent_selection, ablations=tuple(a.ablate),
+                  score_rules=a.rules if rules_given else None,
                   body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
                   variant_mode=a.variant_mode, protect_new=a.protect_new,

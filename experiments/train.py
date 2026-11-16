@@ -95,6 +95,11 @@ def main():
     p.add_argument("--variant-mode", choices=evolve.VARIANT_MODES, default="all",
                    help="all (default): every candidate on the whole variant set; "
                         "first: one variant in the loop, one full re-score at the end")
+    p.add_argument("--protect-new", type=float, default=1.0, metavar="FACTOR",
+                   help="multiply the inner-loop budget of a child whose body changed "
+                        "a lot (a graft, two genome slots or an added/removed node), "
+                        "so a new body is not judged on a poorly tuned controller; "
+                        "1.0 (default) turns it off; not stored in the archive")
     p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -133,6 +138,8 @@ def main():
         body_options.parse(a.body)
     except ValueError as e:
         raise SystemExit(str(e))
+    if a.protect_new < 1.0:
+        raise SystemExit("--protect-new must be >= 1.0 (1.0 turns it off)")
 
     wanted = None
     if a.profile:
@@ -174,7 +181,7 @@ def main():
                   parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
                   body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
-                  variant_mode=a.variant_mode)
+                  variant_mode=a.variant_mode, protect_new=a.protect_new)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

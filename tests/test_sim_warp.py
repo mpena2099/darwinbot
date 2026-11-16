@@ -47,6 +47,7 @@ def _check(got, ref):
         assert abs(g.tilt - r.tilt) <= 0.05, (i, g.tilt, r.tilt)
         assert abs(g.slip - r.slip) <= 0.02 + 0.1 * r.slip, (i, g.slip, r.slip)
         assert abs(g.servo_ground - r.servo_ground) <= 0.1, (i, g.servo_ground, r.servo_ground)
+        assert abs(g.body_ground - r.body_ground) <= 0.1, (i, g.body_ground, r.body_ground)
         assert abs(g.duration - r.duration) <= 1e-4, (i, g.duration, r.duration)
 
 
@@ -60,6 +61,28 @@ def test_short_parity(wheels):
                              device=DEVICE)
     _check(batch.run_batch(ctrls, commands),
            _ref(morph, ctrls, commands, 1.0))
+
+
+def test_body_ground_parity():
+    """Bodies that drag (random trees, random controllers) report the same
+    share of ticks with a non-terminal geom on the ground as the CPU."""
+    terrain = te.get_terrains("flat")[0]
+    rng = np.random.default_rng(5)
+    seen = 0.0
+    for _ in range(3):
+        morph = mo.random_morphology(rng)
+        ctrls = np.stack([co.random_controller(rng) for _ in range(4)])
+        commands = np.zeros((4, 2))
+        commands[:, 1] = 1.0
+        batch = WarpBatchEpisode(morph, terrain, seconds=2.0, device=DEVICE)
+        if not batch.buildable:
+            continue
+        got = batch.run_batch(ctrls, commands)
+        ref = _ref(morph, ctrls, commands, 2.0)
+        for i, (g, r) in enumerate(zip(got, ref)):
+            assert abs(g.body_ground - r.body_ground) <= 0.1, (i, g.body_ground, r.body_ground)
+            seen = max(seen, r.body_ground)
+    assert seen > 0.0, "no body touched the ground: the case checks nothing"
 
 
 def test_variants_parity():

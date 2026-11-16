@@ -33,6 +33,7 @@ darwinbot/
 │   ├── terrain.py      # terrain snippets and presets
 │   ├── sim.py          # Episode: compile once, replay controllers
 │   ├── sim_gpu.py      # optional MJX batch simulator
+│   ├── sim_warp.py     # optional MuJoCo Warp batch simulator (NVIDIA)
 │   ├── randomize.py    # randomised model variants (sim-to-real)
 │   ├── fitness.py      # episode score, tasks and multi-terrain aggregate
 │   ├── rules.py        # optional score rules (--rules)

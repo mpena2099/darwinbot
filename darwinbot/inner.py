@@ -196,6 +196,8 @@ def optimise_controller(
     Ignored with map_many, whose workers always score the whole set.
     episodes: the body's Episodes for these terrains, when the caller has built
     them already (CPU only); the result does not change.
+    On device "warp" the search always runs every variant (variant_mode is
+    ignored) and the final re-score is the CPU one; episodes is ignored.
     """
     if variant_mode not in ("all", "first"):
         raise ValueError(f"unknown variant mode {variant_mode!r}: use all or first")

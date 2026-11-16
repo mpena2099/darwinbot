@@ -195,13 +195,15 @@ def _contacts(
     geom: wp.array(dtype=wp.vec2i),
     robot: wp.array(dtype=int),
     servo: wp.array(dtype=int),
+    body: wp.array(dtype=int),
     tip_of: wp.array(dtype=int),
     hit: wp.array2d(dtype=float),
     sghit: wp.array(dtype=float),
+    bghit: wp.array(dtype=float),
 ):
     """One thread per contact slot: mark the terminal point it touches, if the
     other geom is not part of the robot (as Episode._touching), and whether a
-    servo housing touches the ground."""
+    servo housing or a body geom (not a terminal point) touches the ground."""
     c = wp.tid()
     if c >= nacon[0]:
         return
@@ -214,6 +216,8 @@ def _contacts(
         hit[w, tip_of[b]] = 1.0
     if (servo[a] != 0 and robot[b] == 0) or (servo[b] != 0 and robot[a] == 0):
         sghit[w] = 1.0
+    if (body[a] != 0 and robot[b] == 0) or (body[b] != 0 and robot[a] == 0):
+        bghit[w] = 1.0
 
 
 @wp.kernel
@@ -250,13 +254,17 @@ def _touch(
 def _servo_ground(
     done: wp.array(dtype=int),
     sghit: wp.array(dtype=float),
+    bghit: wp.array(dtype=float),
     sgsum: wp.array(dtype=float),
+    bgsum: wp.array(dtype=float),
 ):
-    """Add this tick's servo housing contact of the worlds still running."""
+    """Add this tick's servo housing and body contact of the worlds still running."""
     w = wp.tid()
     if done[w] == 0:
         sgsum[w] = sgsum[w] + sghit[w]
+        bgsum[w] = bgsum[w] + bghit[w]
     sghit[w] = 0.0
+    bghit[w] = 0.0
 
 
 class WarpBatchEpisode:
@@ -305,6 +313,9 @@ class WarpBatchEpisode:
         servo = np.zeros(ep.model.ngeom, dtype=np.int32)
         servo[np.asarray(ep._sgeoms)] = 1
         self.servo = wp.array(servo, dtype=wp.int32, device=dev)
+        body = np.zeros(ep.model.ngeom, dtype=np.int32)
+        body[np.asarray(ep._bgeoms)] = 1
+        self.body = wp.array(body, dtype=wp.int32, device=dev)
         self.robot = wp.array(np.asarray(ep._robot, dtype=np.int32),
                               dtype=wp.int32, device=dev)
 
@@ -344,6 +355,7 @@ class WarpBatchEpisode:
              "step": zeros(n, wp.int32), "x_mid": zeros(n), "reached": zeros(n, wp.int32),
              "zsum": zeros(n), "upsum": zeros(n), "ticks": zeros(n, wp.int32),
              "tiltsum": zeros(n), "slipsum": zeros(n), "sgsum": zeros(n),
+             "bgsum": zeros(n), "bghit": zeros(n),
              "prev_pos": zeros((n, self.n_tips, 2)),
              "prev_touch": zeros((n, self.n_tips)),
              "sghit": zeros(n),
@@ -398,15 +410,15 @@ class WarpBatchEpisode:
             outputs=[b["zsum"], b["upsum"], b["tiltsum"], b["ticks"]])
         wp.launch(_contacts, dim=d.contact.geom.shape[0], device=dev,
                   inputs=[d.nacon, d.contact.worldid, d.contact.geom,
-                          self.robot, self.servo, self.tip_of],
-                  outputs=[b["hit"], b["sghit"]])
+                          self.robot, self.servo, self.body, self.tip_of],
+                  outputs=[b["hit"], b["sghit"], b["bghit"]])
         wp.launch(_touch, dim=(d.nworld, self.n_tips), device=dev,
                   inputs=[b["done"], d.geom_xpos, self.tip_geom, self.feet,
                           self.hold * self.dt],
                   outputs=[b["hit"], b["touch"], b["prev_pos"],
                            b["prev_touch"], b["slipsum"]])
         wp.launch(_servo_ground, dim=d.nworld, device=dev, inputs=[b["done"]],
-                  outputs=[b["sghit"], b["sgsum"]])
+                  outputs=[b["sghit"], b["bghit"], b["sgsum"], b["bgsum"]])
 
     def _reset(self, b: dict) -> None:
         """Every world back to the spawn pose (mj_resetData + mj_forward)."""
@@ -494,7 +506,7 @@ class WarpBatchEpisode:
         """Copies back and builds Metrics as sim.Episode.run does."""
         out = {k: b[k].numpy() for k in ("dx", "dy", "energy", "duration", "yaw",
                                          "fell", "unstable", "zsum", "upsum", "ticks",
-                                         "tiltsum", "slipsum", "sgsum",
+                                         "tiltsum", "slipsum", "sgsum", "bgsum",
                                          "touch", "x_mid", "reached")}
         out["touch"] = out["touch"].astype(float)
         # A world that ran out of contact or constraint room was simulated wrong.
@@ -524,5 +536,7 @@ class WarpBatchEpisode:
                 slip=(float(out["slipsum"][i]) / int(out["ticks"][i])
                       if out["ticks"][i] else 0.0),
                 servo_ground=(float(out["sgsum"][i]) / int(out["ticks"][i])
-                              if out["ticks"][i] else 0.0)))
+                              if out["ticks"][i] else 0.0),
+                body_ground=(float(out["bgsum"][i]) / int(out["ticks"][i])
+                             if out["ticks"][i] else 0.0)))
         return res

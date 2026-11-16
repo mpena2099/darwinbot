@@ -100,6 +100,11 @@ def main():
                         "a lot (a graft, two genome slots or an added/removed node), "
                         "so a new body is not judged on a poorly tuned controller; "
                         "1.0 (default) turns it off; not stored in the archive")
+    p.add_argument("--mirror-p", type=float, default=0.0, metavar="P",
+                   help="share of mutations that copy the limb that changed onto its "
+                        "mirror slot, so symmetric bodies can arise and compete; "
+                        "0 (default) turns it off and changes nothing; not stored in "
+                        "the archive and never part of the score")
     p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -140,6 +145,8 @@ def main():
         raise SystemExit(str(e))
     if a.protect_new < 1.0:
         raise SystemExit("--protect-new must be >= 1.0 (1.0 turns it off)")
+    if not 0.0 <= a.mirror_p <= 1.0:
+        raise SystemExit("--mirror-p must be in [0, 1] (0 turns it off)")
 
     wanted = None
     if a.profile:
@@ -181,7 +188,8 @@ def main():
                   parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
                   body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
-                  variant_mode=a.variant_mode, protect_new=a.protect_new)
+                  variant_mode=a.variant_mode, protect_new=a.protect_new,
+                  mirror_p=a.mirror_p)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

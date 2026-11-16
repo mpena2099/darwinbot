@@ -673,6 +673,7 @@ def run(
     inner_strategy: Optional[str] = None,
     variant_mode: str = "all",
     protect_new: float = 1.0,
+    mirror_p: float = 0.0,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -682,6 +683,8 @@ def run(
         raise ValueError(f"variant_mode must be one of {VARIANT_MODES}")
     if protect_new < 1.0:
         raise ValueError("protect_new must be >= 1.0 (1.0 turns it off)")
+    if not 0.0 <= mirror_p <= 1.0:
+        raise ValueError("mirror_p must be in [0, 1] (0 turns it off)")
     if axes not in AXES:
         raise ValueError(f"axes must be one of {AXES}")
     if task not in task_names():
@@ -772,7 +775,7 @@ def run(
                         donor = parents["solution"][(i + 1) % batch_size]
                         child = morpho.graft(parent, donor, rng)
                     else:
-                        child = morpho.mutate(parent, rng)
+                        child = morpho.mutate(parent, rng, mirror_p=mirror_p)
                     if morpho.keeps_locked(child, parent, archive.locked):
                         break
                 else:                    # same body, its controller searched again
@@ -797,7 +800,8 @@ def run(
           + (f" axes={archive.axes}" if archive.axes != "default" else "")
           + (f" inner_strategy={inner_strategy}" if inner_strategy else "")
           + (f" variant_mode={variant_mode}" if variant_mode != "all" else "")
-          + (f" protect_new={protect_new}" if protect_new != 1.0 else ""))
+          + (f" protect_new={protect_new}" if protect_new != 1.0 else "")
+          + (f" mirror_p={mirror_p}" if mirror_p else ""))
     if device != "gpu":
         fastloop.warmup()        # compiled before the fork, so workers inherit it
     pool = None if device == "gpu" else multiprocessing.Pool(

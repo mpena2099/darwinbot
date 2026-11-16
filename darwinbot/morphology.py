@@ -1963,15 +1963,123 @@ MUTATIONS = ((_op_param, 0.30), (_op_type, 0.15), (_op_add, 0.2),
 
 
 def mutate(genes: np.ndarray, rng: np.random.Generator,
-           n_ops: Optional[int] = None) -> np.ndarray:
-    """Apply 1 to 3 tree operators to the decoded body, then repair."""
+           n_ops: Optional[int] = None, mirror_p: float = 0.0) -> np.ndarray:
+    """Apply 1 to 3 tree operators to the decoded body, then repair. With
+    mirror_p > 0, that share of mutations copies the limb that changed onto its
+    mirror slot afterwards, so a symmetric body can stay symmetric (and a
+    mutation can build one); no extra random number is drawn at 0."""
     morph = decode(genes)
+    before = morph.copy() if mirror_p > 0 else None
     probs = np.array([p for _, p in MUTATIONS])
     for _ in range(n_ops or int(rng.integers(1, 4))):
         op, _ = MUTATIONS[int(rng.choice(len(MUTATIONS), p=probs / probs.sum()))]
         op(morph, rng)
         prune(morph)
+    if mirror_p > 0 and rng.random() < mirror_p:
+        _mirror_changed(morph, before, rng)
     return encode(fit_clashes(fit_rules(morph)))
+
+
+_NODE_GENES = ("kind", "axis", "rot", "length", "width", "thick", "wheel_rad",
+               "wheel_width", "flip", "foot_rad", "foot_shape", "tail_mass",
+               "offset", "angle", "profile", "bend")
+
+
+def _subtree_ids(morph: Morphology, root: int) -> List[int]:
+    """Every node id of the subtree under `root`, the root included."""
+    cm, out, stack = morph.child_map(), [], [root]
+    while stack:
+        i = stack.pop()
+        out.append(i)
+        stack.extend(cm.get(i, {}).values())
+    return out
+
+
+def _subtree_key(morph: Morphology, root: int, cm) -> tuple:
+    """Signature of a subtree that does not depend on node ids, for comparing
+    a body with itself before and after a mutation."""
+    return (tuple(getattr(morph.nodes[root], f) for f in _NODE_GENES),
+            tuple((s,) + _subtree_key(morph, c, cm)
+                  for s, c in sorted(cm.get(root, {}).items())))
+
+
+def _mirror_changed(morph: Morphology, before: Morphology, rng) -> None:
+    """Copy one limb on the torso (core, or a segment plate) that changed since
+    `before` onto its mirror slot, replacing the subtree there or filling the
+    free slot. Slots that are their own mirror are left alone and a copy that
+    would not fit is skipped, as in _op_mirror / copy_subtree."""
+    cm, bcm = morph.child_map(), before.child_map()
+    cand = []
+    for p, kids in cm.items():
+        kind = morph.nodes[p].kind
+        if kind not in ("core", "segment"):
+            continue
+        for s, c in kids.items():
+            if mirror_slot(kind, s) == s:
+                continue
+            old = bcm.get(p, {}).get(s)
+            if old is None or _subtree_key(before, old, bcm) != _subtree_key(morph, c, cm):
+                cand.append((p, s, c))
+    if not cand:
+        return
+    p, s, c = cand[int(rng.integers(len(cand)))]
+    ms = mirror_slot(morph.nodes[p].kind, s)
+    twin = cm.get(p, {}).get(ms)
+    src, gone = _subtree_ids(morph, c), _subtree_ids(morph, twin) if twin is not None else []
+    servos = sum(is_joint(morph.nodes[k].kind) or morph.nodes[k].kind == "wheel"
+                 for k in src)
+    lost = sum(is_joint(morph.nodes[k].kind) or morph.nodes[k].kind == "wheel"
+               for k in gone)
+    if (morph.n_nodes - len(gone) + len(src) > MAX_NODES
+            or morph.n_servos - lost + servos > _max_servos()):
+        return
+    if twin is not None:
+        _drop_subtree(morph, twin)
+    copy_subtree(morph, c, p, ms, mirror=True)
+
+
+def _mirrored(morph: Morphology, i: int, j: int, cm) -> bool:
+    """True when the subtree at `i` is the mirror image of the one at `j`
+    across the XZ plane, with the values copy_subtree(mirror=True) writes."""
+    a, b = morph.nodes[i], morph.nodes[j]
+    if a.kind != b.kind or a.axis != b.axis or a.foot_shape != b.foot_shape:
+        return False
+    d = (a.rot + b.rot) % (2 * np.pi)
+    if min(d, 2 * np.pi - d) > 1e-6:
+        return False
+    flush = morph.nodes[a.parent].kind in ("core", "segment")
+    pairs = [(a.length, b.length), (a.width, b.width), (a.thick, b.thick),
+             (a.wheel_rad, b.wheel_rad), (a.wheel_width, b.wheel_width),
+             (a.foot_rad, b.foot_rad), (a.tail_mass, b.tail_mass),
+             (a.offset, 1.0 - b.offset if flush else b.offset),
+             (a.angle, 1.0 - b.angle if flush else b.angle),
+             (a.bend, -b.bend)]
+    if any(abs(x - y) > 1e-6 for x, y in pairs):
+        return False
+    if a.flip != (b.flip != (a.kind in ("joint", "spring", "segment")
+                             and a.axis != "yaw")):
+        return False
+    ka, kb = cm.get(i, {}), cm.get(j, {})
+    return (len(ka) == len(kb) and all(
+        mirror_slot(b.kind, s) in ka
+        and _mirrored(morph, ka[mirror_slot(b.kind, s)], c, cm)
+        for s, c in kb.items()))
+
+
+def symmetry(morph: Morphology) -> float:
+    """Share of the core's top-level limbs that have a mirrored twin on their
+    mirror slot: same kinds in the same tree shape and every continuous
+    parameter at its mirrored value (within 1e-6). A limb on a slot that is its
+    own mirror counts when it matches its own mirror image, and a body with no
+    limbs gives 1.0. Pure function, for counting the symmetric robots in an
+    archive; the score never reads it."""
+    cm = morph.child_map()
+    kids = cm.get(0, {})
+    if not kids:
+        return 1.0
+    ok = sum(1 for s, c in kids.items() if mirror_slot("core", s) in kids
+             and _mirrored(morph, c, kids[mirror_slot("core", s)], cm))
+    return ok / len(kids)
 
 
 def graft(genes: np.ndarray, donor: np.ndarray,

@@ -196,11 +196,14 @@ def optimise_controller(
     Ignored with map_many, whose workers always score the whole set.
     episodes: the body's Episodes for these terrains, when the caller has built
     them already (CPU only); the result does not change.
-    On device "warp" the search always runs every variant (variant_mode is
-    ignored) and the final re-score is the CPU one; episodes is ignored.
+    On device "warp" the search always runs every variant, so variant_mode
+    "first" is refused there; the final re-score is the CPU one, and episodes
+    is ignored.
     """
     if variant_mode not in ("all", "first"):
         raise ValueError(f"unknown variant mode {variant_mode!r}: use all or first")
+    if variant_mode == "first" and device == "warp":
+        raise ValueError("--variant-mode first is CPU only; use all with --device warp")
     if strategy not in (None, "diagonal", "focused", "diagonal+focused"):
         raise ValueError(f"unknown strategy {strategy!r}: use diagonal, focused, "
                          "diagonal+focused or None")

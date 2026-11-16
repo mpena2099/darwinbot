@@ -69,3 +69,10 @@ def test_bench_inner_accepts_the_variant_mode_flag():
     assert ap.parse_args(base + ["--variant-mode", "first"]).variant_mode == "first"
     with pytest.raises(SystemExit):
         ap.parse_args(base + ["--variant-mode", "half"])
+
+
+def test_first_is_refused_on_warp(tmp_path):
+    from darwinbot import evolve
+    with pytest.raises(ValueError, match="CPU only"):
+        evolve.run(terrains="flat", n_init=1, n_batches=1, batch_size=1, workers=1,
+                   out_dir=str(tmp_path), device="warp", variant_mode="first")

@@ -729,6 +729,8 @@ def run(
         raise ValueError(f"inner_strategy must be one of {INNER_STRATEGIES}")
     if variant_mode not in VARIANT_MODES:
         raise ValueError(f"variant_mode must be one of {VARIANT_MODES}")
+    if variant_mode == "first" and device == "warp":
+        raise ValueError("--variant-mode first is CPU only; use all with --device warp")
     if protect_new < 1.0:
         raise ValueError("protect_new must be >= 1.0 (1.0 turns it off)")
     if not 0.0 <= mirror_p <= 1.0:

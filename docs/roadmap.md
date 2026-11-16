@@ -79,6 +79,14 @@ against the current rules:
   a strip test next to `validate.py` runs a chosen robot with a short
   low-friction strip at several positions and reports how often it stays
   upright and walks a body length past the far edge. Evaluation only.
+- **Repeatable runs** (`--deterministic`, off by default): a batch's results
+  are taken in the order they were sent instead of the order they finish, so
+  the same seed and worker count repeat a run exactly, for anyone who wants to
+  reproduce a result. A little slower, since a batch waits for its slowest
+  body.
+- **MuJoCo Warp on NVIDIA GPUs** (`--device warp`): the backend that trained
+  long8's GPU island, kept on a branch until now, joins the main code with the
+  same physics as the CPU loop.
 - **MuJoCo 4**, after the run's code is fixed: a separate step, with the
   compiled episode loop reading the official structure offsets and every
   golden and parity test checked again.

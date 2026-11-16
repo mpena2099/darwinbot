@@ -367,7 +367,8 @@ def test_optimise_returns_nominal_flat_behaviour():
     res = optimise_controller(morph, [te.flat()], budget=4, seed=1, seconds=1.0, variants=1)
     ref = Episode(morph, te.flat(), seconds=1.0).run(res.ctrl)
     assert np.allclose(res.behaviour, [ref.duty, ref.height, morph.n_servos, ref.wheel_share,
-                                       cost_of_transport(ref), morph.n_legs])
+                                       cost_of_transport(ref), morph.n_legs,
+                                       ref.body_ground])
 
 
 def test_cost_of_transport_is_clipped_and_charges_standing_still():

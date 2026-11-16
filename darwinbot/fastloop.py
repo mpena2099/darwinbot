@@ -137,11 +137,12 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
              theta, omega, sigma, offset, amp1, ph1, amp2, ph2,
              force, velocity, ctrl, qacc, qvel, xmat, xpos, geom_xpos,
              time_v, ncon_v, warn_v, widx, cptr_v, stride, goff,
-             robot, tgeoms, sgeoms, feet, lat_buf, mid,
+             robot, tgeoms, sgeoms, bgeoms, feet, lat_buf, mid,
              hit, touch, prev_pos, prev_touch, scratch, out):
     """Steps the episode. `out` receives the scalars:
     0 energy, 1 yaw, 2 fell, 3 unstable, 4 x_mid (nan if none), 5 zsum,
-    6 upsum, 7 ticks, 8 tiltsum, 9 slipsum, 10 sgsum, 11 steps taken."""
+    6 upsum, 7 ticks, 8 tiltsum, 9 slipsum, 10 sgsum, 11 steps taken,
+    12 bgsum."""
     nu = theta.shape[0]
     nt = tgeoms.shape[0]
     L = lat_buf.shape[0]
@@ -159,6 +160,7 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
     tiltsum = 0.0
     slipsum = 0.0
     sgsum = 0.0
+    bgsum = 0.0
     ticks = 0
     done = 0
     for n in range(1, n_steps + 1):
@@ -228,6 +230,10 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
                 if hit[sgeoms[j]]:
                     sgsum += 1.0
                     break
+            for j in range(bgeoms.shape[0]):
+                if hit[bgeoms[j]]:
+                    bgsum += 1.0
+                    break
             zsum += xpos[2]
             upsum += xmat[8]
             tiltsum += math.acos(min(1.0, max(-1.0, xmat[8])))
@@ -244,6 +250,7 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
     out[9] = slipsum
     out[10] = sgsum
     out[11] = done
+    out[12] = bgsum
 
 
 # ---- set-up -------------------------------------------------------------
@@ -389,6 +396,7 @@ class Prepared:
         self.robot = ep._robot.copy()
         self.tgeoms = np.asarray(ep._tgeoms, dtype=np.int64)
         self.sgeoms = np.asarray(ep._sgeoms, dtype=np.int64)
+        self.bgeoms = np.asarray(ep._bgeoms, dtype=np.int64)
         self.feet = ~np.asarray(ep._twheel, dtype=bool)
         nt = len(self.tgeoms)
         self.hit = np.zeros(ep.model.ngeom, dtype=np.bool_)
@@ -396,7 +404,7 @@ class Prepared:
         self.prev_pos = np.zeros((nt, 2))
         self.prev_touch = np.zeros(nt, dtype=np.bool_)
         self.scratch = np.zeros(max(ep.model.nu, nt, 1))
-        self.out = np.zeros(12)
+        self.out = np.zeros(13)
         self.xmat = d.xmat[ep.torso]
         self.xpos = d.xpos[ep.torso]
 
@@ -430,7 +438,7 @@ def prepare(ep):
 
 
 def run(ep, prep, controller, sim_model, variant_latency, torque, ramp_time, upright_min):
-    """Run the loop on an episode just reset. Returns the 12 scalars of
+    """Run the loop on an episode just reset. Returns the 13 scalars of
     `run_loop`'s `out` plus the touch counts."""
     d = ep.data
     p = controller.params
@@ -447,7 +455,7 @@ def run(ep, prep, controller, sim_model, variant_latency, torque, ramp_time, upr
              prep.xmat, prep.xpos, d.geom_xpos,
              prep.time, prep.ncon, prep.warn, prep.widx, prep.cptr,
              prep.info["stride"], prep.info["goff"],
-             prep.robot, prep.tgeoms, prep.sgeoms, prep.feet, lat, mid,
+             prep.robot, prep.tgeoms, prep.sgeoms, prep.bgeoms, prep.feet, lat, mid,
              prep.hit, prep.touch, prep.prev_pos, prep.prev_touch,
              prep.scratch, prep.out)
     return prep.out, prep.touch

@@ -155,6 +155,7 @@ def load_archive(path, stale: bool = False):
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
 ROLL_SHARE  = 0.5                   # wheel share of contact time above this: roll
+BODY_SHARE  = 0.5                   # body (not a terminal point) share of ticks above this: belly
 CRAWL_DUTY, WALK_DUTY, BELLY_DUTY = 0.8, 0.5, 0.15
 
 Cell = int                          # index of the CVT cell
@@ -189,7 +190,10 @@ def type_name(behaviour) -> str:
     """Readable type from a Behaviour, e.g. '8servos-low-crawl'."""
     b = Behaviour.of(behaviour)
     band = next(name for top, name in HEIGHT_BINS if b.height < top)
-    if b.wheel_share > ROLL_SHARE:
+    if b.body_ground > BODY_SHARE:
+        # the body itself drags on the ground, wheels or not: it slides on its belly
+        gait = "belly"
+    elif b.wheel_share > ROLL_SHARE:
         gait = "roll"
     elif b.duty > CRAWL_DUTY:
         gait = "crawl"
@@ -280,7 +284,7 @@ class Archive:
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
                     "scores": ((n_scores,), np.float64),
                     "born": ((), np.int64),
-                    "behaviour": ((6,), np.float64),
+                    "behaviour": ((len(Behaviour._fields),), np.float64),
                 },
             )
         return self._grid
@@ -342,10 +346,12 @@ class Archive:
 
     def insert(self, elite: Elite, parent: Optional[str] = None) -> bool:
         grid = self._ensure(len(elite.scores))
+        # an archive written before body_ground stores a narrower record
+        width = grid.data()["behaviour"].shape[1]
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
                         measures=[normalise(elite.behaviour)],
                         ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
-                        behaviour=[elite.behaviour])
+                        behaviour=[elite.behaviour[:width]])
         added = int(info["status"][0]) != 0
         if added:
             uid = elite_id(elite.morph, elite.ctrl)

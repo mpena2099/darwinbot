@@ -82,7 +82,8 @@ def behaviour_vector(morph: Morphology, m: Optional[Metrics],
     if m is None or m.unstable:
         return fallback
     vec = Behaviour(m.duty, m.height, float(morph.n_servos), m.wheel_share,
-                    cost_of_transport(m, task), float(morph.n_legs))
+                    cost_of_transport(m, task), float(morph.n_legs),
+                    m.body_ground)
     return vec if np.isfinite(vec).all() else fallback
 
 

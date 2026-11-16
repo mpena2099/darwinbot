@@ -32,7 +32,7 @@ def test_cell_of_is_deterministic_and_in_range():
 
 
 def test_insert_keeps_best_per_cell():
-    behaviour = [0.9, 0.3, 8, 0.0, 1.0, 2]
+    behaviour = [0.9, 0.3, 8, 0.0, 1.0, 2, 0.0]
     cell = evolve.cell_of(behaviour)
     archive = evolve.Archive(terrains="flat")
 
@@ -66,7 +66,7 @@ def test_run_writes_archive(tmp_path):
     path = tmp_path / "archive.pkl"
     assert path.exists()
     assert archive.cells
-    assert all(len(e.behaviour) == 6 for e in archive.cells.values())
+    assert all(len(e.behaviour) == 7 for e in archive.cells.values())
     assert len(archive.history) == 2
     with open(path, "rb") as f:
         loaded = pickle.load(f)

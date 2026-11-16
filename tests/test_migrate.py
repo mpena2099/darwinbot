@@ -237,7 +237,8 @@ def _body_model_20_file(archive, tmp_path):
         old_ctrl = np.concatenate([e.ctrl[:1], slots.reshape(-1)])
         grid.add(solution=[e.morph], objective=[e.fitness],
                  measures=[evolve.normalise(e.behaviour)[[0, 1, 3, 4]]],
-                 ctrl=[old_ctrl], scores=[e.scores], born=[e.born], behaviour=[e.behaviour])
+                 ctrl=[old_ctrl], scores=[e.scores], born=[e.born],
+                 behaviour=[e.behaviour[:6]])
     old = pickle.loads(pickle.dumps(archive))
     old._grid = grid
     old.body_model = 20

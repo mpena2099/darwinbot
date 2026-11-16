@@ -63,7 +63,7 @@ def check_buildable(label, morph, terrains, seconds, payload):
 def dump(a):
     from replay import load
     archive, elite = load(a.archive, a.type, a.plugin)
-    name = archive.names()[evolve.cell_of(elite.behaviour)]
+    name = archive.names()[evolve.cell_of(elite.behaviour, archive.n_descriptors)]
     print(robot_file.dump(morpho.decode(elite.morph), archive.locked, name=name), end="")
 
 

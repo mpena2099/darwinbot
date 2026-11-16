@@ -13,10 +13,13 @@ metrics the rules read (`tilt`, `slip`, `servo_ground`) are always measured, in
   slip          subtract SLIP_W * mean speed of feet sliding while in contact
   servo_ground  subtract SERVO_GROUND_W * share of control ticks a servo
                 housing touches the ground
+  body_ground   subtract BODY_GROUND_W * share of control ticks the torso
+                itself touches the ground
 """
 from typing import Iterable
 
-NAMES = ("worse_turn", "turn_forward", "tilt", "slip", "servo_ground")
+NAMES = ("worse_turn", "turn_forward", "tilt", "slip", "servo_ground",
+         "body_ground")
 
 _active: frozenset = frozenset()
 

@@ -17,6 +17,10 @@ controller CMA-ES learned for it. Instead of converging on one design, the run
 ends with a map of the fastest crawler, the fastest roller, the best tall
 trotter, and so on.
 
+An experiment may add body_ground (the share of ticks the torso itself touches
+the ground) as a sixth axis (`train.py --axes body`), which only applies to a
+new archive: `Archive.axes` says which descriptors a grid holds.
+
 New bodies are mutated copies of elites drawn with probability proportional to
 their novelty (mean distance to the k nearest elites in descriptor space), or
 uniformly with parent_selection="uniform". The child starts its inner
@@ -162,28 +166,36 @@ Cell = int                          # index of the CVT cell
 
 
 N_DESCRIPTORS = 5
+AXES = ("default", "body")      # archive axes: five, or five plus body_ground
+                                # (experiments; stored in the Archive)
 
 
-def normalise(behaviour) -> np.ndarray:
-    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot: the archive axes, not
-    the order of the Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost of transport spans decades, so it is taken in log."""
+def normalise(behaviour, n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
+    """Descriptor in [0, 1]^n_descriptors (duty, height, servos, legs, cot and,
+    for a body archive, body_ground: the archive axes, not the order of the
+    Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost
+    of transport spans decades, so it is taken in log."""
     b = Behaviour.of(behaviour)
     cot = np.log(np.clip(b.cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
-                    b.legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
+    point = [b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
+             b.legs / morpho.MAX_LEGS, cot]
+    if n_descriptors > N_DESCRIPTORS:
+        point.append(b.body_ground)     # already a share
+    return np.clip(point[:n_descriptors], 0.0, 1.0)
 
 
-@lru_cache(maxsize=1)
-def _centroids() -> np.ndarray:
-    probe = CVTArchive(solution_dim=1, centroids=N_CELLS, ranges=[(0.0, 1.0)] * N_DESCRIPTORS,
+@lru_cache(maxsize=None)             # one centroid set per axis count
+def _centroids(n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
+    probe = CVTArchive(solution_dim=1, centroids=N_CELLS,
+                       ranges=[(0.0, 1.0)] * n_descriptors,
                        seed=CVT_SEED, samples=20000)
     return np.array(probe.centroids)
 
 
-def cell_of(behaviour) -> Cell:
+def cell_of(behaviour, n_descriptors: int = N_DESCRIPTORS) -> Cell:
     """CVT cell of a Behaviour."""
-    point = normalise(behaviour)
-    return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
+    point = normalise(behaviour, n_descriptors)
+    return int(np.argmin(((_centroids(n_descriptors) - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
@@ -267,19 +279,25 @@ class Archive:
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body:     str = ""         # body_options limits, as given to train.py --body
+    axes:     str = "default"  # AXES: archive descriptors, five or with body_ground
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
     plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
     body_model: int = BODY_MODEL
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
+    @property
+    def n_descriptors(self) -> int:
+        """Archive axes: five, or six with body_ground on top."""
+        return N_DESCRIPTORS + 1 if self.axes == "body" else N_DESCRIPTORS
+
     def _ensure(self, n_scores: int) -> CVTArchive:
         """Build the ribs archive on first insert, when score count is known."""
         if self._grid is None:
             self._grid = CVTArchive(
                 solution_dim=morpho.MORPH_LENGTH,
-                centroids=_centroids(),
-                ranges=[(0.0, 1.0)] * N_DESCRIPTORS,
+                centroids=_centroids(self.n_descriptors),
+                ranges=[(0.0, 1.0)] * self.n_descriptors,
                 extra_fields={
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
                     "scores": ((n_scores,), np.float64),
@@ -306,7 +324,7 @@ class Archive:
         return Archive(terrains=self.terrains, batch=self.batch, evals=self.evals,
                        seconds=self.seconds, variants=self.variants, task=self.task,
                        payload=self.payload, ablate=self.ablate, rules=self.rules,
-                       body=self.body, profile=copy.deepcopy(self.profile),
+                       body=self.body, axes=self.axes, profile=copy.deepcopy(self.profile),
                        locked=self.locked, plugin=dict(self.plugin))
 
     def activate(self) -> None:
@@ -349,7 +367,7 @@ class Archive:
         # an archive written before body_ground stores a narrower record
         width = grid.data()["behaviour"].shape[1]
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
-                        measures=[normalise(elite.behaviour)],
+                        measures=[normalise(elite.behaviour, self.n_descriptors)],
                         ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
                         behaviour=[elite.behaviour[:width]])
         added = int(info["status"][0]) != 0
@@ -406,10 +424,13 @@ class Archive:
                     f"archive from body model {old}, this code is {BODY_MODEL}: "
                     "run experiments/migrate_archive.py to bring it up to date")
             raise ValueError("archive from an older body model, retrain")
-        if grid is not None and grid.measure_dim != N_DESCRIPTORS and not _stale_ok:
-            raise ValueError(
-                f"archive with {grid.measure_dim} archive axes, this code uses "
-                f"{N_DESCRIPTORS} (the servo count is an axis again): retrain")
+        if grid is not None and not _stale_ok:
+            axes = state.get("axes", "default")
+            n_descriptors = N_DESCRIPTORS + 1 if axes == "body" else N_DESCRIPTORS
+            if grid.measure_dim != n_descriptors:
+                raise ValueError(
+                    f"archive with {grid.measure_dim} archive axes, this archive "
+                    f"uses {n_descriptors} (--axes {axes}): retrain")
         self.__dict__.update(state)
         self.__dict__.setdefault("_grid", None)
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
@@ -420,6 +441,7 @@ class Archive:
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
         self.__dict__.setdefault("body", "")          # nor body options
+        self.__dict__.setdefault("axes", "default")   # nor a sixth archive axis
         self.__dict__.setdefault("locked", ())        # nor locked parts
         self.__dict__.setdefault("plugin", {})        # nor plugins
         if "profile" not in state:                    # nor hardware profiles
@@ -439,7 +461,7 @@ class Archive:
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
-              "rules", "body", "profile", "locked", "plugin")
+              "rules", "body", "axes", "profile", "locked", "plugin")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -631,6 +653,7 @@ def run(
     ablations: tuple = (),
     score_rules: tuple = (),
     body: str = "",
+    axes: str = "default",
     plugin: Optional[dict] = None,
     inner_strategy: Optional[str] = None,
     variant_mode: str = "all",
@@ -641,6 +664,8 @@ def run(
         raise ValueError(f"inner_strategy must be one of {INNER_STRATEGIES}")
     if variant_mode not in VARIANT_MODES:
         raise ValueError(f"variant_mode must be one of {VARIANT_MODES}")
+    if axes not in AXES:
+        raise ValueError(f"axes must be one of {AXES}")
     if task not in task_names():
         raise ValueError(f"task must be one of {task_names()}")
     if device == "gpu" and variants > 0 and not resume:
@@ -656,6 +681,9 @@ def run(
 
     if resume:
         archive: Archive = load_archive(resume)
+        if axes != "default" and axes != archive.axes:
+            raise ValueError(f"{resume} uses --axes {archive.axes}; --axes {axes} "
+                             "applies to a new archive only")
         terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:
@@ -664,7 +692,7 @@ def run(
                           ablate=ablate.normalise(ablations),
                           rules=rules.normalise(score_rules),
                           body=body_options.parse(body).to_string(),
-                          plugin=plugin or {})
+                          axes=axes, plugin=plugin or {})
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
     rules.set_active(archive.rules)             # and its score rules
     body_options.set_active(archive.body)       # and its body limits
@@ -745,6 +773,7 @@ def run(
           + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
           + (f" rules={list(archive.rules)}" if archive.rules else "")
           + (f" body={archive.body}" if archive.body else "")
+          + (f" axes={archive.axes}" if archive.axes != "default" else "")
           + (f" inner_strategy={inner_strategy}" if inner_strategy else "")
           + (f" variant_mode={variant_mode}" if variant_mode != "all" else ""))
     if device != "gpu":
@@ -781,7 +810,7 @@ def run(
                     if tdir:
                         _trace_body(tdir, archive, batch_meta, res, None, None, False)
                     continue
-                cell = cell_of(behaviour) if tdir else None
+                cell = cell_of(behaviour, archive.n_descriptors) if tdir else None
                 before = None
                 if tdir:
                     inc = archive.cells.get(cell)

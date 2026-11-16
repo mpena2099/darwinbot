@@ -108,3 +108,17 @@ def test_train_accepts_the_body_axes_and_rule(tmp_path, monkeypatch):
     train.main()
     assert calls[-1]["axes"] == "body"
     assert calls[-1]["score_rules"] == ("body_ground",)
+
+
+def test_energy_abs_rule_charges_the_energy_against_a_fixed_mass():
+    from darwinbot import fitness, rules
+    from darwinbot.sim import Metrics
+    m = Metrics(dx=1.0, dy=0.0, fell=False, unstable=False, duration=8.0, energy=20.0, mass=2.0)
+    rules.set_active(())
+    base = fitness.rule_cost(m)
+    rules.set_active(("energy_abs",))
+    try:
+        assert fitness.rule_cost(m) == pytest.approx(
+            base + fitness.ENERGY_ABS_W * 20.0 / (fitness.M_REF * fitness.G))
+    finally:
+        rules.set_active(())

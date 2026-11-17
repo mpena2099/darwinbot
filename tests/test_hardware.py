@@ -226,3 +226,18 @@ def test_example_kit_changes_the_bom_and_the_plate():
                          text=True, env={**os.environ, "DARWINBOT_PROFILE": kit,
                                          "PYTHONPATH": ROOT})
     assert out.returncode == 0, out.stderr[-800:]
+
+
+def test_merge_accepts_profiles_that_differ_only_by_default_electronics_keys():
+    from tests.test_evolve import _archive_with, _elite
+    near = [0.9, 0.3, 8, 0.0, 1.0, 2]
+    a = _archive_with(_elite(1.0, near))
+    b = _archive_with(_elite(2.0, near))
+    b.profile = copy.deepcopy(a.profile)
+    for key in hardware.ELECTRONICS_DEFAULTS:
+        b.profile["electronics"].pop(key, None)
+    assert b.profile != a.profile
+    assert evolve.merge([a, b]).profile == a.profile
+    b.profile["electronics"]["mass"] += 0.1
+    with pytest.raises(ValueError, match="profile"):
+        evolve.merge([a, b])

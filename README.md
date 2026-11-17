@@ -19,7 +19,7 @@ Feetech STS3215 servos. Bodies are evolved with a MAP-Elites archive laid out by
 behaviour and cost, while a central pattern generator with load feedback
 (Tegotae) is tuned with CMA-ES for each candidate body. Any robot in the archive
 can be exported as printable parts, a bill of materials and a control file for an
-ESP32.
+ESP32. The firmware core exists, but the ESP32 layer is not written yet.
 
 > **Status:** the robots are evolved and validated in simulation only. No robot
 > has been printed or assembled yet, the parts have never been fitted together,
@@ -67,14 +67,15 @@ it as YAML and seed an archive with `experiments/seed.py`
 ([Starting from your own design](https://mpena2099.github.io/darwinbot/own-design/)).
 
 To watch the showcase robots without training, download their snapshot from
-the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
+the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-2):
 
 ```bash
-curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.snap.pkl
-python experiments/replay.py --snapshot showcase.snap.pkl --type 13servos-mid-trot --speed 0.5
+curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-2/showcase.snap.pkl
+python experiments/replay.py --snapshot showcase.snap.pkl --list
+python experiments/replay.py --snapshot showcase.snap.pkl --type flat-3servos-low-roll --speed 0.5
 ```
 
-The release also carries the archive (`showcase.pkl`, body model 20);
+The release also carries the archives (`showcase-*.pkl` and `long8-*.pkl`, body model 23);
 `experiments/migrate_archive.py` brings it up to the current code.
 
 ## Documentation
@@ -115,7 +116,7 @@ catálogo de soluções diferentes. Os robôs são montados com peças reais (se
 STS3215, peças impressas em 3D, ESP32 e bateria LiPo), treinados com física
 propositalmente variada para resistir às diferenças entre simulação e mundo real,
 e qualquer um deles pode ser exportado como peças STL, lista de materiais, guia de
-montagem e arquivo de controle. Quem quiser limitar o corpo (sem rodas, poucos
+montagem e arquivo de controle. O núcleo do firmware já existe, mas a camada do ESP32 ainda não foi escrita. Quem quiser limitar o corpo (sem rodas, poucos
 servos, impressora menor) monta o comando de treino no
 [montador de comandos](https://mpena2099.github.io/darwinbot/command-builder/). Código e documentação técnica em inglês; os dados
 de hardware em `docs/` estão em português.

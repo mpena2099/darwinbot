@@ -10,4 +10,4 @@ python tools/make_site.py            # all buildable elites; --max 12 for a smal
 python -m http.server -d docs/site   # preview at http://localhost:8000
 ```
 
-GitHub Pages can serve `docs/site` once the repository is public.
+The published gallery is at <https://mpena2099.github.io/darwinbot/site/>, served with the documentation site from `docs/site`.

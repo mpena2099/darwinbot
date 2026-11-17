@@ -37,11 +37,11 @@ The board is a component like the servo. To use another one, copy `darwinbot/pro
 | `mass`, `current_a`, `box` | everything on the torso besides the servos: board, regulator, bus adapter and pack; the footprint in metres |
 | `board_name`, `board_note` | the BOM row of the board and its note |
 | `board_label` | what the board's screws are listed for in the BOM |
-| `holes` | the hole pattern in mm, centred behind the origin of the plate: `[width, height]` for a rectangle, or a list of `[x, y]` points |
+| `holes` | the hole pattern in mm, centred on the origin of the plate: `[width, height]` for a rectangle, or a list of `[x, y]` points |
 | `hole_d` | clearance hole in the torso plate, mm |
 | `screw_d` | screw diameter, mm; one screw per hole. `3.0` joins the M3 screws of the joints in the BOM, any other size gets its own screw and nut rows |
 
-The five keys after `box` are optional. A profile without them, such as the one an old archive stores, reads as the ESP32 board with a 58 x 23 mm pattern, so it loads and exports as before. `tools/check_kit.py` also warns when a hole is outside the footprint or smaller than its screw.
+The six keys after `box` are optional. A profile without them, such as the one an old archive stores, reads as the ESP32 board with a 58 x 23 mm pattern, so it loads and exports as before. `tools/check_kit.py` also warns when a hole is outside the footprint or smaller than its screw.
 
 `examples/kits/pi-zero-2w/` is a worked example for a Raspberry Pi Zero 2 W with a 5 V regulator and a half-duplex bus adapter. Its masses and currents are labelled as estimates in the file.
 

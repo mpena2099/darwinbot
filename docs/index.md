@@ -19,7 +19,7 @@ servo torque could not deal with is not buildable. Bodies are evolved
 with a MAP-Elites archive laid out by behaviour and cost, while a central
 pattern generator with two harmonics per joint and load feedback (Tegotae) is
 tuned with CMA-ES for each candidate body. Any robot in the archive can be
-exported as printable parts, a bill of materials and a control file for an ESP32.
+exported as printable parts, a bill of materials and a control file for an ESP32. The firmware core exists, but the ESP32 layer is not written yet.
 
 ## What makes it different
 

@@ -386,7 +386,7 @@ def test_a_batch_where_every_body_fails_stops_the_run(monkeypatch, tmp_path):
     monkeypatch.setattr(evolve, "optimise_controller", broken)
     with pytest.raises(RuntimeError, match="failed"):
         evolve.run(terrains="flat", n_init=2, n_batches=1, batch_size=2, workers=1,
-                   variants=0, episode_seconds=1.0, device="gpu", out_dir=str(tmp_path))
+                   variants=0, episode_seconds=1.0, out_dir=str(tmp_path))
 
 
 def test_budget_grows_with_joints_up_to_a_cap():

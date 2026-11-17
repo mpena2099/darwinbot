@@ -56,7 +56,7 @@ from darwinbot.sim import (COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behavi
                            Episode)
 from darwinbot.terrain import flat, get_terrains
 
-BODY_MODEL = 23                     # bump when the genome meaning changes
+BODY_MODEL = 24                     # bump when the genome meaning changes
 N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
@@ -75,8 +75,10 @@ VARIANT_MODES = ("all", "first")
 _V20 = {"wheel_range": (0.03, 0.06),          # m, wheel radius gene range
         "ctrl_per_node": 8}                    # amp1 .. steer_shift
 _V21 = {"wheel_range": (0.03, 0.10),
-        "wheel_width": lambda rad: max(0.02, 0.5 * rad)}   # m: the wheel was
+        "wheel_width": lambda rad: max(0.02, 0.5 * rad),   # m: the wheel was
                                                # 2 * max(10 mm, rad / 4) wide, no gene
+        "ctrl_per_node": 10}                   # amp1 .. speed_shift
+_V23 = {"ctrl_per_node": 10}                   # amp1 .. speed_shift
 
 
 def _wheel_nodes(genes) -> List[int]:
@@ -110,13 +112,25 @@ def _migrate_21(genes, cvec):
     per = _V20["ctrl_per_node"]
     if len(cvec) == 1 + morpho.MAX_NODES * per:
         slots = cvec[1:].reshape(morpho.MAX_NODES, per)
-        neutral = np.full((morpho.MAX_NODES, ctrl.CTRL_PER_NODE - per), 0.5)
+        neutral = np.full((morpho.MAX_NODES, _V21["ctrl_per_node"] - per), 0.5)
         cvec = np.concatenate([cvec[:1], np.hstack([slots, neutral]).reshape(-1)])
     return genes, cvec
 
 
+def _migrate_23(genes, cvec):
+    """23 -> 24: every controller slot gained couple_k and couple_lag, set to
+    the neutral k = 0 and lag = 0 rad, so the old controller is unchanged."""
+    cvec = np.asarray(cvec, dtype=float)
+    per = _V23["ctrl_per_node"]
+    if len(cvec) == 1 + morpho.MAX_NODES * per:
+        slots = cvec[1:].reshape(morpho.MAX_NODES, per)
+        extra = np.tile([0.0, 0.5], (morpho.MAX_NODES, 1))
+        cvec = np.concatenate([cvec[:1], np.hstack([slots, extra]).reshape(-1)])
+    return genes, cvec
+
+
 MIGRATIONS = {20: _migrate_20, 21: _migrate_21,
-              22: lambda morph, cvec: (morph, cvec)}
+              22: lambda morph, cvec: (morph, cvec), 23: _migrate_23}
 _stale_ok = False                   # set by loading_stale()
 
 
@@ -773,6 +787,10 @@ def run(
         raise ValueError("screen must be in (0, 1] (1.0 turns it off)")
     if screen < 1.0 and device in ("gpu", "warp"):
         raise ValueError(f"--screen is CPU only; use --screen 1 with --device {device}")
+    if device in ("gpu", "warp"):
+        # sim_gpu and sim_warp do not simulate the oscillator coupling yet
+        # (BODY_MODEL 24); every controller drawn here carries it.
+        raise ValueError(f"--device {device} does not simulate coupled oscillators yet; use --device cpu")
     if axes not in AXES:
         raise ValueError(f"axes must be one of {AXES}")
     if task not in task_names():

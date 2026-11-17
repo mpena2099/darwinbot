@@ -24,7 +24,7 @@ from numba import njit
 from darwinbot import ablate, fastloop
 from darwinbot.builder import AssemblyRules, build_mjcf
 from darwinbot.controller import (CONTROL_DT, RAMP_TIME, SERVO_TORQUE, Controller,
-                                  advance_phases)
+                                  advance_phases, couple_partners)
 from darwinbot.morphology import Morphology, violations
 from darwinbot.terrain import Terrain
 
@@ -260,7 +260,8 @@ class Episode:
         self._k = 0
         for w in BLOWUP_WARNINGS:
             self.data.warning[w].number = 0
-        return Controller(ctrl, self.layout, command, speed)
+        return Controller(ctrl, self.layout, command, speed,
+                          couple_partners(self.morph))
 
     def _blew_up(self, t_prev: float) -> bool:
         """True when the last mj_step diverged: a MuJoCo warning fired (it has
@@ -303,6 +304,8 @@ class Episode:
         hold = self.hold
         step = mujoco.mj_step
         theta, omega, sigma = controller.theta, controller.omega, controller.params.sigma
+        couple_k, couple_lag = controller.params.couple_k, controller.params.couple_lag
+        partner = controller.params.partner
         energy = 0.0
         mid, x_mid = self.n_steps // 2, None
         yaw, prev = 0.0, math.atan2(xmat[3], xmat[0])
@@ -326,7 +329,8 @@ class Episode:
                 d.ctrl[:] = target
             self._k += 1
             step(sim_model, d)
-            advance_phases(theta, omega, sigma, force, dt)
+            advance_phases(theta, omega, sigma, force, dt,
+                           couple_k, couple_lag, partner)
             energy += float(np.abs(force * velocity).sum()) * dt
             # Per-step wrapped differences: the sum is the unwrapped heading change.
             now = math.atan2(xmat[3], xmat[0])

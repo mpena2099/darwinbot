@@ -24,7 +24,7 @@ def _genes(slot, **kw):
 
 def test_ctrl_length():
     assert co.CTRL_LENGTH == 1 + mo.MAX_NODES * co.CTRL_PER_NODE
-    assert co.CTRL_PER_NODE == 10
+    assert co.CTRL_PER_NODE == 12
 
 
 def test_active_genes_follow_actuators():

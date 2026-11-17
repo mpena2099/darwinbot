@@ -65,4 +65,4 @@ def test_run_writes_archive(tmp_path):
                          task="steer", episode_seconds=1.0)
     assert (tmp_path / "archive.pkl").exists()
     assert archive.cells
-    assert all(len(e.behaviour) == 6 for e in archive.cells.values())
+    assert all(len(e.behaviour) == len(evolve.Behaviour._fields) for e in archive.cells.values())

@@ -25,8 +25,8 @@ robots").
 
 ## Showcase
 
-long8 trained as islands on Kaggle and on two local machines for {{HOURS}}.
-The hardware was {{HARDWARE}}. The task is `steer`, the episodes are 8 s and
+long8 trained as islands on Kaggle and on two local machines for about three days, from 2026-11-13 to 2026-11-16.
+The hardware was five Kaggle CPU sessions, one Kaggle GPU session with two T4 cards and two local machines. The task is `steer`, the episodes are 8 s and
 the body model is 23.
 
 The archive comes in four island settings. Their robots were scored on
@@ -41,21 +41,34 @@ with each other:
 | No wheels | terrain preset | not allowed |
 
 Islands with the same setting merge with `experiments/merge_archives.py`,
-which keeps the best elite of each cell. The four settings together fill
-{{CELLS}} of the 800 cells and hold {{TYPES}} body types. {{LEGGED}} of them
-have legs, and {{MOVERS}} move and also turn on command.
+which keeps the best elite of each cell. Each setting keeps its own archive
+of 800 cells:
+
+| Setting | Cells filled | Body types | With legs |
+|---|---|---|---|
+| Terrain preset | 164 | 72 | 131 |
+| Flat | 193 | 84 | 162 |
+| Flat and steps | 160 | 73 | 135 |
+| No wheels | 85 | 45 | 74 |
 
 ![Evolved body plans](img/robots.png)
 
-![A gait of the best robot]({{GIF}})
+![Four showcase robots moving](img/gait.gif)
 
 ### Best robots
 
-Each table lists the best robots of one setting after the longer controller
-search (`experiments/polish.py`) and the removal of parts they do not need
-(`experiments/prune.py`).
+The five showcase robots, picked by eye from the best of each setting. Each
+went through the longer controller search (`experiments/polish.py`) and the
+removal of parts it does not need (`experiments/prune.py`); the table names
+the version published, the one that passes validation where both exist.
 
-{{BEST_TABLE}}
+| Setting | Robot | Servos | Legs | Wheels | Fitness | Version |
+|---|---|---|---|---|---|---|
+| Terrain preset | `5servos-low-roll` | 5 | 2 | 2 | 0.57 | polished |
+| Flat | `3servos-low-roll` | 3 | 0 | 2 | 1.15 | pruned |
+| Flat | `10servos-mid-belly` | 10 | 5 | 0 | 1.07 | polished |
+| Flat and steps | `10servos-mid-belly` | 10 | 5 | 0 | 0.32 | pruned |
+| No wheels | `6servos-low-belly-498` | 6 | 2 | 0 | 0.26 | as trained |
 
 ![Printable parts of the best robot](img/parts.png)
 
@@ -63,11 +76,20 @@ search (`experiments/polish.py`) and the removal of parts they do not need
 
 The robots above, run through `experiments/validate.py`:
 
-{{VALIDATE_TABLE}}
+| Robot | Validation | Weak spot |
+|---|---|---|
+| `5servos-low-roll` (preset) | PASS | barely moves on rubble even with nominal physics; its pruned version fails rubble turning right |
+| `3servos-low-roll` (flat) | PASS | |
+| `10servos-mid-belly` (flat) | PASS | does not turn right |
+| `10servos-mid-belly` (flat and steps) | PASS | |
+| `6servos-low-belly-498` (no wheels) | PASS | does not turn right; the most robust, at most 26% p5 loss |
+
+The no-wheels robot first picked, `13servos-low-belly-30`, failed on rough
+ground, steps and rubble when turning, and was replaced.
 
 ### Turning
 
-Turning is weaker than going straight. {{TURN_NOTE}}
+Turning is weaker than going straight. Two of the five showcase robots do not turn right at all and score only by going straight, left and at half speed.
 
 The straight episode and the turn episodes share one controller, and a turn
 is a command added to the same oscillators. A robot that walks well has
@@ -125,7 +147,7 @@ gives different robots.
 
 The map shows the cells of one setting, coloured by fitness. The progress
 plot follows the best fitness and the number of filled cells over the
-batches of one island. {{PROGRESS_NOTE}}
+batches of one island.
 
 ## What counts as success
 
@@ -140,7 +162,7 @@ list, not in any single robot.
 
 ## Known limitations
 
-- {{WHEEL_NOTE}}
+- Wheels win where they are allowed. Rolling robots fill 91 of 164 cells in the terrain preset, 78 of 193 on flat and 65 of 160 on flat and steps, and the best robot of each of those settings rolls. The no-wheels setting exists to keep legged gaits in the running. A robot is named `roll` when its wheels hold most of the ground contact, even if its torso drags too; release 3 measures the torso contact and names those robots `belly`.
 - The firmware is half done. `firmware/core/` runs the controller math,
   including the speed command and the servo speed, in portable C++, and a
   test proves it matches the Python controller tick by tick

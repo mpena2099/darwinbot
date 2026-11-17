@@ -44,9 +44,37 @@ def _fmt(v):
     return f"{float(v):.9g}"
 
 
+def _tick_lines(c, loads, limits):
+    """One case line per tick, from a controller that starts at t = 0."""
+    n = len(LAYOUT)
+    lines = []
+    for k, load in enumerate(loads):
+        # One firmware tick: targets now, then five 4 ms phase substeps with
+        # the load held, exactly as docs/formato-controle.md specifies.
+        out = c.targets(k * co.CONTROL_DT)
+        force = np.asarray(load) * co.SERVO_TORQUE
+        for _ in range(5):
+            c.advance(co.CONTROL_DT / 5, force)
+        expected = [out[i] if act.kind == "wheel"
+                    else np.clip(out[i], -limits[i], limits[i])
+                    for i, act in enumerate(LAYOUT)]
+        speeds = [out[i] * SIGNS[i] if act.kind == "wheel" else 0.0
+                  for i, act in enumerate(LAYOUT)]
+        # bus load / servo maximum torque: the simulation's full scale is
+        # LOAD_FULL_SCALE of it, which the core divides out again
+        row = ([load[i] * SIGNS[i] * co.LOAD_FULL_SCALE for i in range(n)]
+               + expected + speeds + list(c.theta))
+        lines.append(" ".join(_fmt(v) for v in row))
+    return lines
+
+
 def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_SPEED,
-                partners=None):
-    """Write a case file; expected targets come from controller.py."""
+                partners=None, prefix=None):
+    """Write a case file; expected targets come from controller.py.
+
+    With prefix, the controller first runs those ticks, then a "reset" line,
+    then the loads: the expected values after the reset are those of a fresh
+    controller."""
     if partners is None:
         partners = np.full(len(LAYOUT), -1)
     c = co.Controller(ctrl, LAYOUT, command, speed, partners)
@@ -75,34 +103,22 @@ def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_
                       sign, 2048, -lim, lim, 0)
             lines.append("position " + " ".join(_fmt(v) for v in fields))
 
-    for k, load in enumerate(loads):
-        # One firmware tick: targets now, then five 4 ms phase substeps with
-        # the load held, exactly as docs/formato-controle.md specifies.
-        out = c.targets(k * co.CONTROL_DT)
-        force = np.asarray(load) * co.SERVO_TORQUE
-        for _ in range(5):
-            c.advance(co.CONTROL_DT / 5, force)
-        expected = [out[i] if act.kind == "wheel"
-                    else np.clip(out[i], -limits[i], limits[i])
-                    for i, act in enumerate(LAYOUT)]
-        speeds = [out[i] * SIGNS[i] if act.kind == "wheel" else 0.0
-                  for i, act in enumerate(LAYOUT)]
-        # bus load / servo maximum torque: the simulation's full scale is
-        # LOAD_FULL_SCALE of it, which the core divides out again
-        row = ([load[i] * SIGNS[i] * co.LOAD_FULL_SCALE for i in range(n)]
-               + expected + speeds + list(c.theta))
-        lines.append(" ".join(_fmt(v) for v in row))
+    if prefix is not None:
+        lines += _tick_lines(c, prefix, limits)
+        lines.append("reset")
+        c = co.Controller(ctrl, LAYOUT, command, speed, partners)
+    lines += _tick_lines(c, loads, limits)
 
     path.write_text("\n".join(lines) + "\n")
 
 
 def _run_case(tmp_path, ctrl, loads, command=0.0, speed=1.0,
-              servo_speed=co.SERVO_SPEED, partners=None):
+              servo_speed=co.SERVO_SPEED, partners=None, prefix=None):
     compiler = next((c for c in COMPILERS if shutil.which(c)), None)
     if compiler is None:
         pytest.skip("no C++ compiler found")
     case = tmp_path / "case.txt"
-    _write_case(case, ctrl, loads, command, speed, servo_speed, partners)
+    _write_case(case, ctrl, loads, command, speed, servo_speed, partners, prefix)
     exe = tmp_path / "parity"
     build = subprocess.run(
         [compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-o", str(exe),
@@ -269,3 +285,19 @@ def test_parity_with_a_slower_servo(tmp_path, monkeypatch):
     assert np.all(np.abs(p.offset[[3, 4]]) <= slow)
     loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
     _run_case(tmp_path, ctrl, loads, 0.5, 1.0, slow)
+
+
+def test_reset_restarts_the_controller(tmp_path):
+    """Run some ticks, reset, run again: after the reset the core follows a
+    fresh controller. The prefix must move the phases, or the reset is vacuous."""
+    rng, ctrl = _genes(13)
+    prefix = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads, prefix=prefix)
+    moved = co.Controller(ctrl, LAYOUT)
+    fresh = co.Controller(ctrl, LAYOUT)
+    force = np.asarray(prefix[0]) * co.SERVO_TORQUE
+    for _ in range(TICKS):
+        for _ in range(5):
+            moved.advance(co.CONTROL_DT / 5, force)
+    assert np.max(np.abs(moved.theta - fresh.theta)) > 1e-2

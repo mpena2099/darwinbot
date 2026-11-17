@@ -81,7 +81,12 @@ public:
     // set_command: recomputes the parameters; does not advance time.
     void set_speed(float s);
 
-    std::vector<float> targets;       // position: rad (clamped); wheel: rad/s
+    // Back to the state right after construction: phases and elapsed time at
+    // their start values, outputs zeroed. The commands set above are kept.
+    // No heap use.
+    void reset();
+
+    std::vector<float> targets;      // position: rad (clamped); wheel: rad/s
     std::vector<int> steps;           // position: servo counts, 0 on wheels
     std::vector<float> wheel_speeds;  // wheel: signed rad/s, 0 on joints
     const std::vector<float>& phases() const { return theta_; }

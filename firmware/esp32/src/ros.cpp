@@ -51,11 +51,7 @@ void on_cmd_vel(const void* msg) {
     if (!std::isfinite(z) || !std::isfinite(x)) return;
     const float steer = -clampf(z / kMaxYawRate, -1.0f, 1.0f);
     const float speed = clampf(x / kMaxSpeed, 0.0f, 1.0f);
-    if (steer == 0.0f && speed == 0.0f) {
-        cmd::stop();   // an all-zero Twist is a stop, not the slowest gait
-    } else {
-        cmd::set(steer, speed);
-    }
+    cmd::set(steer, speed);   // speed 0 is a stop, whatever the steering
 }
 
 void joint_state_init() {

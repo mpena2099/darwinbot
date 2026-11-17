@@ -28,8 +28,8 @@ struct State {
     bool running = false;   // false: STOPPED
 };
 
-// The state to apply now. Boots STOPPED. Any command or speed other than zero
-// leaves STOPPED; both zero, stop() or no transport for kTimeoutMs enters it.
+// The state to apply now. Boots STOPPED. A speed other than zero leaves STOPPED,
+// whatever the steering; speed zero, stop() or no transport for kTimeoutMs enters it.
 State read();
 
 }  // namespace cmd

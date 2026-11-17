@@ -21,7 +21,7 @@ float clampf(float v, float lo, float hi) {
 // Caller holds g_mux.
 void commit() {
     g_stamp = millis();
-    g_running = g_command != 0.0f || g_speed != 0.0f;
+    g_running = g_speed != 0.0f;
 }
 
 }  // namespace

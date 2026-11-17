@@ -166,10 +166,16 @@ def optimise_controller(
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
-    terrain (domain randomisation, CPU only). They are drawn once per body from
-    its seed, so all candidates face the same ones (common random numbers).
+    terrain (domain randomisation; not on device "gpu"). They are drawn once
+    per body from its seed, so all candidates face the same ones (common
+    random numbers).
     task picks the score (fitness.TASKS); payload is extra torso mass in kg.
     The behaviour descriptor is the same for every task.
+
+    device "warp" searches the controllers with MuJoCo Warp, one batch per
+    terrain for the whole generation, and re-scores the winner on the CPU: the
+    GPU only searches, what enters the archive is CPU-scored.
+
     map_many (CPU only): scores a list of full controllers, for example on a
     process pool whose workers built the same cpu_evaluator; the result does
     not change, only the wall time.
@@ -190,13 +196,18 @@ def optimise_controller(
     Ignored with map_many, whose workers always score the whole set.
     episodes: the body's Episodes for these terrains, when the caller has built
     them already (CPU only); the result does not change.
+    On device "warp" the search always runs every variant, so variant_mode
+    "first" is refused there; the final re-score is the CPU one, and episodes
+    is ignored.
     """
     if variant_mode not in ("all", "first"):
         raise ValueError(f"unknown variant mode {variant_mode!r}: use all or first")
+    if variant_mode == "first" and device == "warp":
+        raise ValueError("--variant-mode first is CPU only; use all with --device warp")
     if strategy not in (None, "diagonal", "focused", "diagonal+focused"):
         raise ValueError(f"unknown strategy {strategy!r}: use diagonal, focused, "
                          "diagonal+focused or None")
-    if device == "gpu" or map_many:
+    if device in ("gpu", "warp") or map_many:
         recorder = None
     if variants > 0 and device == "gpu":
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
@@ -238,6 +249,62 @@ def optimise_controller(
 
         # The starting point counts: an inherited controller that already works
         # must not be lost just because CMA-ES never resamples it exactly.
+        fit, scores, metrics = run_one(base, popsize or 1)
+    elif device == "warp":
+        from darwinbot.sim_warp import WarpBatchEpisode
+        batches = [WarpBatchEpisode(morph, t, seconds, payload) for t in terrains]
+        if not batches[0].buildable:
+            return _unbuildable(morph, base, terrains, batches[0].mass)
+
+        # The same variants as the CPU branch, drawn from the same generator:
+        # both devices then face the same randomised models.
+        var_sets = None
+        if variants > 0:
+            vrng = np.random.default_rng([seed, 1])    # leaves rng untouched
+            var_sets = [[randomize.perturb(b.episode.model, vrng)
+                         for _ in range(variants)] for b in batches]
+
+        def evaluate_batch(ctrls):
+            """One world per (controller, variant, command) and one run_batch per
+            terrain, so a whole generation is len(terrains) launches."""
+            cmds = commands(task)
+            nv, ncmd = max(variants, 1), len(cmds)
+            per_terrain = []
+            for i, b in enumerate(batches):
+                vs = var_sets[i] if var_sets else [None]
+                worlds = [(c, v, cmd) for c in ctrls for v in vs
+                          for cmd in cmds]
+                per_terrain.append(b.start(      # the terrains run concurrently
+                    np.stack([w[0] for w in worlds]),
+                    np.array([w[2] for w in worlds], dtype=float),
+                    None if var_sets is None else [w[1] for w in worlds]))
+            per_terrain = [b.finish(t) for b, t in zip(batches, per_terrain)]
+            out = []
+            for i in range(len(ctrls)):
+                scores, metrics = [], []
+                for p in per_terrain:          # rebuild what evaluate() returns
+                    start = i * nv * ncmd
+                    runs = [p[start + j * ncmd:start + (j + 1) * ncmd]
+                            for j in range(nv)]
+                    scores.append(float(np.mean([task_score(ms, task)
+                                                 for ms in runs])))
+                    metrics.append(runs[0][0])        # variant 0, first command
+                out.append((aggregate(scores), scores, metrics))
+            return out
+
+        def run_one(c, n: int = 1):
+            return evaluate_batch(np.repeat(c[None], n, axis=0))[0]
+
+        def run_many(cs):
+            return evaluate_batch(np.stack(cs))
+
+        def finish(res):
+            # The GPU only searched; the archive entry is scored on the CPU.
+            f, sc, m = evaluate([b.episode for b in batches], res.ctrl, var_sets, task)
+            if on_eval is not None:
+                on_eval(float(f))
+            return ControllerResult(res.ctrl, f, sc, m, res.evals)
+
         fit, scores, metrics = run_one(base, popsize or 1)
     else:
         first = variant_mode == "first" and variants > 0
@@ -321,4 +388,5 @@ def _nominal_flat(morph, terrains, best, variants, seconds, device,
     if device == "gpu":
         from darwinbot.sim_gpu import BatchEpisode
         return BatchEpisode(morph, flat(), seconds, payload).run_batch(best.ctrl[None])[0]
+    # cpu and warp: the same CPU episode the archive is scored on.
     return Episode(morph, flat(), seconds, payload).run(best.ctrl)

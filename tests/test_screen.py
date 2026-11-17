@@ -60,3 +60,5 @@ def test_screen_invalid(tmp_path):
             _run(tmp_path / "x", screen=bad)
     with pytest.raises(ValueError):
         _run(tmp_path / "y", screen=0.5, device="gpu")
+    with pytest.raises(ValueError, match="CPU only"):
+        _run(tmp_path / "z", screen=0.5, device="warp")

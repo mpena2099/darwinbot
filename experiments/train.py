@@ -4,6 +4,7 @@ experiments/train.py
 Run MAP-Elites over body plans, with CMA-ES learning each body's gait.
 
   python experiments/train.py                          # flat, defaults
+  python experiments/train.py --device auto            # benchmark, use the fastest
   python experiments/train.py --terrains terrain       # flat + rough + steps
   python experiments/train.py --batches 60 --workers 8
   python experiments/train.py --task turn --terrains step --payload 0.3
@@ -24,6 +25,9 @@ from darwinbot.evolve import load_archive
 from darwinbot.fitness import task_names
 from darwinbot.morphology import decode, summary
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import benchmark  # noqa: E402  (experiments/benchmark.py, the device measurement)
+
 PRESETS = {
     "steer":   dict(task="steer", terrains="terrain", payload=0.0),
     "forward": dict(task="forward", terrains="terrain", payload=0.0),
@@ -31,6 +35,26 @@ PRESETS = {
     "step":    dict(task="steer", terrains="step", payload=0.0),
     "payload": dict(task="steer", terrains="terrain", payload=0.3),
 }
+
+
+def resolve_device(device, workers, cache_path=None):
+    """--device auto: the device measured on this machine (experiments/benchmark.py),
+    read from the cache, or measured and saved first when the cache is missing.
+    A given --workers wins over the cached one; any other device is returned as
+    it is, without touching the cache."""
+    if device != "auto":
+        return device, workers
+    result = benchmark.load(cache_path)
+    if result is None:
+        result = benchmark.measure()
+        benchmark.save(result, cache_path)
+    picked = result.get("device", "cpu")
+    if workers is None:
+        workers = result.get("workers")
+    print(f"[darwinbot] --device auto: {picked}"
+          f"{'' if workers is None else f' with {workers} workers'}, "
+          f"benchmarked {result.get('date', '?')} -> {benchmark.cache_path(cache_path)}")
+    return picked, workers
 
 
 def check_kit_profile(path):
@@ -74,15 +98,18 @@ def main():
                    help="random seed (default: a new one every run, printed so "
                         "the run can be repeated)")
     p.add_argument("--out", default="checkpoints")
-    p.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
-                   help="simulate on the CPU (default) or with MJX on the GPU")
+    p.add_argument("--device", choices=("cpu", "gpu", "warp", "auto"), default="cpu",
+                   help="simulate on the CPU (default), with MJX (gpu), with "
+                        "MuJoCo Warp (warp), or auto: benchmark this machine "
+                        "once and pick the fastest; with warp the GPU only "
+                        "searches, the archive is still scored on the CPU")
     p.add_argument("--popsize", type=int, default=None,
                    help="CMA-ES population (gpu default: 64)")
     p.add_argument("--seconds", type=float, default=8.0,
                    help="simulated seconds per episode, 8 by default (ignored on --resume)")
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain for every evaluation "
-                        "(default: 2 on cpu, 0 on gpu; ignored on --resume)")
+                        "(default: 2 on cpu and warp, 0 on gpu; ignored on --resume)")
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
                    help="parents drawn by novelty (default) or uniformly")
@@ -163,6 +190,7 @@ def main():
     if not 0.0 < a.screen <= 1.0:
         raise SystemExit("--screen must be in (0, 1] (1.0 turns it off)")
 
+    a.device, a.workers = resolve_device(a.device, a.workers)
     wanted = None
     if a.profile:
         check_kit_profile(a.profile)
@@ -191,11 +219,17 @@ def main():
         except ImportError:
             raise SystemExit("--device gpu needs JAX and MJX: "
                              "pip install -e '.[gpu]'")
+    if a.device == "warp":
+        try:
+            import mujoco_warp  # noqa: F401
+        except ImportError:
+            raise SystemExit("--device warp needs MuJoCo Warp: "
+                             "pip install -e '.[warp]'")
 
     if a.seed is None:
         a.seed = int.from_bytes(os.urandom(4), "little") >> 1
     print(f"[darwinbot] seed={a.seed}")
-    variants = a.variants if a.variants is not None else (2 if a.device == "cpu" else 0)
+    variants = a.variants if a.variants is not None else (0 if a.device == "gpu" else 2)
     common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,

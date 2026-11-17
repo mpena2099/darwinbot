@@ -24,6 +24,7 @@ python experiments/train.py --body "no-wheels,max-servos=8,legs=4..6"   # limits
 python experiments/replay.py --list           # robot types in the archive, with duty, height, servos, cost of transport (cot), wheels, feet, segments, passive; --where "wheels=0,legs>=4" filters them
 python experiments/replay.py --type 12servos-high-trot --speed 0.5
 python experiments/snapshot.py --archive <archive.pkl> --types a,b   # code-independent recording for later playback
+python experiments/snapshot.py --robot a.pkl:3servos-low-roll-1:flat-roller --robot b.pkl:10servos-mid-belly-0 --out showcase.snap.pkl   # robots of several archives, ARCHIVE:TYPE[:NAME]
 python experiments/replay.py --snapshot a.snap.pkl --type <type>   # play a snapshot without the archive's code
 python experiments/validate.py --type <type>  # PASS if robust: mean loss, p5 loss and falls per row, body on the ground (--max-body)
 python experiments/strip_test.py --archive <archive.pkl> --type <type>   # change of grip mid-stride: upright and pass share per strip position

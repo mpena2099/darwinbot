@@ -21,6 +21,7 @@ darwinbot.tar.gz made by `git archive`), and installs what it needs.
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -30,19 +31,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def kaggle_setup():
-    """On Kaggle: install the dependencies and find the code dataset (Kaggle
-    may have unpacked the tarball already)."""
+    """On Kaggle: install the dependencies and put the code dataset in
+    /tmp/darwinbot (Kaggle may have unpacked the tarball already)."""
     if not os.path.isdir("/kaggle/input"):
         return ROOT
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "mujoco>=3.6.0",
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "mujoco>=3.6.0,<4",
                     "mujoco-warp", "warp-lang", "cma", "ribs", "numba"], check=True)
+    dest = "/tmp/darwinbot"
+    os.makedirs(dest, exist_ok=True)
     tars = glob.glob("/kaggle/input/**/darwinbot.tar.gz", recursive=True)
     if tars:
-        dest = "/tmp/darwinbot"
-        os.makedirs(dest, exist_ok=True)
         subprocess.run(["tar", "xzf", tars[0], "-C", dest], check=True)
-        return dest
-    return os.path.dirname(glob.glob("/kaggle/input/**/pyproject.toml", recursive=True)[0])
+    else:
+        root = os.path.dirname(glob.glob("/kaggle/input/**/pyproject.toml",
+                                         recursive=True)[0])
+        shutil.copytree(root, dest, dirs_exist_ok=True)
+    return dest
 
 
 sys.path.insert(0, kaggle_setup())

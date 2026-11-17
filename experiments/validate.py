@@ -16,10 +16,12 @@ checked under every command: straight (dx), left and right (radians turned
 the way asked) and half speed (dx).
 
 A robot passes only when it is robust: mean loss below MAX_LOSS, every row's
-5th-percentile loss below P5_LOSS and fall rate at most MAX_FALL, and every
-terrain moving on the nominal model. A row with ~0 nominal progress has no
-loss, but still counts for falls and its terrain still has to move: a ground
-where the robot does not move at all is a failure.
+5th-percentile loss below P5_LOSS and fall rate at most MAX_FALL, every terrain
+moving on the nominal model, and every row doing what its command asks on that
+nominal model: at least MIN_DX metres forward on a straight or half speed row,
+at least MIN_YAW radians turned the way asked on a left or right row. A row
+with ~0 nominal progress has no loss, but still counts for falls and its terrain
+still has to move: a ground where the robot does not move at all is a failure.
 
 It also fails a robot that slides on its body: the mean share of ticks its
 body touches the ground (over the trained terrains) above --max-body, which
@@ -50,6 +52,9 @@ from replay import load  # noqa: E402
 MAX_LOSS = 0.30     # mean loss over every row
 P5_LOSS = 0.60      # loss at the 5th percentile of the variants, every row
 MAX_FALL = 0.10     # share of the variants that fall, every row
+MIN_DX = 0.1        # m: nominal progress a straight or half speed row must make
+MIN_YAW = 0.3       # rad: nominal turn, the way asked, a left or right row must make
+MINIMUM = {"left": MIN_YAW, "right": MIN_YAW}   # a row's minimum, by command
 
 
 COMMAND_NAMES = {(0.0, 1.0): "straight", (-1.0, 1.0): "left", (1.0, 1.0): "right",
@@ -86,9 +91,10 @@ class Row(NamedTuple):
 
 def verdict(rows: List[Row], max_body: Optional[float] = None) -> Tuple[bool, List[str]]:
     """(ok, reasons) of a set of rows, with no I/O. Rows with ~0 nominal
-    progress carry no loss; they are still judged on falls and on whether
-    their terrain moves. max_body: the mean body share above which the robot
-    slides on its body and fails; None leaves that check out."""
+    progress carry no loss; they are still judged on falls, on the nominal
+    minimum of their command (MINIMUM, MIN_DX by default) and on whether their
+    terrain moves. max_body: the mean body share above which the robot slides
+    on its body and fails; None leaves that check out."""
     if not rows:
         return False, ["no rows"]
     reasons = []
@@ -98,6 +104,9 @@ def verdict(rows: List[Row], max_body: Optional[float] = None) -> Tuple[bool, Li
         reasons.append("no mean loss: the robot makes no nominal progress on any row")
     elif not mean_loss < MAX_LOSS:
         reasons.append(f"mean loss {mean_loss:.0%} (limit {MAX_LOSS:.0%})")
+    short = [r.label for r in rows if r.nominal < MINIMUM.get(r.command, MIN_DX)]
+    if short:
+        reasons.append("no nominal progress: " + ", ".join(short))
     slow = [r.label for r in rows if not np.isnan(r.p5_loss) and not r.p5_loss < P5_LOSS]
     if slow:
         reasons.append(f"p5 loss >= {P5_LOSS:.0%}: " + ", ".join(slow))
@@ -234,7 +243,8 @@ def main():
         print(f"  {line}")
 
     print(f"\ntrained terrains (mean loss < {MAX_LOSS:.0%}, p5 loss < {P5_LOSS:.0%}, "
-          f"fall rate <= {MAX_FALL:.0%}): {'PASS' if ok else 'FAIL'}")
+          f"fall rate <= {MAX_FALL:.0%}, nominal >= {MIN_DX:g} m straight / "
+          f"{MIN_YAW:g} rad turned): {'PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok and unseen_ok else 1)
 
 

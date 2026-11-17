@@ -90,8 +90,10 @@ CPU only, and is stored in the archive. `validate.py` runs the elite on
 `--n` fresh variants (`--seed`, `--workers`) and prints nominal, mean, 5th
 percentile, worst distance, fall rate and relative loss per terrain and
 command. It passes a robot only when the mean loss is under 30%, every row
-keeps its 5th-percentile loss under 60% and its fall rate at most 10%, and
-every terrain moves at all on the nominal model. `--unseen` checks the
+keeps its 5th-percentile loss under 60% and its fall rate at most 10%, every
+terrain moves at all on the nominal model, and the nominal model does what
+every command asks (0.1 m forward straight and at half speed, 0.3 rad turned
+the way asked left and right). `--unseen` checks the
 terrains the archive was not trained on as well, reported on their own.
 
 `strip_test.py` checks a change of grip mid-stride: it runs the robot straight

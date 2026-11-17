@@ -180,10 +180,13 @@ from the chain instead.
   7-servo trotter became a 6-servo one).
 - `validate.py` passes a robot only when it is robust: mean loss under 30%,
   5th-percentile loss under 60% and fall rate at most 10% on every terrain and
-  command, and no terrain where it fails to move at all. It also fails a robot
-  whose body touches the ground more than `--max-body` of the time on average
-  over the trained terrains (`--max-body 1` turns that off). `--unseen` also
-  checks the grounds the archive never trained on.
+  command, no terrain where it fails to move at all, and no row where the
+  nominal model does not do what the command asks (at least 0.1 m forward on a
+  straight or half speed row, at least 0.3 rad turned the way asked on a left
+  or right row). It also fails a robot whose body touches the ground more than
+  `--max-body` of the time on average over the trained terrains (`--max-body 1`
+  turns that off). `--unseen` also checks the grounds the archive never trained
+  on.
 - `check_assembly.py` builds the printed parts and reports clashes.
 
 Pruning reruns the score with fresh terrains and variants, so its number is

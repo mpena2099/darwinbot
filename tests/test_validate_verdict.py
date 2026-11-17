@@ -20,6 +20,36 @@ def test_all_criteria_pass():
     assert verdict(rows) == (True, [])
 
 
+def test_straight_row_below_min_dx_fails():
+    ok, reasons = verdict([row(nominal=0.05, mean=0.05, p5=0.05, worst=0.05)])
+    assert not ok
+    assert reasons == ["no nominal progress: flat/straight"]
+
+
+def test_straight_row_at_min_dx_passes():
+    assert verdict([row(nominal=0.1, mean=0.1, p5=0.1, worst=0.1)]) == (True, [])
+
+
+def test_left_row_at_min_yaw_passes():
+    assert verdict([row(command="left", nominal=0.3, mean=0.3, p5=0.3,
+                        worst=0.3)]) == (True, [])
+
+
+def test_right_row_turning_the_wrong_way_fails():
+    rows = [row(), row("flat", "right", -0.4, -0.4, -0.4, -0.4)]
+    ok, reasons = verdict(rows)
+    assert not ok
+    assert reasons == ["no nominal progress: flat/right"]
+
+
+def test_reason_names_every_row_below_its_minimum():
+    rows = [row("rubble", "right", -0.2, -0.2, -0.2, -0.2),
+            row("flat", "right", -0.3, -0.3, -0.3, -0.3)]
+    ok, reasons = verdict(rows)
+    assert not ok
+    assert "no nominal progress: rubble/right, flat/right" in reasons
+
+
 def test_mean_loss_alone_fails():
     ok, reasons = verdict([row(mean=0.65, p5=0.6, worst=0.55)])
     assert not ok
@@ -42,7 +72,7 @@ def test_terrain_with_zero_nominal_progress_fails():
     rows = [row(), row("steps", "straight", nominal=0.0, mean=0.0, p5=0.0, worst=0.0)]
     ok, reasons = verdict(rows)
     assert not ok
-    assert reasons == ["no progress on steps"]
+    assert reasons == ["no nominal progress: steps/straight", "no progress on steps"]
 
 
 def test_zero_nominal_rows_still_count_for_falls():
@@ -53,9 +83,11 @@ def test_zero_nominal_rows_still_count_for_falls():
     assert "fall rate > 10%: steps/straight" in reasons
 
 
-def test_one_dead_command_on_a_moving_terrain_passes():
+def test_a_dead_command_on_a_moving_terrain_fails():
     rows = [row(), row(command="left", nominal=0.0, mean=0.0, p5=0.0, worst=0.0)]
-    assert verdict(rows) == (True, [])
+    ok, reasons = verdict(rows)
+    assert not ok
+    assert reasons == ["no nominal progress: flat/left"]
 
 
 def test_empty_rows_fail():

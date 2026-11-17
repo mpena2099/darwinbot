@@ -105,11 +105,11 @@ Non-finite values (`nan`, `inf`) are rejected on every transport.
 
 The robot boots STOPPED and stays so until the first command. STOPPED holds every
 joint at its last goal (the present position at boot), keeps the wheels at speed
-0 and does not run the controller. Speed 0 with steering other than 0 is the
-slowest gait; speed 0 and steering 0 together are a stop. These enter STOPPED:
+0 and does not run the controller. Speed 0 is a stop whatever the steering; any
+speed above 0 runs the gait (steering only turns it). These enter STOPPED:
 
-- the page's STOP button, serial `stop`, a ROS `cmd_vel` with `linear.x` and
-  `angular.z` both 0;
+- the page's STOP button, serial `stop`, a speed of 0 (a ROS `cmd_vel` with
+  `linear.x` 0, whatever `angular.z`);
 - no command from any transport for 1 s (a dropped Wi-Fi link);
 - a status error byte with the overheat, overcurrent or overload bit from any
   servo: that servo is reported on the serial console and the robot stays
@@ -118,7 +118,7 @@ slowest gait; speed 0 and steering 0 together are a stop. These enter STOPPED:
   next command after the voltage recovers (10.2 V) re-enables torque from the
   present positions.
 
-Leaving STOPPED restarts the controller, so its ramp starts again. While it
+Leaving STOPPED resets the controller, so its ramp starts again. While it
 ramps (`ramp_time` of the control file) the joints move at 20 % of
 `servo_speed`; after that at `servo_speed` itself. A task watchdog on the control
 task (2 s) reboots the board if the loop hangs; the servos keep their last goal.
@@ -164,4 +164,4 @@ $PLATFORMIO_CORE_DIR/penv/bin/pip install platformio catkin_pkg lark-parser \
 ```
 
 `ros_agent_ip` must be an IPv4 address; without it the node does not start. An
-all-zero `cmd_vel` is a stop.
+`cmd_vel` with `linear.x` 0 is a stop, whatever `angular.z`.

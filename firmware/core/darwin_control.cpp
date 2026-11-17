@@ -41,6 +41,14 @@ void Controller::set_speed(float s) {
     apply();
 }
 
+void Controller::reset() {
+    std::fill(theta_.begin(), theta_.end(), 0.0f);
+    std::fill(targets.begin(), targets.end(), 0.0f);
+    std::fill(steps.begin(), steps.end(), 0);
+    std::fill(wheel_speeds.begin(), wheel_speeds.end(), 0.0f);
+    time_ = 0.0f;
+}
+
 void Controller::apply() {
     const float d = 1.0f - speed_;
     for (size_t i = 0; i < servos_.size(); ++i) {

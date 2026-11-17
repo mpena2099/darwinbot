@@ -26,8 +26,8 @@ namespace {
 
 Config g_cfg;
 Bus g_bus;
-// The controller lives in static storage and is rebuilt in place when the robot
-// leaves STOPPED, so its ramp starts again. Nothing is allocated per tick.
+// The controller lives in static storage, built once at boot. Leaving STOPPED
+// resets it, so its ramp starts again. Nothing is allocated per tick.
 alignas(darwinbot::Controller) unsigned char g_controller_storage[sizeof(darwinbot::Controller)];
 darwinbot::Controller* g_controller = nullptr;
 char g_error[192] = "no control file";
@@ -157,7 +157,7 @@ void control_task(void*) {
         const bool running = st.running && !any_fault && !undervolt;
         if (running && !was_running) {
             arm_servos();            // servos shut off by an undervoltage start from where they are
-            build_controller();      // the ramp starts again
+            g_controller->reset();   // the ramp starts again
             ramp_left = ramp_ticks;
             for (int k = 0; k < n_position; ++k) speed_values[k] = g_speed_slow;
             g_bus.write_regs(kRegGoalSpeed, position_ids, speed_values, n_position);

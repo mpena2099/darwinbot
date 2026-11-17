@@ -9,6 +9,8 @@
 //   loads (n_servos) expected targets (n_servos) expected wheel speeds (n_servos)
 //   expected phases (n_servos)                  (one line per tick)
 //
+// A line holding only "reset" calls Controller::reset() and is not a tick.
+//
 // A servo line is always eighteen numbers after the mode:
 //   position amp1 phase1 offset amp2 phase2 sigma steer_gain steer_shift speed_gain speed_shift couple_to couple_k couple_lag sign zero min max speed
 //   wheel    0    0      0      0    0      0     0    0          0           0         0           couple_to couple_k couple_lag sign 0    0   0   speed
@@ -137,6 +139,13 @@ int main(int argc, char** argv) {
 
     for (size_t i = static_cast<size_t>(n_servos) + 1; i < lines.size(); ++i) {
         std::istringstream in(lines[i]);
+        std::string word;
+        if ((in >> word) && word == "reset") {
+            controller.reset();
+            continue;
+        }
+        in.clear();
+        in.seekg(0);
         if (!read_record(in, loads) || !read_record(in, expected) ||
             !read_record(in, expected_speed) ||
             !read_record(in, expected_phase)) {

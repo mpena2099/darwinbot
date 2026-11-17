@@ -9,7 +9,7 @@ description = "Evolving robots you can actually build: bodies from real parts ev
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
-    "mujoco>=3.6.0",
+    "mujoco>=3.6.0,<4",
     "numpy>=1.23.0",
     "cma>=3.3",
     "ribs>=0.12",

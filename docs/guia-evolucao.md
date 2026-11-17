@@ -208,7 +208,10 @@ verdade. O DarwinBot usa três defesas:
 3. **Validação:** `experiments/validate.py` testa o robô em 50 físicas
    variadas e aprova só se ele for robusto: perda média abaixo de 30%,
    perda no 5º percentil abaixo de 60% e taxa de queda de no máximo 10% em
-   cada terreno e comando, e nenhum terreno onde ele não sai do lugar.
+   cada terreno e comando, nenhum terreno onde ele não sai do lugar, e
+   nenhum comando que ele só finge seguir no modelo nominal (0,1 m para
+   frente reto e na metade da velocidade, 0,3 rad virado para o lado
+   pedido à esquerda e à direita).
 
 Há ainda uma quarta defesa, a **seleção natural pela impressora**: um corpo
 só é construível se cada peça couber numa mesa de 220 mm, se cada link

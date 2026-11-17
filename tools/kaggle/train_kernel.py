@@ -120,7 +120,7 @@ def main():
         shutil.copy(previous[0], f"{OUT}/{RESUME_TO}")
         print(f"resuming from {previous[0]}")
     pip = [sys.executable, "-m", "pip", "install", "-q"]
-    subprocess.run(pip + ["mujoco>=3.6.0", "cma>=3.3", "ribs>=0.12", "pyyaml"], check=True)
+    subprocess.run(pip + ["mujoco>=3.6.0,<4", "cma>=3.3", "ribs>=0.12", "pyyaml"], check=True)
     if "--device warp" in TRAIN_ARGS:
         subprocess.run(pip + ["mujoco-warp>=3.17", "warp-lang>=1.18"], check=True)
     publishing = api_token()

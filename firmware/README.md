@@ -64,7 +64,8 @@ that error exceeds `1e-3 rad`.
 
 ## ESP32 layer
 
-Not written yet, for any board. When the hardware arrives, a thin Arduino layer will read the
-control JSON, poll each STS3215 load register (`0x3C`/`0x3D`), apply the
-calibration (`zero`, `sign`) and write targets on the bus. All control math
+`esp32/` is the PlatformIO project that runs this core on the robot (web page,
+serial console, micro-ROS), untested on hardware: see `esp32/README.md`. It reads
+`control.json`, polls each STS3215 load register (`0x3C`/`0x3D`), applies the
+calibration (`zero`, `sign`) and writes targets on the bus. All control math
 stays in this portable core.

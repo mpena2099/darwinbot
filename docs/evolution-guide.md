@@ -38,7 +38,7 @@ organism it produces. In DarwinBot:
 
 - the genotype is a vector of numbers between 0 and 1;
 - the phenotype is the robot's body: a tree of modules (trunk, spine
-  segments, servo joints, links, TPU springs, wheels, feet, tails, skids, spikes and free
+  segments, servo joints, links, wheels, feet, tails, skids, spikes and free
   caster wheels).
 
 ![From genome to body](img/guide/genome_en.png)
@@ -53,8 +53,9 @@ angle, the mount rolls to any angle and can sit anywhere along the torso
 edge, top or bottom. The trunk outline is an 8-vertex polygon that evolution
 reshapes, a link can be straight, L-shaped or arc-shaped, a foot can be a
 sphere, blade, pad or claw, and the trunk can grow up to six extra plates
-joined by spine servos. Each block has 15 genes. The passive modules (spring, tail with
-counterweight, skid, spike, caster) have no servo.
+joined by spine servos. Each block has 15 genes. The passive modules (tail with
+counterweight, skid, spike, caster) have no servo. (A TPU spring module exists in the
+code but is switched off: no printed part assembles it yet.)
 
 **In the code:** `darwinbot/morphology.py`, functions `decode` (genome to
 body) and `encode` (body to genome).
@@ -74,7 +75,7 @@ one to three of them in a row:
 |---|---|---|
 | `param` | changes a continuous measure (length, section, elbow, roll, radius, trunk outline, link bend, foot shape); one change in five is a large jump | 30% |
 | `add` | adds a module in a free socket | 20% |
-| `type` | swaps a module's type (a joint becomes a link, spring, tail, skid, spike or caster, for example) | 15% |
+| `type` | swaps a module's type (a joint becomes a link, tail, skid, spike or caster, for example) | 15% |
 | `mirror` | copies a limb to the opposite side, mirrored | 15% |
 | `remove` | removes a whole limb | 10% |
 | `copy` | copies a limb to another socket | 5% |
@@ -100,14 +101,16 @@ that no family on the map had.
 
 ## 4. The score (fitness)
 
-Selection needs a criterion. A robot's score, after a few seconds of
+Selection needs a criterion. A robot's score, after 8 seconds of
 simulation, is:
 
 ```
-score = forward progress - 0.5 × lateral drift - 0.2 × heading change - 0.05 × energy spent - 0.5 × (fell?)
+score = forward progress (second half of the episode) - 0.5 × lateral drift - 0.2 × heading change - 0.05 × energy spent - 0.5 × (fell?)
 ```
 
-Walking forward earns points; walking crooked, curving when not asked to, spending too much energy and
+Walking forward earns points, counted over the second half of the episode so a
+robot cannot profit from a lunge at the start, and a robot that falls before
+the half-way mark earns none; walking crooked, curving when not asked to, spending too much energy and
 falling lose points. With several terrains, the final score mixes the
 average with the worst terrain, to reward robust robots.
 

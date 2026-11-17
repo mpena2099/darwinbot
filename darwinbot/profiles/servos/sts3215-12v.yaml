@@ -3,7 +3,8 @@ speed: 4.71                 # rad/s, STS3215 (12 V) no-load speed (docs/hardware
 stall_torque: 2.94          # N*m, STS3215 (12 V) stall torque (docs/hardware-dados.md)
 load_full_scale: 0.7        # fraction of the stall torque that reads as N = 1
 mass: 0.060                 # kg, the servo alone (docs/hardware-dados.md)
-bracket_mass: 0.015         # kg, its printed bracket (~15 g of PLA)
+cradle_mass_plate: 0.0227   # kg, its printed cradle on a torso or segment plate (solid PLA, parts.cradle volume)
+cradle_mass_link: 0.0173    # kg, its printed cradle at a link tip or on an elbow (solid PLA, parts.cradle volume)
 current_idle: 0.2           # A, "corrente em repouso" (docs/hardware-dados.md)
 current_stall: 2.7          # A, "corrente de travamento" (docs/hardware-dados.md)
 joint_friction: 0.068       # N*m, hinge frictionloss of a servo joint

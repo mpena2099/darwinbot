@@ -25,29 +25,50 @@ shows every robot in the archive, odd ones included.
 ```
 darwinbot/
 ├── darwinbot/
-│   ├── morphology.py   # module tree, genome, decode, mutate
-│   ├── controller.py   # two-harmonic Tegotae CPG, genome, active genes
-│   ├── builder.py      # module tree + terrain -> MJCF
+│   ├── morphology.py   # module tree, genome, decode, mutate, graft, printing rules
+│   ├── controller.py   # two-harmonic Tegotae CPG, genome, steering and speed commands
+│   ├── builder.py      # module tree + terrain -> MJCF, joint ranges, assembly rules
+│   ├── dims.py         # printed-part dimensions shared by simulation, parts and export
+│   ├── hardware.py     # the hardware kit every module reads (profiles/ holds the YAMLs)
 │   ├── terrain.py      # terrain snippets and presets
 │   ├── sim.py          # Episode: compile once, replay controllers
 │   ├── sim_gpu.py      # optional MJX batch simulator
 │   ├── randomize.py    # randomised model variants (sim-to-real)
-│   ├── fitness.py      # episode score and multi-terrain aggregate
+│   ├── fitness.py      # episode score, tasks and multi-terrain aggregate
+│   ├── rules.py        # optional score rules (--rules)
+│   ├── ablate.py       # realism rules that experiments switch off
+│   ├── body_options.py # limits on the bodies evolution may build (--body)
+│   ├── plugins.py      # external tasks and terrains (--plugin)
 │   ├── inner.py        # CMA-ES inner loop
-│   ├── evolve.py       # behaviour archive (pyribs CVT), novelty selection, outer loop
+│   ├── evolve.py       # behaviour archive (pyribs CVT), novelty selection, outer loop, migrations
+│   ├── robot_file.py   # a robot written by hand as YAML, and back
 │   ├── parts.py        # printable parts (build123d)
+│   ├── organic.py      # hollowed links for the organic export
+│   ├── topology.py     # SIMP topology optimisation behind organic.py
 │   ├── control_file.py # JSON control file for the firmware
+│   ├── power.py        # electrical estimate of a robot
+│   ├── urdf.py         # URDF export
 │   └── export.py       # robot -> parts, BOM, assembly, control file
 ├── experiments/
 │   ├── train.py        # run evolution
 │   ├── replay.py       # viewer or video for an elite
+│   ├── snapshot.py     # code-independent recording of chosen robots
 │   ├── validate.py     # elite on randomised models (sim-to-real check)
 │   ├── export.py       # export a robot to build
+│   ├── showcase.py     # polish, prune, validate, check and snapshot in one command
+│   ├── polish.py       # longer controller search for chosen robots
+│   ├── prune.py        # cut the parts a robot does not need
+│   ├── seed.py         # start an archive from a robot written by hand
+│   ├── migrate_archive.py  # bring an archive of an older body model up to date
+│   ├── rescore_archive.py  # score an archive again under the current rules
+│   ├── merge_archives.py   # join islands: best elite per cell
 │   ├── plot_archive.py # behaviour scatter and progress plots
 │   └── lineage.py      # family tree of the elites
+├── tools/              # figures, the gallery site, assembly and kit checks, Kaggle scripts
+├── examples/           # a plugin and two hand-written robots
 ├── firmware/           # controller core in C++ for the ESP32, parity-tested
 ├── tests/              # pytest suite (GPU tests skip without jax)
-├── docs/               # hardware data, control file format
+├── docs/               # this site; the control file format and hardware data are in Portuguese
 ├── checkpoints/        # archive.pkl and plots
 ├── exports/            # export.py output (ignored by git)
 └── pyproject.toml

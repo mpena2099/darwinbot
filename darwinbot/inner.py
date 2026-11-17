@@ -10,8 +10,8 @@ Here every body is judged by (roughly) the best gait it can learn.
 A body that is not buildable (legs overlap at spawn) gets UNSTABLE_SCORE
 without any simulation or CMA-ES run.
 
-The body's behaviour vector (duty, height, servo count, wheel share, cost of
-transport) comes
+The body's Behaviour (duty, height, servo count, wheel share, cost of
+transport, legs) comes
 from the nominal flat-terrain episode of its best controller, never from a
 randomised variant.
 
@@ -31,7 +31,8 @@ from darwinbot import randomize
 from darwinbot.controller import CTRL_LENGTH, active_genes, random_controller
 from darwinbot.fitness import UNSTABLE_SCORE, aggregate, commands, score, task_score
 from darwinbot.morphology import Morphology
-from darwinbot.sim import COT_MAX, EPISODE_SECONDS, Episode, Metrics, cost_of_transport
+from darwinbot.sim import (COT_MAX, EPISODE_SECONDS, Behaviour, Episode, Metrics,
+                           cost_of_transport)
 from darwinbot.terrain import Terrain, flat
 
 
@@ -42,7 +43,7 @@ class ControllerResult:
     scores:  List[float]     # per terrain, same order as the terrain list
     metrics: List[Metrics]
     evals:   int
-    behaviour: Optional[np.ndarray] = None   # (duty, height, servos, wheel share, cot)
+    behaviour: Optional[Behaviour] = None
 
 
 def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
@@ -65,16 +66,16 @@ def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
 
 
 def behaviour_vector(morph: Morphology, m: Optional[Metrics],
-                     task: str = "forward") -> np.ndarray:
-    """(duty, height, servos, wheel share, cost of transport, legs) of a body
-    from its nominal flat episode. A body never simulated, or whose episode blew up or
-    gave non-finite numbers, gets the same fallback vector (never NaN)."""
-    fallback = np.array([0.0, 0.0, float(morph.n_servos), 0.0, COT_MAX,
-                         float(morph.n_legs)])
+                     task: str = "forward") -> Behaviour:
+    """The Behaviour of a body from its nominal flat episode. A body never
+    simulated, or whose episode blew up or gave non-finite numbers, gets the same
+    fallback record (never NaN)."""
+    fallback = Behaviour(0.0, 0.0, float(morph.n_servos), 0.0, COT_MAX,
+                         float(morph.n_legs))
     if m is None or m.unstable:
         return fallback
-    vec = np.array([m.duty, m.height, float(morph.n_servos), m.wheel_share,
-                    cost_of_transport(m, task), float(morph.n_legs)])
+    vec = Behaviour(m.duty, m.height, float(morph.n_servos), m.wheel_share,
+                    cost_of_transport(m, task), float(morph.n_legs))
     return vec if np.isfinite(vec).all() else fallback
 
 

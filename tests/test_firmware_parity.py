@@ -162,7 +162,22 @@ def test_parity_with_speed_clip_active(tmp_path):
         ctrl[b + co.AMP1] = 1.0
         ctrl[b + co.AMP2] = 1.0
     p = co.Controller(ctrl, LAYOUT).params
-    peak = (p.amp1 + 2 * p.amp2) * p.omega
+    peak = (p.amp1 + 2 * p.amp2) * (p.omega + np.abs(p.sigma))
+    assert np.allclose(peak[[0, 1, 2]], co.SERVO_SPEED)
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads)
+
+
+def test_parity_with_large_sigma_clip(tmp_path):
+    rng, ctrl = _genes(7)
+    for slot in (1, 2, 3):
+        b = co.node_base(slot)
+        ctrl[b + co.AMP1] = 1.0
+        ctrl[b + co.AMP2] = 0.5
+        ctrl[b + co.SIGMA] = 1.0          # largest load feedback
+    p = co.Controller(ctrl, LAYOUT).params
+    assert np.all(np.abs(p.sigma[[0, 1, 2]]) > 1.0)
+    peak = (p.amp1 + 2 * p.amp2) * (p.omega + np.abs(p.sigma))
     assert np.allclose(peak[[0, 1, 2]], co.SERVO_SPEED)
     loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
     _run_case(tmp_path, ctrl, loads)
@@ -189,7 +204,7 @@ def test_parity_with_a_slower_servo(tmp_path, monkeypatch):
     monkeypatch.setattr(co, "SERVO_SPEED", slow)
     monkeypatch.setattr(co, "WHEEL_RANGE", (-slow, slow))
     p = co.Controller(ctrl, LAYOUT, 0.5).params
-    assert np.allclose((p.amp1 + 2 * p.amp2)[[0, 1, 2]] * p.omega, slow)
+    assert np.allclose(((p.amp1 + 2 * p.amp2) * (p.omega + np.abs(p.sigma)))[[0, 1, 2]], slow)
     assert np.all(np.abs(p.offset[[3, 4]]) <= slow)
     loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
     _run_case(tmp_path, ctrl, loads, 0.5, 1.0, slow)

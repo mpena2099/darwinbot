@@ -75,16 +75,20 @@ in `sim.py` and `sim_gpu.py`.
 Per episode, from `darwinbot/fitness.py`:
 
 ```
-score = dx - 0.5 * |dy| - 0.2 * |yaw| - 0.05 * energy / (m * g) - 0.5 * fell
+score = up(progress) - 0.5 * |dy| - 0.2 * |yaw| - 0.05 * energy / (m * g) - 0.5 * fell
 ```
 
-`dx` is forward displacement, `dy` lateral displacement, `yaw` the net heading
+`progress` is the forward distance of the second half of the episode, doubled:
+`2 * (x_end - x_mid)` along the heading axis, so a steady gait keeps its
+distance and a one-time drop of the torso early on is mostly ignored. `up()` scales a
+positive progress by the mean cosine of the torso tilt: a robot that leans 45
+degrees keeps 71% of it. `dy` is lateral displacement, `yaw` the net heading
 change in radians (charged at the rate a turn earns it), `energy` the mechanical
 work of all actuators, `m` the robot mass and `g = 9.81`. Dividing energy by
 weight turns it into metres and keeps heavy and light bodies comparable. A fall
-ends the episode but keeps the distance covered, so the fixed penalty only
-breaks ties in favour of staying upright. A physics blow-up returns
-`UNSTABLE_SCORE = -5.0`.
+ends the episode. A fall before the half-way step has no progress at all; a fall
+after it keeps `2 * (x_fall - x_mid)`. The fixed penalty breaks ties in favour
+of staying upright. A physics blow-up returns `UNSTABLE_SCORE = -5.0`.
 
 Multi-terrain runs use a blend of mean and worst score:
 

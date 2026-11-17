@@ -37,7 +37,7 @@ produz. No DarwinBot:
 
 - o genótipo é um vetor de números entre 0 e 1;
 - o fenótipo é o corpo do robô: uma árvore de módulos (tronco, segmentos de
-  coluna, juntas com servo, links, molas de TPU, rodas, pés, caudas, patins,
+  coluna, juntas com servo, links, rodas, pés, caudas, patins,
   espetos e rodas livres).
 
 ![Do genoma ao corpo](img/guide/genome_pt.png)
@@ -52,8 +52,9 @@ encaixe gira em qualquer ângulo e pode ficar em qualquer ponto da borda, do
 topo ou da base do tronco. O contorno do tronco é um polígono de 8 vértices
 que a evolução deforma, o link pode ser reto, em L ou em arco, o pé pode ser
 esfera, lâmina, pata ou garra, e o tronco pode ganhar até seis placas extras
-ligadas por servos de coluna. Cada bloco tem 15 genes. Os módulos passivos (mola, cauda com
-contrapeso, patim, espeto, roda livre) não têm servo.
+ligadas por servos de coluna. Cada bloco tem 15 genes. Os módulos passivos (cauda com
+contrapeso, patim, espeto, roda livre) não têm servo. (Um módulo de mola de TPU existe
+no código, mas está desligado: nenhuma peça impressa o monta ainda.)
 
 **No código:** `darwinbot/morphology.py`, funções `decode` (genoma para
 corpo) e `encode` (corpo para genoma).
@@ -73,7 +74,7 @@ recebe de uma a três operações seguidas:
 |---|---|---|
 | `param` | ajusta uma medida contínua (comprimento, seção, cotovelo, rotação, raio, contorno do tronco, dobra do link, forma do pé); um ajuste em cada cinco é um salto grande | 30% |
 | `add` | acrescenta um módulo num encaixe livre | 20% |
-| `type` | troca o tipo de um módulo (junta vira link, mola, cauda, patim, espeto ou roda livre, por exemplo) | 15% |
+| `type` | troca o tipo de um módulo (junta vira link, cauda, patim, espeto ou roda livre, por exemplo) | 15% |
 | `mirror` | copia um membro para o lado oposto, espelhado | 15% |
 | `remove` | tira um membro inteiro | 10% |
 | `copy` | copia um membro para outro encaixe | 5% |
@@ -99,14 +100,16 @@ família do mapa tinha.
 
 ## 4. A nota (fitness)
 
-Seleção precisa de um critério. A nota de um robô, depois de alguns segundos
+Seleção precisa de um critério. A nota de um robô, depois de 8 segundos
 de simulação, é:
 
 ```
-nota = avanço - 0,5 × desvio lateral - 0,2 × mudança de rumo - 0,05 × energia gasta - 0,5 × (caiu?)
+nota = avanço (segunda metade do episódio) - 0,5 × desvio lateral - 0,2 × mudança de rumo - 0,05 × energia gasta - 0,5 × (caiu?)
 ```
 
-Andar para a frente conta pontos; andar torto, fazer curva sem que peçam, gastar energia demais e cair
+Andar para a frente conta pontos, medidos na segunda metade do episódio, para que um
+robô não ganhe com uma arrancada no início, e quem cai antes da metade não ganha nenhum;
+andar torto, fazer curva sem que peçam, gastar energia demais e cair
 tiram pontos. Com vários terrenos, a nota final mistura a média com o pior
 terreno, para premiar robôs robustos.
 

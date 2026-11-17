@@ -37,6 +37,10 @@ blade thickness (see "Mola de TPU" in [hardware-dados.md](hardware-dados.md)); a
 with a counterweight at the tip; a skid has low friction (0.15), a spike high
 friction (1.5); a caster is a free wheel on a passive hinge. None has a servo.
 
+The spring is switched off (`DISABLED_KINDS`): no printed part assembles it yet,
+so mutation never offers it, `violations` rejects a body that holds one and
+`fit_rules` turns it into a link.
+
 For the core block, `length` and `wheel` hold the torso length (0.15 - 0.40 m)
 and width (0.10 - 0.25 m), and the unused genes hold the contour factors (0.4 to
 1.4) of the 8 vertices of the star-shaped torso polygon, one per contour slot.

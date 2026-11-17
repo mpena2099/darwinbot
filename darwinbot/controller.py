@@ -42,7 +42,7 @@ Layout (all genes in [0, 1])
     speed_gain, speed_shift
 
 Amplitudes are clipped so no servo is asked to move faster than SERVO_SPEED:
-(amp1 + 2 * amp2) * omega <= SERVO_SPEED, scaling both down proportionally.
+(amp1 + 2 * amp2) * (omega + |sigma|) <= SERVO_SPEED, scaling both down proportionally.
 """
 
 import math
@@ -186,8 +186,9 @@ class Params:
         self.amp1_base, self.amp2_base = self.amp1.copy(), self.amp2.copy()
         self.offset_base = self.offset.copy()
         apply_commands(self, command, speed)
-        # A servo cannot follow a signal whose peak speed exceeds its own.
-        peak = (self.amp1 + 2.0 * self.amp2) * self.omega
+        # A servo cannot follow a signal whose peak speed exceeds its own; with
+        # load feedback the phase advances at up to omega + |sigma|.
+        peak = (self.amp1 + 2.0 * self.amp2) * (self.omega + np.abs(self.sigma))
         k = np.minimum(1.0, SERVO_SPEED / np.maximum(peak, 1e-12))
         self.amp1 = self.amp1 * k
         self.amp2 = self.amp2 * k

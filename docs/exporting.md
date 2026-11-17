@@ -56,7 +56,9 @@ tip of a link it is printed as one piece with the link, and an elbow plate ends
 in the cradle of its child. The joint's own link starts as a U fork that clasps
 both horns of the servo, one arm on each horn face with the horn hole pattern,
 and joins the plate beyond the servo, out of the circle the cradle fills, so the
-link turns the whole joint range.
+link turns the whole joint range. A roll joint (about X) is the exception: its
+link holds only the main horn, with one arm on that face and no strap over the
+far end, where the parent holds the servo.
 
 The foot goes down to the torso plate on the side that points down. When the slot
 is rolled by an angle that is not a multiple of 90 degrees (up to 20), the foot

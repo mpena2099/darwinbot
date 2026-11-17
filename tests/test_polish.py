@@ -113,3 +113,14 @@ def test_a_worse_search_keeps_the_original_controller(tmp_path, monkeypatch, cap
     assert b.cells[cell].fitness == pytest.approx(0.80)
     assert np.array_equal(b.cells[cell].ctrl, a.cells[cell].ctrl)
     assert "kept the original" in capsys.readouterr().out
+
+
+def test_workers_score_on_a_pool(tmp_path, monkeypatch):
+    """--workers 2 runs the real search on a pool; a worker that cannot start
+    would make the pool respawn it forever instead of failing."""
+    src = tmp_path / "a.pkl"
+    a = _archive(src, [(CRAWL, -1.0)])
+    out = tmp_path / "polished.pkl"
+    _run(monkeypatch, "--archive", str(src), "--types", a.names()[min(a.cells)],
+         "--out", str(out), "--budget", "4", "--workers", "2")
+    assert len(_read(out).cells) == 1

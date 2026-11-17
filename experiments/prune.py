@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np   # noqa: E402
 from darwinbot import hardware, morphology as morpho, plugins, randomize   # noqa: E402
-from darwinbot.evolve import Archive, Elite, scaled_budget   # noqa: E402
+from darwinbot.evolve import Archive, Elite, load_archive, scaled_budget   # noqa: E402
 from darwinbot.inner import evaluate, optimise_controller   # noqa: E402
 from darwinbot.sim import Episode   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
@@ -95,8 +95,7 @@ def main():
     args = p.parse_args()
     if os.path.exists(args.out):
         sys.exit(f"{args.out} exists; pick a new name")
-    with open(args.archive, "rb") as f:
-        a: Archive = pickle.load(f)
+    a: Archive = load_archive(args.archive)
     plugins.require(a, args.plugin)
     hardware.require(a.profile)
     a.activate()

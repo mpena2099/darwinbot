@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from darwinbot.evolve import merge   # noqa: E402
+from darwinbot.evolve import load_archive, merge   # noqa: E402
 
 
 def main():
@@ -24,8 +24,7 @@ def main():
     a = p.parse_args()
     archives = []
     for path in a.archives:
-        with open(path, "rb") as f:
-            archives.append(pickle.load(f))
+        archives.append(load_archive(path))
         s = archives[-1].stats()
         print(f"{path}: batch {s['batch']}, cells {s['cells']}, best {s['best']:.2f}, "
               f"QD-score {s['qd_score']:.1f}")

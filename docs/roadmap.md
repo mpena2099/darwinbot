@@ -28,154 +28,117 @@ on them.
    and the project becomes a gallery of real builds (GitHub Discussions, and
    the Hugging Face idea under Later).
 
-## Next
+## Next: release 3
 
-- **The next run from scratch**, which bumps `BODY_MODEL`, brings together
-  several changes; each gets a short run against the current rules, alone and
-  together, before the run starts:
-  - **Wheels up to 100 mm radius** (60 mm before). A servo turning a wheel
-    directly tops out near 0.2 m/s with a 42 mm wheel, while legs pushing
-    reach 0.35 to 0.4 m/s, so the long-run wheeled robots used their wheels
-    as feet: in the best of them the wheels turned for only 16 to 66% of the
-    distance. A 100 mm printed wheel reaches about 0.47 m/s.
-  - **Six torso segments** (two before), chained through the front slot of
-    each plate, so long bodies with repeated vertebrae can appear, the way
-    nature builds snakes and centipedes. Segments add no depth, so limbs on
-    the last plate are as deep as limbs on the core; `MAX_NODES` and
-    `MAX_SERVOS` still bound the body. Lateral undulation also needs the
-    direction-dependent friction under Later; sidewinding and concertina
-    motion work without it.
-  - **Wheel width as a gene**, 10 to 60 mm (it was derived from the radius),
-    so a wide, tyre-like wheel and a thin disc are both reachable. 10 mm is
-    the least that holds the horn screws and the O-ring groove.
-  - **Joint ranges from each joint alone**: a joint stops only before the
-    clashes it causes moving by itself; clashes that need several joints at
-    once are left to MuJoCo's collisions between the robot's parts. With all
-    ranges off, short ablation runs trotted at 0.16 instead of below zero and
-    jittered at 2 instead of 6 to 7 reversals per second.
-  - **Progress from the second half of the episode**, scored twice (see the
-    fall item below).
-  - **Servo count as an archive axis** (five CVT axes, 800 cells): a 6-servo
-    body and a 16-servo one that move alike get separate cells, so simple
-    robots stop losing their cell to the ones with more motors. Check the
-    cells stay filled over ~50 batches.
-  - **A speed command** next to steering (two more genes per slot, control
-    file format 4): the `steer` task adds a fourth episode per evaluation,
-    straight at speed 0.5, scored on how close its distance is to half of the
-    full-speed one, so evaluations cost a third more. Run it against the
-    current rule first, to check it does not shrink the archive's variety.
-  - **A showcase GIF of four environments**: the best robot trained on flat
-    ground only, on flat ground and steps, on flat ground and rubble, and on
-    the full set, each filmed on its own terrain
-    (`tools/make_readme_figures.py` needs a terrain per robot), so the GIF
-    shows how the ground shapes the body.
-  - **Five score rules, implemented behind `--rules`** and off by default:
-    `worse_turn` (the worse of the two turns, not the mean), `turn_forward`
-    (a turn earns nothing if the torso ended behind the spawn), `tilt`
-    (penalty on mean torso tilt), `slip` (penalty on the speed of feet
-    sliding while in contact) and `servo_ground` (penalty on the share of
-    time a servo housing touches the ground). Each enters the run only if its
-    own short run, over three seeds, passes against the current score
-    without shrinking the archive's variety.
-- **Build one robot**: every export is already assembled on screen
-  (`tools/check_assembly.py` reports clashes and horn holes,
-  `tools/render_assembled.py` shows the printed parts standing and walking),
-  but nothing has been printed. Measure a real STS3215, correct `parts.py`,
-  and print one bracket, link and horn adapter to test the fit before a whole
-  robot.
-- **A search that learns where to mutate** (CMA-ME / CMA-MAE): bodies come
-  from random mutations today. In these MAP-Elites variants a CMA-ES learns
-  which directions in the genome fill new cells or improve old ones; the body
-  genome is already a fixed-size continuous vector, the case they are made
-  for, and pyribs ships them. Measured against the current search with a short
-  run.
-  A first try perturbed all 300 genes at once and most emitted bodies came out
-  unbuildable, wasting much of each batch; the emitter has to move only the
-  genes of modules that exist, with smaller steps, or repair bodies before
-  they are scored.
-- **Cheap evaluation first** (multi-fidelity): every child pays the full
-  evaluation (four terrains, four commands, two physics variants) even when
-  it is hopeless. A quick screen first, such as straight on flat ground with a
-  small CMA-ES budget, would drop the worst before the full test and could
-  make training several times cheaper.
-- **Protecting new bodies**: a new body nearly always loses to the old
-  elite of its cell because its controller is still poorly tuned, not because
-  the body is worse (Cheney et al., 2018). A grace period, or a larger budget
-  after a big body mutation, lets an innovation live long enough to show what
-  it can do.
-- **Collapsing forward**: falling forward is a classic exploit (Karl Sims'
-  creatures learned to topple instead of walk). The fall penalty only catches
-  a torso tilted past 60 degrees, so a robot that drops from 23 to 12 cm
-  without tipping keeps the distance: 6servos-low-walk gains 16 of its 28 cm
-  in that one drop, then crawls at 1 cm/s. Scoring the progress of the second
-  half of the episode, twice, keeps a steady gait's score and removes most of
-  the drop.
-- **Adversarial terrains**: instead of drawing rough and rubble terrains at
-  random, keep the terrains and physics variants where the current elites fail
-  most and score everyone on them too, the way Hillis evolved hard test cases
-  as "parasites" and POET evolves terrains alongside its walkers. A hall of
-  fame of these hard cases would also make `validate.py` stricter.
+showcase-2 shipped larger wheels, up to six torso segments, the servo count as
+an archive axis, the speed command, hardware kits, robots written by hand in
+YAML, plugins and terrain parameters, URDF export and the optional score rules
+(worse turn, forward turns, tilt, slip, servo on the ground). Its legged robots
+mostly slide on their torso, and training is slow. Release 3 is one run from
+scratch (long9) that brings together, each checked first by a short run
+against the current rules:
+
+- **Robots that stand instead of sliding**: the torso's share of ground
+  contact is now measured (`body_ground`) and a robot that slides on its body
+  is named `belly`. To compare: a score rule for it (`--rules body_ground`,
+  sliding scrapes the plate and the electronics) and body ground contact as a
+  sixth archive axis (`--axes body`), so standing and sliding robots stop
+  competing for the same cell.
+- **Faster training**: CMA-ES steps focused on the genes a mutation changed,
+  scoring candidates on one physics variant and the best on all (2 to 4 times
+  fewer inner-loop evaluations in a benchmark), fewer random bodies on mature
+  archives, and a race rule that stops a hopeless child early.
+- **Cheap evaluation first** (multi-fidelity): a quick screen, such as straight
+  on flat ground with a small budget, drops the worst children before the full
+  test.
+- **Protecting new bodies**: a new body nearly always loses to the old elite of
+  its cell because its controller is still poorly tuned, not because the body
+  is worse (Cheney et al., 2018). A grace period, or a larger budget after a
+  big body mutation, lets an innovation live long enough to show what it can
+  do.
+- **Mirrored mutation**: a mutation changes one part at a time, so a body
+  that started symmetric drifts away from it and nothing brings it back. With
+  some probability the same change also goes to the mirror part. The score
+  still says nothing about symmetry: a symmetric body only becomes easier to
+  reach, and keeps its cell only if it moves better.
+- **Coupled oscillators**: each joint's oscillator also feels its neighbours'
+  phases, the way the spinal circuits of each leg synchronise a gait, instead
+  of coordinating only through the body and the phase genes. Control only, no
+  new part.
+- **Balance sense, optional**: an IMU on the ESP32 (an MPU-6050, for example)
+  feeding the torso's tilt back into the controller through evolved gains that
+  start at zero, so each leg can correct a lean. Today the controller only
+  feels each servo's load, so evolution favours bodies that are stable on their
+  own. A robot built without an IMU keeps working: the gains are simply unused.
+- **A showcase GIF of four environments**, with the flat and rubble island that
+  long8 lacked: the best robot trained on flat ground, on flat ground and
+  steps, on flat ground and rubble, and on the full set, each on its own
+  terrain.
+- **A change of grip mid-stride** (suggested in
+  [discussion #50](https://github.com/mpena2099/darwinbot/discussions/50)):
+  a strip test next to `validate.py` runs a chosen robot with a short
+  low-friction strip at several positions and reports how often it stays
+  upright and walks a body length past the far edge. Evaluation only.
+- **Repeatable runs** (`--deterministic`, off by default): a batch's results
+  are taken in the order they were sent instead of the order they finish, so
+  the same seed and worker count repeat a run exactly, for anyone who wants to
+  reproduce a result. A little slower, since a batch waits for its slowest
+  body.
+- **MuJoCo Warp on NVIDIA GPUs** (`--device warp`): the backend that trained
+  long8's GPU island, kept on a branch until now, joins the main code with the
+  same physics as the CPU loop.
+- **MuJoCo 4**, after the run's code is fixed: a separate step, with the
+  compiled episode loop reading the official structure offsets and every
+  golden and parity test checked again.
+
+## After release 3
+
+- **Build one robot**: no robot has been built yet. `tools/check_assembly.py`
+  and `tools/render_assembled.py` already check the printed parts on screen;
+  next, measure a real STS3215, correct `parts.py`, and print one bracket,
+  link and horn adapter to test the fit before a whole robot.
+- **A search that learns where to mutate** (CMA-ME / CMA-MAE): in these
+  MAP-Elites variants a CMA-ES learns which directions in the genome fill new
+  cells or improve old ones; pyribs ships them. A first try perturbed all 300
+  genes at once and most bodies came out unbuildable, so the emitter has to
+  move only the genes of modules that exist, with smaller steps, or repair
+  bodies before they are scored.
+- **Adversarial terrains**: keep the terrains and physics variants where the
+  current elites fail most and score everyone on them too, the way Hillis
+  evolved hard test cases as "parasites" and POET evolves terrains alongside
+  its walkers. A hall of fame of these hard cases would also make
+  `validate.py` stricter.
 - **Getting up** (`--task getup`): the robot starts upside down and scores by
-  ending upright, so a fall no longer ends the episode. Bodies that can right
-  themselves look very different from bodies that only walk.
+  ending upright, so a fall no longer ends the episode.
 - **Mutations proposed by a language model**: an LLM reads a body and its
-  scores and proposes a change, as one mutation operator among the others.
-  A language model brings what it learned from robots people designed, which
-  pulls against the idea of evolution finding bodies on its own, so this is an
-  experiment: it supplies only part of the offspring, the usual mutation stays,
-  and a run with it is compared with a run without it.
-
-- **Your own environments without code**, in three steps: (1) tune the
-  existing terrains from the command line (`--terrains
-  "rough:height=0.06,slope:degrees=12,slippery:friction=0.1"`); (2) draw the
-  ground as a greyscale PNG (`heightmap:yard.png:height=0.05`, a MuJoCo
-  height field like `rough`), stored inside the archive so `replay` and
-  `validate` still work on another machine; (3) a complete worked example in
-  the Environments page for people who write their own terrain function.
-
+  scores and proposes a change, as one mutation operator among the others. It
+  pulls against the idea of evolution finding bodies on its own, so it is an
+  experiment: it supplies only part of the offspring and a run with it is
+  compared with a run without it.
+- **Grounds drawn as images**: terrains already take parameters on the command
+  line and plugins add new ones; next, draw the ground as a greyscale PNG
+  (`heightmap:yard.png:height=0.05`), stored inside the archive so `replay`
+  and `validate` still work on another machine.
 - **Your own parts, controllers and sensors**: today a module kind (wheel,
   joint, foot...) is spread over the genome, the simulator, the printed parts
   and the exporter, so adding one means editing the core. Each kind becomes a
   self-contained package (its genes, mounting rules, simulation model, printed
   parts, bill of materials and hardware numbers), loaded with `--modules`
-  like terrain and task plugins, and evolution uses it like any built-in
-  part. The same goes for the controller (the CPG becomes one implementation
-  among others) and for sensors, whose readings reach the controller through
-  evolved gains that start at zero. First examples: a wheel driven by a DC
-  motor, and a balance sense (IMU).
-
-## Later
-
-- **Hardware profiles: the default kit, or your own**: the parts kit is a
-  [profile file](hardware-profiles.md) (servo, battery, electronics, material,
-  print bed) that the archive stores and `train.py --profile` picks. What is
-  left: wheel and foot limits within the genome's ranges, parametric terrains
-  (step height, rubble size, slope, ground friction), part prices for the bill
-  of materials, and a flag saying whether a profile's numbers are measured or
-  datasheet only, repeated in the export and `validate.py` reports. Choosing
-  would go through a hardware tab in the command builder page, which writes
-  the profile file next to the `train.py` command, in the browser with nothing
-  to install; a local app (Streamlit) could later also start the run and show
-  the archive filling. In steps:
-  1. Limits, parametric terrains, prices and the measured flag in the
-     profile; the hardware tab.
-  2. Servos without a load sensor (common PWM servos): the load feedback gain
-     is held at zero and the firmware reads no load.
-  3. A parametric servo housing (box, shaft position, screw holes), so the
-     cradle, fork and elbow parts and `tools/check_assembly.py` work for other
-     servo sizes. The largest step.
-  4. Firmware drivers per servo family (Feetech serial, PWM, Dynamixel) under
-     the portable core.
-
+  like terrain and task plugins. The same goes for the controller (the CPG
+  becomes one implementation among others) and for sensors. First example: a
+  wheel driven by a DC motor.
+- **Hardware profiles, the next steps**: every hardware number already comes
+  from a kit of one YAML file per component (servo, battery, electronics,
+  material, printer), stored in the archive. Still to do: (1) a hardware tab in
+  the command builder page that writes the kit next to the `train.py`
+  command; (2) servos without a load sensor (common PWM servos), with the load
+  feedback gain held at zero; (3) a parametric servo housing, so the cradle,
+  fork and elbow parts and `tools/check_assembly.py` work for other servo
+  sizes, the largest step; (4) firmware drivers per servo family (Feetech
+  serial, PWM, Dynamixel) under the portable core.
 - **Archives and exports on Hugging Face** (an idea): publish the showcase archives and the export packages (STLs, bill
   of materials, assembly guide, control file) as a Hugging Face dataset, and
   perhaps a Space that shows the robots walking in the browser.
-- **A change of grip mid-stride** (suggested in
-  [discussion #50](https://github.com/mpena2099/darwinbot/discussions/50)):
-  training varies friction per episode but always over the whole floor. A
-  strip test next to `validate.py` would run a chosen robot with a short
-  low-friction strip at several positions and report how often it stays
-  upright and walks a body length past the far edge.
 - **Migration between islands** (an open idea, not a plan): islands train
   apart and only meet when their archives are merged for the showcase. Merging
   them now and then and letting each resume from the merged archive, with its
@@ -206,15 +169,18 @@ on them.
   legs, cost of transport) are chosen by hand. Axes learned from recorded
   behaviour could separate gait styles nobody listed. More experimental.
 - **Organic parts on export, beyond flat plates**: `export.py --organic`
-  hollows plain links with 2D topology optimisation, re-simulates
-  the lighter robot and reports its score, and `polish.py --organic` re-tunes
-  the controller on those masses. Still to do: the torso tiles (many mounts, no
-  single clamp) and a 3D optimisation for out-of-plane loads.
+  hollows links and elbow plates with 2D topology optimisation. Still to do:
+  the torso tiles (many mounts, no single clamp), a 3D optimisation for
+  out-of-plane loads, and scoring the lighter robot in simulation before
+  trusting it.
 - **Elastic tendons across joints**: printed TPU tendons that span one or two
   joints and store energy, as a kangaroo bounces on its tendons and a
   hamstring moves hip and knee together (MuJoCo simulates tendons natively).
 - **Direction-dependent friction**: printed scales that slide forwards and
   grip backwards, the way a snake's belly scales push it along.
+- **Snakes and centipedes**: the spine already holds up to six segments, but
+  lateral undulation also needs the direction-dependent friction above;
+  sidewinding and concertina motion work without it.
 - **Growth rules for the body**: instead of describing a body part by part,
   the genome would hold a rule that grows it ("a segment sprouts a leg on each
   side and another segment, five times"), as L-systems and Karl Sims'
@@ -228,10 +194,6 @@ on them.
   making the firmware run any evolved program safely (bounded size and time,
   no division by zero or runaway values) and testing parity with the Python
   for arbitrary programs rather than one formula.
-- **Coupled oscillators**: each joint's oscillator also feels its neighbours'
-  phases, the way the spinal circuits of each leg synchronise a gait, instead
-  of coordinating only through the body and the phase genes. Control only, no
-  new part.
 - **Closed loops grown by evolution**: a "ligament" gene that pins the tip of
   one part to another part of the body, so linkages such as four-bar
   mechanisms can arise on their own (a wrasse's jaw and the crossed ligaments of
@@ -259,11 +221,6 @@ on them.
   rolling on flat ground). Predictable, and fits the ROS 2 extension, which
   would send "roll" or "walk" as a high-level order; costs more episodes per
   evaluation.
-- **Balance sense**: an IMU on the ESP32 (an MPU-6050, for example) feeding the
-  torso's tilt back into the controller, so each leg can correct a lean. Today
-  the controller only feels each servo's load, so evolution favours bodies that
-  are stable on their own (wide, low, many supports or wheels); a body that
-  stands upright on two legs needs this to survive.
 - **Foot contact sensors**: a microswitch or force sensor (FSR) in each foot,
   like the touch receptors of a sole. Today the robot feels the ground only
   through each servo's load, an indirect and noisy signal; the load feedback
@@ -301,15 +258,10 @@ ROS 2 already has that layer (Nav2 for routes and obstacles, perception,
 task state machines), so the idea is to plug a finished robot into it rather
 than evolve missions. What it would take:
 
-- **URDF export**: done as `robot.urdf` in every export (see
-  [Exporting](exporting.md#urdf)), with simple collision and visual shapes.
-  Still to do: point the visuals at the exported STL meshes, so RViz and
-  Gazebo show the printed robot rather than boxes and cylinders.
-- **Speed command**: Nav2 sends a `Twist` with forward and turning speed.
-  The robot takes a turn command and a speed command from 0 to 1 (two gene
-  pairs per joint, trained by a half-speed episode); the node maps the
-  `Twist` linear speed to that number, using the top speed measured on the
-  bench.
+- **Already in place**: `export.py` writes each robot as URDF next to the STLs,
+  so it opens in RViz, Gazebo and MoveIt, and the speed command (a second gene
+  pair per joint) lets a robot go slower or faster when told, the forward part
+  of a Nav2 `Twist`.
 - **Odometry**: navigating needs the robot to estimate where it is. Counting
   steps drifts badly on legs, so this needs the IMU and, better, the distance
   sensor or a camera (see Later).

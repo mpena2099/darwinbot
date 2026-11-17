@@ -17,10 +17,10 @@ holds an archive is resumed, so the same command run again trains further.
 
 import argparse
 import os
-import pickle
 import sys
 
 from darwinbot import ablate, body_options, evolve, hardware, plugins, rules
+from darwinbot.evolve import load_archive
 from darwinbot.fitness import task_names
 from darwinbot.morphology import decode, summary
 
@@ -78,8 +78,8 @@ def main():
                    help="simulate on the CPU (default) or with MJX on the GPU")
     p.add_argument("--popsize", type=int, default=None,
                    help="CMA-ES population (gpu default: 64)")
-    p.add_argument("--seconds", type=float, default=5.0,
-                   help="simulated seconds per episode (ignored on --resume)")
+    p.add_argument("--seconds", type=float, default=8.0,
+                   help="simulated seconds per episode, 8 by default (ignored on --resume)")
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain for every evaluation "
                         "(default: 2 on cpu, 0 on gpu; ignored on --resume)")
@@ -132,9 +132,8 @@ def main():
 
     def check_profile(path):
         """A run that resumes an archive trains on the archive's hardware and plugin."""
-        with open(path, "rb") as f:
-            stored = pickle.load(f)
-        if wanted is not None and stored.profile != wanted:
+        stored = load_archive(path)
+        if wanted is not None and hardware.normalize(stored.profile) != wanted:
             raise SystemExit(f"{path} was trained on another hardware profile than "
                              f"--profile {a.profile}; drop --profile to keep the archive's")
         plugins.require(stored, a.plugin)

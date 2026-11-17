@@ -1,0 +1,37 @@
+name: Hardware part
+description: Propose a servo, battery, board, material or printer, or a part of a new shape
+labels: [hardware]
+body:
+  - type: input
+    id: part
+    attributes:
+      label: Part
+      description: Name and model, e.g. "MG996R at 6 V"
+    validations:
+      required: true
+  - type: dropdown
+    id: section
+    attributes:
+      label: Kind
+      options: [servo, battery, electronics, material, printer, a part of a new shape]
+    validations:
+      required: true
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Numbers and sources
+      description: The fields of the matching YAML in darwinbot/profiles/ and where each number comes from (datasheet link, your own measurement, estimate).
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: Shape
+      description: For a servo, does it keep the STS3215 layout (output axis along the body, horns on both faces)? For a new shape, a drawing or dimensions.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I ran tools/check_kit.py on a kit that uses it
+        - label: I have the part and can measure it

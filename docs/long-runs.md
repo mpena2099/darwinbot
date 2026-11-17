@@ -4,9 +4,13 @@
 
 A run on the `terrain` preset with 3 workers and the default 2 variants takes
 roughly 30 to 40 min for the initial batch and 6 to 8 min for each later batch
-(5 s episodes, 0.004 s physics step, 120 CMA-ES evaluations per child; see
+(8 s episodes, 0.004 s physics step, 120 CMA-ES evaluations per child; see
 `--seconds`, `--variants`, `--budget-init` and `--budget-child`). The archive is saved after
-every batch; stopping mid-batch loses only that batch. Keep the machine awake
+every batch; stopping mid-batch loses only that batch. A body whose evaluation raises an error does not stop the run: it is printed with a
+short id, counted as `failed` in the batch line, and the run goes on. Only a batch
+in which every body fails stops it.
+
+Keep the machine awake
 and the process alive when the terminal closes:
 
 ```bash
@@ -100,6 +104,38 @@ Archives from any runs of the same setup can also be merged by hand:
 ```bash
 python experiments/merge_archives.py run1/archive.pkl run2/archive.pkl --out merged.pkl
 ```
+
+## Resuming after a code change
+
+A change to the genome or the physics bumps `BODY_MODEL`, and `train.py --resume`
+refuses an archive of an older one. `evolve.MIGRATIONS` has a translation for body
+models 20, 21 and 22 (the current one is 23), so any archive from 20 on can be
+brought up to date instead of retrained. Body model 20 is the
+[showcase release](results.md#showcase) archive:
+
+```bash
+python experiments/migrate_archive.py old/archive.pkl --out migrated.pkl --workers 4
+python experiments/train.py --resume migrated.pkl --batches 30
+```
+
+Each elite's genes are translated (from 20 the wheel radius genes are rescaled to
+the 30 to 100 mm range; from 21 the wheel width gene is written from the width the
+old code derived from the radius, and every controller slot gains neutral speed
+genes; a change that only touches the physics or the printed parts leaves the genes
+as they are), its body is checked again, and its
+controller is searched for `--budget` evaluations (default 60) starting from the
+old one, which is kept when nothing better is found. A body that is no longer
+buildable is dropped. Cells are recomputed, history and lineage are kept, and
+the script prints one table: elites in, dropped, cells out, how many changed
+cell, and mean and best fitness before and after. It never overwrites `--out`.
+`--seconds S` re-evaluates every elite with episodes of S seconds and stores S in
+the result, so a later `train.py --resume` keeps using it.
+
+An archive trained on the default hardware takes the current default profile, so
+a change to it (the servo mass, say) applies; a custom kit is kept, with a
+warning (`--profile default` replaces it, `--profile keep` keeps it silently).
+The migrated archive carries the old run's bias: its elites hold the cells, so
+an A/B between two rule versions still needs equal seeds from scratch.
 
 ## From an archive to a showcase
 

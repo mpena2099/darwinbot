@@ -105,6 +105,10 @@ the current limits hold back.
   - a cheaper `mj_step`: collision geoms that only matter for assembly, and
     solver iterations, measured first and changed only if the physics stays
     the same.
+- **Coupled oscillators on the GPU backends** (release 4): `sim_gpu.py` (MJX)
+  and `sim_warp.py` (MuJoCo Warp) do not simulate the coupling that release 3
+  adds to the controller, so `--device gpu` and `--device warp` refuse to
+  train until they do and a GPU session checks their parity with the CPU.
 - **Balance sense, optional** (release 4): an IMU on the ESP32 (an MPU-6050, for example)
   feeding the torso's tilt back into the controller through evolved gains that
   start at zero, so each leg can correct a lean. Today the controller only

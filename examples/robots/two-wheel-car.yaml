@@ -1,0 +1,6 @@
+name: two-wheel-car
+torso: {length_mm: 160, width_mm: 120, contour: [1, 1, 1, 1, 1, 1, 1, 1], lock: true}
+nodes:
+  left_wheel:  {parent: torso, slot: 2, kind: wheel, radius_mm: 60, width_mm: 20, angle: 0.25, lock: true}
+  right_wheel: {parent: torso, slot: 5, kind: wheel, radius_mm: 60, width_mm: 20, angle: 0.75, lock: true}
+  caster:      {parent: torso, slot: 1, kind: caster}

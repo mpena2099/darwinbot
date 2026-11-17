@@ -1,0 +1,4 @@
+# 3S LiPo, 1200 mAh.
+capacity_ah: 1.2            # Ah, middle of the documented 1000 to 1500 mAh range
+c_rating: 20.0              # discharge rating of a pack that size
+volts: 11.1                 # V nominal, 3S LiPo (docs/hardware-dados.md)

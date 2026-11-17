@@ -12,11 +12,13 @@ constexpr float kStepsPerRad = 4096.0f / kTwoPi;
 }  // namespace
 
 Controller::Controller(float frequency, float ramp_time, float control_hz,
-                       std::vector<ServoParams> servos, float load_full_scale)
+                       std::vector<ServoParams> servos, float load_full_scale,
+                       float servo_speed)
     : omega_(kTwoPi * frequency),
       ramp_time_(ramp_time),
       dt_(control_hz > 0.0f ? 1.0f / control_hz : 0.0f),
       load_full_scale_(load_full_scale > 0.0f ? load_full_scale : kLoadFullScale),
+      servo_speed_(servo_speed > 0.0f ? servo_speed : kServoSpeed),
       servos_(std::move(servos)),
       base_(servos_) {
     const size_t n = servos_.size();
@@ -24,27 +26,39 @@ Controller::Controller(float frequency, float ramp_time, float control_hz,
     targets.assign(n, 0.0f);
     steps.assign(n, 0);
     wheel_speeds.assign(n, 0.0f);
-    set_command(0.0f);
+    apply();
 }
 
 void Controller::set_command(float c) {
     command_ = std::clamp(c, -1.0f, 1.0f);
+    apply();
+}
+
+void Controller::set_speed(float s) {
+    speed_ = std::clamp(s, 0.0f, 1.0f);
+    apply();
+}
+
+void Controller::apply() {
+    const float d = 1.0f - speed_;
     for (size_t i = 0; i < servos_.size(); ++i) {
         const ServoParams& b = base_[i];
         ServoParams& p = servos_[i];
         if (p.mode == ServoParams::Mode::Wheel) {
-            p.speed = std::clamp(b.speed + command_ * b.steer_shift,
-                                 -kServoSpeed, kServoSpeed);
+            p.speed = std::clamp(b.speed + command_ * b.steer_shift +
+                                     d * b.speed_shift,
+                                 -servo_speed_, servo_speed_);
             continue;
         }
         const float gain =
-            std::clamp(1.0f + command_ * b.steer_gain, 0.0f, 2.0f);
-        p.offset = b.offset + command_ * b.steer_shift;
+            std::clamp(1.0f + command_ * b.steer_gain, 0.0f, 2.0f) *
+            std::clamp(1.0f - d * b.speed_gain, 0.0f, 2.0f);
+        p.offset = b.offset + command_ * b.steer_shift + d * b.speed_shift;
         p.amp1 = b.amp1 * gain;
         p.amp2 = b.amp2 * gain;
         // A servo cannot follow a signal whose peak speed exceeds its own.
         const float peak = (p.amp1 + 2.0f * p.amp2) * omega_;
-        const float k = std::min(1.0f, kServoSpeed / std::max(peak, 1e-12f));
+        const float k = std::min(1.0f, servo_speed_ / std::max(peak, 1e-12f));
         p.amp1 *= k;
         p.amp2 *= k;
     }

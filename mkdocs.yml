@@ -27,6 +27,7 @@ theme:
 
 markdown_extensions:
   - admonition
+  - md_in_html
   - pymdownx.details
   - pymdownx.superfences
   - tables
@@ -47,12 +48,17 @@ nav:
       - Fitness and tasks: fitness-tasks.md
   - Training:
       - Environments and presets: environments.md
+      - Constraining the body: your-robot.md
+      - Starting from your own design: own-design.md
+      - Plugins (tasks and terrains): plugins.md
+      - Command builder: command-builder.md
       - Long runs, GPU and Kaggle: long-runs.md
   - Building a robot:
       - Exporting a robot: exporting.md
       - Real parts: real-parts.md
       - Control file format: formato-controle.md
       - Hardware data: hardware-dados.md
+      - Hardware profiles: hardware-profiles.md
   - Results and gallery:
       - Results: results.md
       - Gallery: gallery.md

@@ -10,7 +10,7 @@ from darwinbot import controller as co
 from darwinbot import morphology as mo
 from darwinbot.control_file import read_control_file
 from darwinbot.evolve import Elite
-from darwinbot.export import (bom_rows, export_robot, mount_positions_mm,
+from darwinbot.export import (bom_rows, export_robot, link_args, mount_positions_mm,
                               parent_chain, part_counts, servo_signs)
 
 
@@ -205,6 +205,18 @@ def test_spring_stl_and_bom_use_the_same_key():
     assert not any(k.startswith("spring_") and k != "spring_20x4.stl" for k in rows)
 
 
+def test_free_spring_tip_has_no_spigot_and_no_foot():
+    m = _tree()
+    first = max(m.nodes) + 1
+    m.nodes[first] = mo.Node(first, "spring", 0, 4, 0, axis="pitch",
+                             length=0.14, width=0.031, thick=0.006)
+    assert link_args(m, first)[6] is None        # the plate's tip has no foot radius
+    radius = int(round(mo.section_radius(m.nodes[first]) * 1000))
+    assert part_counts(m)[2].get(("sphere", radius), 0) == 0
+    rows = {item: q for item, q, _ in bom_rows(m)}
+    assert f"foot_{radius}.stl" not in rows
+
+
 def test_bom_lists_screw_lengths_nuts_and_the_placeholder_board():
     rows = {item: (q, note) for item, q, note in bom_rows(_tree())}
     screws = {k: q for k, (q, _) in rows.items() if k.startswith("M3 x ") and k.endswith("screw")}
@@ -244,6 +256,11 @@ def test_rolled_wheel_keeps_its_sign():
 def test_load_full_scale_is_written(tmp_path):
     export_robot(_elite(), tmp_path, "t", stl=False)
     assert read_control_file(tmp_path / "control.json")["load_full_scale"] == 0.7
+
+
+def test_servo_speed_is_written(tmp_path):
+    export_robot(_elite(), tmp_path, "t", stl=False)
+    assert read_control_file(tmp_path / "control.json")["servo_speed"] == 4.71
 
 
 def _profiled_tree():
@@ -471,3 +488,30 @@ def test_foot_on_a_face_slot_gets_a_riser_that_reaches_it(tmp_path, slot, shape)
     assert abs(back_mesh - export.foot_back_mm(m.nodes[2])) <= 0.5
     post = parts.riser(r.height).bounding_box()
     assert abs(post.min.Z) < 1e-6 and post.max.Z >= r.height + 8
+
+
+def test_long_spine_exports_its_plates(tmp_path):
+    from tests.test_morphology import _long_spine
+    m, _ = _long_spine()
+    elite = _elite(m)
+    morph = mo.decode(elite.morph)
+    rows = {item: q for item, q, _ in bom_rows(morph)}
+    assert rows["segment_plate_100x100.stl"] == 6
+    out = tmp_path / "robot"
+    export_robot(elite, out, "spine6", stl=True)
+    assert (out / "parts" / "segment_plate_100x100.stl").stat().st_size > 0
+    assert (out / "assembly.md").read_text().count("spine servo") >= 6
+
+
+def test_wheel_width_names_the_part_and_sets_its_stl(tmp_path):
+    m = mo.template(1, wheels=True)
+    ids = [i for i, n in m.nodes.items() if n.kind == "wheel"]
+    m.nodes[ids[0]].wheel_width = 0.040
+    elite = _elite(m)
+    morph = mo.decode(elite.morph)
+    rows = {item: q for item, q, _ in bom_rows(morph)}
+    name = f"wheel_{round(morph.nodes[ids[0]].wheel_rad * 1000)}x40.stl"
+    assert rows[name] >= 1
+    out = tmp_path / "robot"
+    export_robot(elite, out, "wide", stl=True)
+    assert (out / "parts" / name).stat().st_size > 0

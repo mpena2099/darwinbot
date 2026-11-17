@@ -9,6 +9,7 @@ import pickle
 import numpy as np
 import pytest
 
+from darwinbot import ablate, rules
 from darwinbot import controller as co
 from darwinbot import evolve
 from darwinbot import morphology as mo
@@ -43,6 +44,18 @@ def test_insert_keeps_best_per_cell():
     assert len(archive.cells) == 1
     # the behaviour vector survives the round trip through the ribs archive
     assert np.allclose(archive.cells[cell].behaviour, behaviour)
+
+
+def test_like_keeps_run_settings_but_no_cells():
+    a = evolve.Archive(terrains="flat", ablate=(ablate.NAMES[0],), rules=(rules.NAMES[0],),
+                       locked=(0,), plugin={"name": "p.py", "sha256": "abc"})
+    assert a.insert(_elite(1.0, [0.9, 0.3, 8, 0.0, 1.0, 2]))
+    b = a.like()
+    assert b.cells == {}
+    assert b.terrains == "flat"
+    assert b.ablate == a.ablate and b.rules == a.rules and b.locked == a.locked
+    assert b.profile == a.profile and b.profile is not a.profile
+    assert b.plugin == a.plugin and b.plugin is not a.plugin
 
 
 def test_run_writes_archive(tmp_path):
@@ -108,8 +121,8 @@ def test_names_round_trip_with_parse():
 
 def _at(i):
     """Behaviour vector sitting on the centroid of cell i."""
-    duty, height, legs, cot = evolve._centroids()[i]
-    return [duty, height * evolve.HEIGHT_MAX, 8, 0.0,
+    duty, height, servos, legs, cot = evolve._centroids()[i]
+    return [duty, height * evolve.HEIGHT_MAX, servos * mo.MAX_SERVOS, 0.0,
             evolve.COT_MIN * (evolve.COT_MAX / evolve.COT_MIN) ** cot, legs * mo.MAX_LEGS]
 
 
@@ -321,9 +334,9 @@ def test_unbuildable_results_never_enter_the_archive(monkeypatch, tmp_path):
         calls["n"] += 1
         genes = job[0]
         if calls["n"] <= 3:                       # the whole first batch
-            return (genes, CTRL, -5.0, [-5.0], 0, np.zeros(5), job[10])
+            return (genes, CTRL, -5.0, [-5.0], 0, np.zeros(5), job[10], False)
         return (genes, CTRL, 1.0, [1.0], 3,
-                np.array([0.6, 0.3, 8.0, 0.0, 1.0, 2.0]), job[10])
+                np.array([0.6, 0.3, 8.0, 0.0, 1.0, 2.0]), job[10], False)
 
     class FakePool:
         def __init__(self, *a): pass
@@ -338,6 +351,42 @@ def test_unbuildable_results_never_enter_the_archive(monkeypatch, tmp_path):
     assert archive.cells
     assert all(e.fitness == 1.0 for e in archive.cells.values())
     assert all(rec[2] == 1.0 for rec in archive.lineage.values())
+
+
+def test_a_failing_body_is_counted_and_does_not_stop_the_run(monkeypatch, tmp_path, capsys):
+    real = evolve.optimise_controller
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("boom")
+        return real(*a, **k)
+
+    class FakePool:             # runs _work in this process, where the patch is
+        def __init__(self, *a): pass
+        def imap_unordered(self, f, tasks): return map(f, tasks)
+        def close(self): pass
+        def join(self): pass
+
+    monkeypatch.setattr(evolve, "optimise_controller", flaky)
+    monkeypatch.setattr(evolve.multiprocessing, "Pool", FakePool)
+    archive = evolve.run(terrains="flat", n_init=3, n_batches=1, batch_size=3,
+                         budget_init=4, budget_child=4, workers=1, variants=0,
+                         episode_seconds=1.0, out_dir=str(tmp_path))
+    out = capsys.readouterr().out
+    assert archive.cells and "ValueError: boom" in out
+    assert any(l.startswith("batch") and l.endswith("failed 1") for l in out.splitlines())
+
+
+def test_a_batch_where_every_body_fails_stops_the_run(monkeypatch, tmp_path):
+    def broken(*a, **k):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(evolve, "optimise_controller", broken)
+    with pytest.raises(RuntimeError, match="failed"):
+        evolve.run(terrains="flat", n_init=2, n_batches=1, batch_size=2, workers=1,
+                   variants=0, episode_seconds=1.0, device="gpu", out_dir=str(tmp_path))
 
 
 def test_budget_grows_with_joints_up_to_a_cap():
@@ -431,3 +480,37 @@ def test_rescore_keeps_cells_and_lineage(tmp_path):
     assert out.history[-1]["rescored"] and len(out.history) == len(archive.history) + 1
     for c, e in out.cells.items():
         assert np.allclose(e.ctrl, archive.cells[c].ctrl)
+
+
+def test_servo_count_is_an_archive_axis():
+    base = [0.6, 0.5, 6, 0.0, 1.0, 4]
+    assert evolve.cell_of(base) != evolve.cell_of([0.6, 0.5, 16, 0.0, 1.0, 4])
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, base))
+    archive.insert(_elite(0.5, [0.6, 0.5, 16, 0.0, 1.0, 4]))
+    assert len(archive.cells) == 2
+
+
+def test_archive_with_four_axes_is_refused():
+    from ribs.archives import CVTArchive
+    old = evolve.Archive(terrains="flat")
+    old._grid = CVTArchive(solution_dim=1, centroids=np.random.default_rng(0).uniform(size=(5, 4)),
+                           ranges=[(0.0, 1.0)] * 4)
+    state = old.__dict__.copy()
+    with pytest.raises(ValueError, match="archive axes"):
+        evolve.Archive.__new__(evolve.Archive).__setstate__(state)
+
+
+def test_body_without_actuator_gets_its_behaviour():
+    from darwinbot.inner import behaviour_vector, optimise_controller
+    from darwinbot.sim import Episode
+    from darwinbot.terrain import flat
+    morph = mo.Morphology(0.20, 0.12, {0: mo.Node(0, "core"),
+                                     1: mo.Node(1, "skid", 0, 1)})
+    ep = Episode(morph, flat(), 1.0)
+    assert ep.buildable
+    r = optimise_controller(morph, [flat()], budget=4, seed=1, seconds=1.0)
+    assert r.evals == 1
+    assert r.behaviour is not None
+    expected = behaviour_vector(morph, ep.run(r.ctrl), "steer")
+    assert np.allclose(r.behaviour, expected)

@@ -53,12 +53,12 @@ def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
     """
     cmds = commands(task)
     if not variants:
-        runs = [[ep.run(ctrl, None, c) for c in cmds] for ep in episodes]
+        runs = [[ep.run(ctrl, None, *c) for c in cmds] for ep in episodes]
         scores = [task_score(ms, task) for ms in runs]
         return aggregate(scores), scores, [ms[0] for ms in runs]
     metrics, scores = [], []
     for ep, vs in zip(episodes, variants):
-        runs = [[ep.run(ctrl, v, c) for c in cmds] for v in vs]
+        runs = [[ep.run(ctrl, v, *c) for c in cmds] for v in vs]
         metrics.append(runs[0][0])
         scores.append(float(np.mean([task_score(ms, task) for ms in runs])))
     return aggregate(scores), scores, metrics
@@ -145,7 +145,7 @@ def optimise_controller(
 
         def evaluate_batch(ctrls):
             cmds = commands(task)
-            per_terrain = [[b.run_batch(ctrls, c) for c in cmds] for b in batches]
+            per_terrain = [[b.run_batch(ctrls, *c) for c in cmds] for b in batches]
             out = []
             for i in range(len(ctrls)):
                 metrics = [p[0][i] for p in per_terrain]
@@ -179,6 +179,10 @@ def optimise_controller(
 
         fit, scores, metrics = run_one(base)
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)
+    if len(active) < 2:       # no actuator: only the frequency gene, nothing CMA-ES can search
+        best.behaviour = behaviour_vector(morph, _nominal_flat(
+            morph, terrains, best, variants, seconds, device, payload), task)
+        return best
 
     opts = {"bounds": [0.0, 1.0], "seed": int(rng.integers(1, 2**31 - 1)),
             "maxfevals": max(budget - 1, 1), "verbose": -9}

@@ -423,8 +423,8 @@ def test_episode_yaw_follows_spin_and_sign(spin):
     ep.model.opt.gravity[:] = 0.0            # no ground friction: the spin lasts
     reset = ep.reset
 
-    def spun(ctrl, model=None, command=0.0):
-        c = reset(ctrl, model, command)
+    def spun(ctrl, model=None, command=0.0, speed=1.0):
+        c = reset(ctrl, model, command, speed)
         ep.data.qvel[5] = spin               # angular velocity about world Z
         return c
 
@@ -568,30 +568,45 @@ def test_skid_and_spike_friction_follows_the_terrain(terrain, ground):
 def test_steer_score_rewards_turning_the_way_asked():
     straight = _metrics(dx=1.0)
     left, right = _metrics(dx=0.5, yaw=2.0), _metrics(dx=0.5, yaw=-2.0)   # yaw > 0 is a left turn
-    both = fitness.task_score([straight, left, right], "steer")
-    wrong = fitness.task_score([straight, right, left], "steer")
-    only_straight = fitness.task_score([straight, straight, straight], "steer")
+    half = _metrics(dx=0.5)
+    both = fitness.task_score([straight, left, right, half], "steer")
+    wrong = fitness.task_score([straight, right, left, half], "steer")
+    only_straight = fitness.task_score([straight, straight, straight, half], "steer")
     assert both > only_straight > wrong
     assert fitness.task_score([straight], "forward") == fitness.score(straight)
-    assert fitness.commands("steer") == (0.0, -1.0, 1.0)
-    assert fitness.task_score([straight, _metrics(unstable=True), right],
+    assert fitness.commands("steer") == ((0.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (0.0, 0.5))
+    assert fitness.commands("forward") == ((0.0, 1.0),)
+    assert fitness.task_score([straight, _metrics(unstable=True), right, half],
                               "steer") == fitness.UNSTABLE_SCORE
+
+
+def test_steer_score_rewards_following_the_speed_command():
+    full = _metrics(dx=1.0)
+    turns = [_metrics(dx=0.5, yaw=0.5), _metrics(dx=0.5, yaw=-0.5)]
+    score = lambda half: fitness.task_score([full, *turns, _metrics(dx=half)], "steer")
+    assert score(0.5) > score(0.3) > score(0.0)      # closer to half the distance
+    assert score(0.5) > score(0.7) > score(1.0)      # ignoring the command earns nothing
+    assert score(0.5) > score(1.0)
+    fell = fitness.task_score([full, *turns, _metrics(dx=0.5, fell=True)], "steer")
+    assert fell < score(0.5)
 
 
 def test_spinning_on_the_spot_does_not_beat_walking():
     """Turn credit stops at TURN_CAP and at the distance travelled: a body
     that spins five times each way but never walks scores no more than one
     that stands still, and below one that walks and turns a little."""
-    spinner = [_metrics(), _metrics(yaw=30.0), _metrics(yaw=-30.0)]
-    walker = [_metrics(dx=1.0), _metrics(dx=0.5, yaw=0.5), _metrics(dx=0.5, yaw=-0.5)]
+    spinner = [_metrics(), _metrics(yaw=30.0), _metrics(yaw=-30.0), _metrics()]
+    walker = [_metrics(dx=1.0), _metrics(dx=0.5, yaw=0.5), _metrics(dx=0.5, yaw=-0.5),
+              _metrics(dx=0.5)]
     assert fitness.task_score(walker, "steer") > fitness.task_score(spinner, "steer")
-    capped = [_metrics(), _metrics(yaw=fitness.TURN_CAP), _metrics(yaw=-fitness.TURN_CAP)]
+    capped = [_metrics(), _metrics(yaw=fitness.TURN_CAP), _metrics(yaw=-fitness.TURN_CAP),
+              _metrics()]
     assert fitness.task_score(spinner, "steer") == fitness.task_score(capped, "steer")
-    still = [_metrics(), _metrics(), _metrics()]
+    still = [_metrics(), _metrics(), _metrics(), _metrics()]
     assert fitness.task_score(spinner, "steer") == fitness.task_score(still, "steer")
     # A short curve earns only as much turn credit as the distance it covered.
-    short = [_metrics(), _metrics(dx=0.05, yaw=1.0), _metrics(dx=0.05, yaw=-1.0)]
-    far = [_metrics(), _metrics(dx=0.5, yaw=1.0), _metrics(dx=0.5, yaw=-1.0)]
+    short = [_metrics(), _metrics(dx=0.05, yaw=1.0), _metrics(dx=0.05, yaw=-1.0), _metrics()]
+    far = [_metrics(), _metrics(dx=0.5, yaw=1.0), _metrics(dx=0.5, yaw=-1.0), _metrics()]
     assert fitness.task_score(short, "steer") < fitness.task_score(far, "steer")
 
 
@@ -674,3 +689,14 @@ def test_episode_reports_upright_near_one_at_rest():
     ep = Episode(mo.template(2), te.get_terrains("flat")[0], seconds=0.5)
     m = ep.run(np.zeros(CTRL_LENGTH))
     assert 0.9 < m.upright <= 1.0
+
+
+def test_wheel_mass_follows_width():
+    def mass(width):
+        m = mo.template(1, wheels=True)
+        for n in m.nodes.values():
+            if n.kind == "wheel":
+                n.wheel_width = width
+        return float(Episode(mo.decode(mo.encode(m)), te.flat(),
+                             seconds=0.1).model.body_mass.sum())
+    assert mass(0.060) > mass(0.030) > mass(0.010)

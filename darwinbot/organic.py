@@ -1,7 +1,7 @@
 """
 organic.py
 ----------
-Optional export step: hollow the flat printed parts (links and elbow plates)
+Optional export step: hollow the flat printed links
 with 2D topology optimisation, after evolution and outside training.
 
 Evolution decides each part's size and its interfaces; this only removes

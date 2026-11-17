@@ -52,7 +52,7 @@ section from 12 to 30 mm by 3 to 10 mm, the elbow has its own distance and
 angle, the mount rolls to any angle and can sit anywhere along the torso
 edge, top or bottom. The trunk outline is an 8-vertex polygon that evolution
 reshapes, a link can be straight, L-shaped or arc-shaped, a foot can be a
-sphere, blade, pad or claw, and the trunk can grow up to two extra plates
+sphere, blade, pad or claw, and the trunk can grow up to six extra plates
 joined by spine servos. Each block has 15 genes. The passive modules (spring, tail with
 counterweight, skid, spike, caster) have no servo.
 
@@ -163,6 +163,7 @@ that worked reasonably well, and different ideas die before they mature.
 behavior space into a map and keeps **the best robot of each region**. In
 DarwinBot, the axes of the map are:
 
+- `servos`: number of servos (the cost of building the robot);
 - `duty`: how long the feet stay on the ground (crawling, walking, trotting);
 - `height`: trunk height;
 - `legs`: number of legs (limbs with a joint and no wheel);
@@ -209,8 +210,9 @@ exist. DarwinBot uses three defenses:
    delay. A movement that only works under one exact physics doesn't
    survive.
 3. **Validation:** `experiments/validate.py` tests the robot under 50
-   varied physics and approves it if it loses less than 30% of its
-   performance.
+   varied physics and approves it only if it is robust: mean loss under
+   30%, 5th-percentile loss under 60% and fall rate at most 10% on every
+   terrain and command, and no terrain where it does not move at all.
 
 There is a fourth defense, **natural selection by the printer**: a body is
 buildable only if every part fits a 220 mm print bed, every link survives

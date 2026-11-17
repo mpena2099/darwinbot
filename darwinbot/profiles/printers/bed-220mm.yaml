@@ -1,0 +1,2 @@
+# Print bed of 220 mm.
+bed: 0.22                   # m, largest part that fits a common print bed

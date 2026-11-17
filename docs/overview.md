@@ -3,8 +3,9 @@
 Two nested loops:
 
 1. **Outer loop, MAP-Elites over behaviour.** The archive is a pyribs
-   CVTArchive with about 500 cells over four descriptors measured in the nominal
-   flat-floor episode: `duty` (fraction of time the ground-touching tips are on
+   CVTArchive with about 800 cells over five descriptors measured in the nominal
+   flat-floor episode: `servos` (the cost of building the robot, so a 6-servo body and a
+   16-servo one that move alike never compete for a cell), `duty` (fraction of time the ground-touching tips are on
    the floor), `height` (mean torso height over the body reach), `legs`
    (limbs on the torso with a joint and no wheel, so a hexapod never competes
    with a two-legged crawler for a cell) and `cot`, the cost of transport (mechanical work per

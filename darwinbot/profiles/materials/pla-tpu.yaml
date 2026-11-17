@@ -1,0 +1,7 @@
+# PLA links and shell, TPU feet and wheels.
+link_density: 1240.0        # kg/m^3, solid PLA printed link
+shell_density: 300.0        # kg/m^3, printed shell with infill
+limb_density: 300.0         # kg/m^3, printed TPU feet and wheels
+pla_strength: 50000000.0    # Pa, printed PLA
+strength_safety: 0.5        # link bending stress must stay below half of PLA
+plastic_factor: 0.35        # hard printed plastic on the floor, against 1.0 for TPU

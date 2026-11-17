@@ -27,13 +27,13 @@ A body whose
 geoms already touch at spawn is not buildable (see sim.is_buildable).
 """
 
+import contextlib
 import re
-import zlib
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 
-from darwinbot import ablate
+from darwinbot import ablate, hardware
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
@@ -48,11 +48,11 @@ from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   link_tip, plate_thick, segment_box,
                                   spring_stiffness)
 
-SHELL_DENSITY  = 300.0   # kg/m^3, printed shell with infill
-LIMB_DENSITY   = 300.0
-LINK_DENSITY   = 1240.0  # kg/m^3, solid PLA printed link
-PAYLOAD_MASS   = 0.17    # kg: ESP32 + 3S LiPo + regulator
-SERVO_MASS     = 0.060 + 0.015   # kg: the servo plus its printed bracket (~15 g of PLA)
+SHELL_DENSITY  = hardware.MATERIAL.shell_density   # kg/m^3, printed shell with infill
+LIMB_DENSITY   = hardware.MATERIAL.limb_density
+LINK_DENSITY   = hardware.MATERIAL.link_density    # kg/m^3, solid PLA printed link
+PAYLOAD_MASS   = hardware.ELECTRONICS.mass         # kg: ESP32 + 3S LiPo + regulator
+SERVO_MASS     = hardware.SERVO.mass + hardware.SERVO.bracket_mass   # kg: the servo plus its printed bracket
 ROBOT_FRICTION = "1.0 0.02 0.001"
 SPAWN_CLEARANCE = 0.02   # m of air under the lowest foot at spawn
 
@@ -62,11 +62,11 @@ JOINT_RANGE = {"yaw": 0.9, "pitch": 1.3, "roll": 0.9}   # +/- rad
 # topped out at 2.3 rad/s, under half the real one, and any stride faster than
 # that turned into saturated torque reversals.
 JOINT_DAMPING  = SERVO_TORQUE / SERVO_SPEED
-JOINT_FRICTION = 0.068
-JOINT_ARMATURE = 0.027
-JOINT_KP       = 13.37
+JOINT_FRICTION = hardware.SERVO.joint_friction
+JOINT_ARMATURE = hardware.SERVO.joint_armature
+JOINT_KP       = hardware.SERVO.joint_kp
 SPRING_RANGE   = 1.2          # +/- rad, a TPU blade bends little
-WHEEL_KV       = 2.0          # N*m per rad/s, saturates at SERVO_TORQUE
+WHEEL_KV       = hardware.SERVO.wheel_kv          # N*m per rad/s, saturates at SERVO_TORQUE
 WHEEL_DAMPING  = JOINT_DAMPING  # same motor: torque falls to zero at the no-load speed
 CASTER_DAMPING = 0.01         # free caster wheel on a passive hinge
 
@@ -79,7 +79,7 @@ SPIKE_FACTOR = 1.5
 # Hard printed or moulded plastic (servo housings, PLA links, elbows, torso,
 # tail, caster fork) on the floor: about 0.3 to 0.4, against 1.0 for the TPU
 # feet and wheels. Without it a servo housing grips like a foot.
-PLASTIC_FACTOR = 0.35
+PLASTIC_FACTOR = hardware.MATERIAL.plastic_factor
 
 
 def plastic_factor() -> float:
@@ -237,6 +237,29 @@ def _box_geom(name: str, centre, half, contact: str, rgba: str = LINK_RGBA,
             f'size="{_f(*half)}" {PART_ONLY} rgba="{rgba}" {contact}/>')
 
 
+# Mass factor of a printed plate, by ("link", node id) or ("elbow", child id):
+# the share of material a hollowed part keeps (export --organic). Empty, the
+# default, leaves every density as it is and the model text unchanged.
+_MASS_FACTOR: Dict[Tuple[str, int], float] = {}
+
+
+@contextlib.contextmanager
+def mass_factors(factors):
+    """Build every model inside the block with these plates lightened:
+    {("link", id): ratio, ("elbow", child id): ratio}."""
+    global _MASS_FACTOR
+    saved, _MASS_FACTOR = _MASS_FACTOR, dict(factors or {})
+    try:
+        yield
+    finally:
+        _MASS_FACTOR = saved
+
+
+def _plate_density(kind: str, node_id: int):
+    f = _MASS_FACTOR.get((kind, node_id), 1.0)
+    return LINK_DENSITY if f == 1.0 else LINK_DENSITY * f
+
+
 def _link_geoms(node, rgba: str = LINK_RGBA, contact: str = ROBOT_GEOM,
                 tip_cap: bool = True) -> str:
     """One box geom per piece of the link path; the last piece carries the
@@ -255,7 +278,7 @@ def _link_geoms(node, rgba: str = LINK_RGBA, contact: str = ROBOT_GEOM,
         out.append(f'<geom name="{name}" type="box" pos="{_f(*((a + b) / 2))}" '
                    f'{_xyaxes(rot)} '
                    f'size="{_f(np.linalg.norm(d) / 2, node.width / 2, plate_thick(node) / 2)}" '
-                   f'density="{LINK_DENSITY}" rgba="{rgba}" {contact}/>')
+                   f'density="{_plate_density("link", node.id)}" rgba="{rgba}" {contact}/>')
     for k, p in enumerate(pts):
         if (k == 0 and node.kind == "joint") or (k == len(pts) - 1 and not tip_cap):
             continue
@@ -300,7 +323,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
         end = max(at + 0.002, d - 0.0381)
         centre = tip + rot @ np.array([0.0, side * (at + end) / 2, 0.0])
         # the strut keeps the mass of the plate it replaces
-        mass = LINK_DENSITY * w * (d - near) * plate_thick(parent)
+        mass = _plate_density("elbow", child.id) * w * (d - near) * plate_thick(parent)
         strut = _box_geom(f"strut{child.id}", centre,
                           (STRUT_HALF_W, max(1e-4, (end - at) / 2), hz), plastic, rot=rot)
         strut = strut.replace(PART_ONLY, f'mass="{mass:.6f}"')
@@ -313,7 +336,7 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
     return (f'<geom name="elbow{child.id}" type="box" '
             f'pos="{_f(*pos)}" {_xyaxes(rot)} '
             f'size="{_f(w / 2, (d - near) / 2, plate_thick(parent) / 2)}" '
-            f'density="{LINK_DENSITY}" rgba="{LINK_RGBA}" {plastic}/>')
+            f'density="{_plate_density("elbow", child.id)}" rgba="{LINK_RGBA}" {plastic}/>')
 
 
 def _foot_shape_geoms(node, friction: float = 1.0) -> str:
@@ -421,7 +444,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
         pos, rot = frames[i]
         name = f"w{i}"
         hub = morph.wheel_hub(node, pos, rot)
-        half_t = max(0.01, 0.25 * node.wheel_rad)
+        half_t = node.wheel_width / 2
         axle = np.array([0.0, morph.wheel_axis_sign(rot), 0.0])
         actuators.append(
             f'<velocity name="{name}" joint="{name}" kv="{WHEEL_KV}" '
@@ -557,7 +580,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
 # say which of them may meet: a servo in its cradle, a link in the U fork that
 # clasps it, an elbow on the tip it is bolted to. Everything else that
 # overlaps is a clash, in the spawn pose (sim.is_buildable) and in motion
-# (joint_ranges). MuJoCo never collides bodies that are parent and child, or
+# (joint_ranges, one joint at a time). MuJoCo never collides bodies that are parent and child, or
 # welded together (a passive link, a foot, a tab: nothing turns between
 # them), so those pairs are measured here with mj_geomDistance.
 # --------------------------------------------------------------------------
@@ -714,29 +737,20 @@ class AssemblyRules:
 
 SWEEP_STEP = np.radians(3.0)
 SWEEP_MARGIN = np.radians(8.0)   # kept clear of the first clashing angle
-POSE_SAMPLES = 96           # random poses a joint range must keep clean
-SHRINK = 0.8                # factor a range takes when a pose clashes
+BLOCKED_SPAN = 0.001             # rad each side of a joint that cannot move; a 0 0
+                                 # range reads as "no limit" to MuJoCo
 _RANGES: dict = {}
-
-
-def _chain(model, body: int) -> list:
-    """Joints between a body and the world, nearest first."""
-    out = []
-    while body > 0:
-        n = model.body_jntnum[body]
-        out += [int(model.body_jntadr[body]) + k for k in range(n)]
-        body = int(model.body_parentid[body])
-    return out
 
 
 def joint_ranges(morph: Morphology) -> dict:
     """{node id: (lo, hi)} rad for every servo joint and spring, inside their
     defaults. A printed robot is not allowed to turn into itself: each joint is
-    first swept on its own from 0 towards both ends and stops one step before
-    the first pose where printed parts clash (the parent filter of MuJoCo is
-    off here, so a link that cuts into its parent counts), then random poses
-    of all the joints together are drawn and the joints that stand between a
-    clashing pair shrink until none of them clashes."""
+    swept on its own from 0 towards both ends and stops one step before the
+    first pose where printed parts clash (the parent filter of MuJoCo is off
+    here, so a link that cuts into its parent counts). Clashes that need
+    several joints at once are not looked for: the parts of different limbs
+    collide in the episode (self-collision is on), like a real robot hitting
+    itself."""
     import mujoco
     from darwinbot.morphology import encode
     key = encode(morph).tobytes()
@@ -786,32 +800,9 @@ def joint_ranges(morph: Morphology) -> dict:
                         lo = mid
                 reach = max(0.0, lo - SWEEP_MARGIN)
             ends.append(sign * reach)
+        if ends[0] == 0.0 and ends[1] == 0.0:
+            ends = [BLOCKED_SPAN, -BLOCKED_SPAN]
         out[i] = (float(ends[1]), float(ends[0]))
-    # all the joints together
-    if len(nodes) > 1:
-        rng = np.random.default_rng(zlib.crc32(key))
-        u = rng.uniform(-1.0, 1.0, (POSE_SAMPLES, len(nodes)))
-        u[POSE_SAMPLES // 2:] = np.sign(u[POSE_SAMPLES // 2:])    # corners
-        for _ in range(24):
-            worst = None
-            for row in u:
-                pose({i: (v * out[i][1] if v >= 0 else -v * out[i][0])
-                      for i, v in zip(nodes, row)})
-                hit = rules.clashes(model, data, first=True)
-                if hit:
-                    worst = (row, hit[0])
-                    break
-            if worst is None:
-                break
-            row, (a, b, _) = worst
-            ba, bb = rules.bodies(model, a, b)
-            chain_a, chain_b = _chain(model, ba), _chain(model, bb)
-            common = set(chain_a) & set(chain_b)
-            involved = {j for j in chain_a + chain_b if j not in common}
-            for i in nodes:
-                if jid[i] in involved:
-                    lo, hi = out[i]
-                    out[i] = (lo * SHRINK, hi * SHRINK)
     out = {i: (round(lo, 4), round(hi, 4)) for i, (lo, hi) in out.items()}
     if len(_RANGES) > 4096:
         _RANGES.clear()

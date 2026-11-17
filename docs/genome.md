@@ -7,8 +7,8 @@ range on decode, so one mutation sigma works for every gene.
 
 A tree of modules: `core`, `joint`, `segment`, `link`, `spring`, `wheel`, `foot`,
 `tail`, `skid`, `spike` and `caster`. Joints, segments (a spine servo followed by
-a second torso plate, at most `MAX_SEGMENTS = 2`, attached only to the front or
-back slot of the core or of another segment) and wheels carry an STS3215 servo;
+a second torso plate, at most `MAX_SEGMENTS = 6`, attached only to the front or
+back slot of the core or of another segment, so the spine is a chain) and wheels carry an STS3215 servo;
 links, springs, tails, skids, spikes, casters and feet are passive. The genome is
 a fixed vector of `MORPH_LENGTH = MAX_NODES * 15 = 300` genes: one block of 15
 genes per node slot, with `MAX_NODES = 20`. Block 0 is always the core; the block index
@@ -23,11 +23,11 @@ is the stable slot id of the node. A block is
 | `type` | joint, link, spring, wheel, foot, tail, skid, spike, caster or segment |
 | `axis` | joint turns about pitch, yaw or roll; for a foot, the shape (sphere, blade, pad or claw) |
 | `length` | link length 40 - 200 mm (tail: bar length) |
-| `wheel` | wheel or caster radius (wheel 30 - 60 mm, caster 15 - 35 mm), or foot radius 8 - 30 mm; for a tail, the counterweight 0 - 100 g |
+| `wheel` | wheel or caster radius (wheel 30 - 100 mm, caster 15 - 35 mm), or foot radius 8 - 30 mm; for a tail, the counterweight 0 - 100 g |
 | `flip` | joint axis reversed (how a mirrored copy keeps the same signal) |
-| `width` | link section width 12 - 30 mm |
+| `width` | link section width 12 - 30 mm; for a wheel, its width along the axle 10 - 60 mm (10 mm holds the horn screws and the tyre groove) |
 | `thick` | link section thickness 3 - 10 mm; for a spring, the TPU blade 2 - 8 mm |
-| `offset` | on the core: mount position along the torso edge (on a top or bottom face, across the torso); on a link side slot: elbow distance 25 - 80 mm |
+| `offset` | on the core: mount position along the torso edge (on a top or bottom face, across the torso); on a link side slot: elbow distance 45 - 80 mm |
 | `angle` | on the core: mount yaw up to +/-60 degrees (on a face, yaw about the vertical, +/-180); on a link side slot: elbow angle 30 - 150 degrees |
 | `profile` | link, joint or spring path: straight, L (two pieces) or arc (three pieces); ignored by other modules |
 | `bend` | signed bend of an L or arc profile, -90 to +90 degrees |
@@ -35,13 +35,13 @@ is the stable slot id of the node. A block is
 Passive module physics: a spring is a hinge whose stiffness follows from the TPU
 blade thickness (see "Mola de TPU" in [hardware-dados.md](hardware-dados.md)); a tail is a bar
 with a counterweight at the tip; a skid has low friction (0.15), a spike high
-friction (1.6); a caster is a free wheel on a passive hinge. None has a servo.
+friction (1.5); a caster is a free wheel on a passive hinge. None has a servo.
 
 For the core block, `length` and `wheel` hold the torso length (0.15 - 0.40 m)
 and width (0.10 - 0.25 m), and the unused genes hold the contour factors (0.4 to
 1.4) of the 8 vertices of the star-shaped torso polygon, one per contour slot.
 For a segment, `length` and `width` set the plate (80 - 220 mm each). `decode()` accepts any vector and always returns a
-body within `MAX_NODES`, `MAX_SERVOS = 16` and depth 5: blocks that are
+body within `MAX_NODES`, `MAX_SERVOS = 16` and depth 5 (a spine segment adds no depth; a limb is as deep as the modules between it and the last plate or the core): blocks that are
 inactive, unreachable, clash on a slot or break a limit are dropped. A joint or
 link with no child ends in an implicit foot.
 

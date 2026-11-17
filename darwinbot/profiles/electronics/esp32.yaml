@@ -1,0 +1,4 @@
+# ESP32 board, regulator and pack footprint.
+mass: 0.17                  # kg: ESP32 + 3S LiPo + regulator
+current_a: 0.15             # A for the board and its radio
+box: [0.10, 0.06]           # m, ESP32 + LiPo footprint, centred

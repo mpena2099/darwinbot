@@ -44,7 +44,7 @@ archive map and training progress)
 ## Quick start
 
 ```bash
-python -m venv venv && source venv/bin/activate && pip install -e .   # install
+python -m venv venv && source venv/bin/activate && pip install -e ".[cad]"   # install (cad: STL parts)
 python experiments/train.py                                           # evolve (flat ground)
 python experiments/replay.py --list                                   # see the robot types, then:
 python experiments/replay.py --type 8servos-mid-trot                  # watch one
@@ -54,6 +54,17 @@ python experiments/export.py --type 8servos-mid-trot                  # parts, B
 The showcase robots trained on the `steer` preset (`--preset steer`: four
 environments, steering commands), as islands over several days
 ([how to train a showcase](https://mpena2099.github.io/darwinbot/results/#showcase)).
+
+To train for your own limits (no wheels, at most N servos, a number of legs,
+a smaller printer) without writing the command by hand, fill in the
+[command builder](https://mpena2099.github.io/darwinbot/command-builder/); the
+options are described in
+[Your robot](https://mpena2099.github.io/darwinbot/your-robot/). For other
+servos, another battery or a different printer, copy the default
+[hardware profile](https://mpena2099.github.io/darwinbot/hardware-profiles/)
+and pass it with `--profile`. To start from a robot you drew yourself, write
+it as YAML and seed an archive with `experiments/seed.py`
+([Starting from your own design](https://mpena2099.github.io/darwinbot/own-design/)).
 
 To watch the showcase robots without training, download their archive from
 the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
@@ -95,13 +106,15 @@ emendadas. Para cada
 corpo, um otimizador (CMA-ES) procura o ritmo de movimento das juntas, com dois
 harmônicos e um retorno da carga dos servos, que leva o robô mais longe. Em vez de
 um único vencedor, o programa guarda o melhor robô de cada comportamento (MAP-Elites
-por tempo de contato com o chão, altura do tronco, número de pernas e custo de
-transporte), formando um
+por tempo de contato com o chão, altura do tronco, número de servos, número de
+pernas e custo de transporte), formando um
 catálogo de soluções diferentes. Os robôs são montados com peças reais (servos
 STS3215, peças impressas em 3D, ESP32 e bateria LiPo), treinados com física
 propositalmente variada para resistir às diferenças entre simulação e mundo real,
 e qualquer um deles pode ser exportado como peças STL, lista de materiais, guia de
-montagem e arquivo de controle. Código e documentação técnica em inglês; os dados
+montagem e arquivo de controle. Quem quiser limitar o corpo (sem rodas, poucos
+servos, impressora menor) monta o comando de treino no
+[montador de comandos](https://mpena2099.github.io/darwinbot/command-builder/). Código e documentação técnica em inglês; os dados
 de hardware em `docs/` estão em português.
 
 ## License

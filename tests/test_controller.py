@@ -24,7 +24,7 @@ def _genes(slot, **kw):
 
 def test_ctrl_length():
     assert co.CTRL_LENGTH == 1 + mo.MAX_NODES * co.CTRL_PER_NODE
-    assert co.CTRL_PER_NODE == 8
+    assert co.CTRL_PER_NODE == 10
 
 
 def test_active_genes_follow_actuators():
@@ -149,3 +149,33 @@ def test_steering_changes_wheel_speed_within_range():
     slowed = co.Params(ctrl, [WHEEL], command=1.0).offset[0]
     assert slowed < fast and slowed >= co.WHEEL_RANGE[0]
     assert co.Params(ctrl, [WHEEL], command=-1.0).offset[0] == co.WHEEL_RANGE[1]
+
+
+def test_speed_command_one_is_the_evolved_gait():
+    ctrl = _genes(1, amp1=0.4, offset=0.5, amp2=0.2, speed_gain=1.0, speed_shift=1.0)
+    ctrl[0] = 0.0
+    a, b = co.Params(ctrl, [JOINT]), co.Params(ctrl, [JOINT], speed=1.0)
+    assert np.array_equal(a.amp1, b.amp1) and np.array_equal(a.offset, b.offset)
+    assert np.allclose(co.Params(ctrl, [JOINT], speed=1.0).amp1, co.Params(ctrl, [JOINT]).amp1_base)
+
+
+def test_speed_command_scales_amplitude_and_shifts_offset():
+    ctrl = _genes(1, amp1=0.4, offset=0.5, amp2=0.2, speed_gain=1.0, speed_shift=1.0)
+    ctrl[0] = 0.0                       # slowest rhythm: no speed clip in the way
+    full = co.Params(ctrl, [JOINT])
+    half = co.Params(ctrl, [JOINT], speed=0.5)
+    stop = co.Params(ctrl, [JOINT], speed=0.0)
+    assert np.isclose(half.amp1[0], 0.5 * full.amp1[0])
+    assert stop.amp1[0] == 0.0 and stop.amp2[0] == 0.0
+    assert np.isclose(stop.offset[0] - full.offset[0], co.SPEED_SHIFT_RANGE[1])
+    # steering and speed combine: the amplitude factors multiply
+    ctrl[co.node_base(1) + co.STEER_GAIN] = 1.0
+    both = co.Params(ctrl, [JOINT], command=0.5, speed=0.5)
+    assert np.isclose(both.amp1[0], 0.5 * 1.5 * full.amp1_base[0])
+
+
+def test_speed_command_changes_wheel_speed_within_range():
+    ctrl = _genes(2, offset=1.0, speed_shift=0.0)                 # full negative change
+    assert co.Params(ctrl, [WHEEL], speed=0.0).offset[0] == pytest.approx(0.0)
+    ctrl = _genes(2, offset=1.0, speed_shift=1.0)
+    assert co.Params(ctrl, [WHEEL], speed=0.0).offset[0] == co.WHEEL_RANGE[1]

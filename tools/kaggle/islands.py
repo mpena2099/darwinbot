@@ -33,6 +33,9 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
+import yaml   # noqa: E402
+
+from darwinbot import hardware   # noqa: E402
 from darwinbot.evolve import merge   # noqa: E402
 
 KERNEL = os.path.join(ROOT, "tools", "kaggle", "train_kernel.py")
@@ -59,6 +62,9 @@ def push_island(work, i, a, start_dataset):
     src = set_constant(src, "PROGRESS_DATASET", f"{a.user}/{a.name}-island{i}")
     src = set_constant(src, "TOKEN_DATASET", a.token_dataset.split("/")[-1])
     src = set_constant(src, "RESUME_DATASET", start_dataset or "")
+    if a.profile:    # the kernel carries the profile text and passes --profile
+        src = set_constant(src, "PROFILE_YAML", yaml.safe_dump(
+            hardware.load(a.profile), sort_keys=False))
     with open(os.path.join(d, "train_kernel.py"), "w") as f:
         f.write(src)
     sources = [a.code_dataset, a.token_dataset] + ([start_dataset] if start_dataset else [])
@@ -132,6 +138,8 @@ def main():
                    help="must fit one 12 h session (about 1 h per batch on 4 cores)")
     p.add_argument("--train-args", default="--preset steer",
                    help="train.py arguments; islands of one run must share them")
+    p.add_argument("--profile", default=None, metavar="PATH",
+                   help="hardware profile YAML for every island (docs/hardware-profiles.md)")
     p.add_argument("--start", default=None, help="archive.pkl to start every island from")
     p.add_argument("--out", default="checkpoints/islands")
     p.add_argument("--poll", type=int, default=600, help="s between status checks")

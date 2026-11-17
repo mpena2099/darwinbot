@@ -186,7 +186,7 @@ list, not in any single robot.
 
 - Wheels still lead on speed: the best roller scores about 3 times the best
   trotter, and the top of the archive is mostly `roll`.
-- The firmware is half done: `firmware/core/` runs the controller math in portable C++ and a test proves it matches the Python controller tick by tick (`tests/test_firmware_parity.py`). The ESP32 layer (servo bus, load reading, calibration) waits for real hardware.
+- The firmware is written but not yet run: `firmware/core/` holds the controller math in portable C++ with a test that matches the Python controller tick by tick (`tests/test_firmware_parity.py`), and `firmware/esp32/` puts it on the robot (servo bus, load reading, web page, micro-ROS). No robot exists yet, so neither has touched hardware.
 - Randomised training (`--variants`) is CPU only.
 - The only feedback is the servo load. The controller turns when commanded but
   never sees the world, so tasks that need reacting (finding a doorway,

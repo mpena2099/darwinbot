@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -44,9 +45,15 @@ bool load_config(Config& cfg, char* err, size_t err_len) {
         return false;
     }
     if (!doc["frequency"].is<float>() || !doc["ramp_time"].is<float>() ||
-        !doc["control_hz"].is<float>() || doc["control_hz"].as<float>() <= 0.0f) {
+        !doc["control_hz"].is<float>() || doc["control_hz"].as<float>() <= 0.0f ||
+        !std::isfinite(doc["control_hz"].as<float>())) {
         return fail(err, err_len,
                     "/control.json needs frequency, ramp_time and a positive control_hz");
+    }
+    if (!std::isfinite(doc["frequency"].as<float>()) || doc["frequency"].as<float>() <= 0.0f ||
+        !std::isfinite(doc["ramp_time"].as<float>()) || doc["ramp_time"].as<float>() < 0.0f) {
+        return fail(err, err_len,
+                    "/control.json needs a finite, positive frequency and a ramp_time >= 0");
     }
 
     Config c;
@@ -57,7 +64,8 @@ bool load_config(Config& cfg, char* err, size_t err_len) {
     c.control_hz = doc["control_hz"].as<float>();
     c.load_full_scale = doc["load_full_scale"] | darwinbot::Controller::kLoadFullScale;
     c.servo_speed = doc["servo_speed"] | darwinbot::Controller::kServoSpeed;
-    if (c.load_full_scale <= 0.0f || c.load_full_scale > 1.0f || c.servo_speed <= 0.0f) {
+    if (!std::isfinite(c.load_full_scale) || !std::isfinite(c.servo_speed) ||
+        c.load_full_scale <= 0.0f || c.load_full_scale > 1.0f || c.servo_speed <= 0.0f) {
         return fail(err, err_len,
                     "/control.json needs load_full_scale in (0, 1] and a positive servo_speed");
     }
@@ -109,6 +117,11 @@ bool load_config(Config& cfg, char* err, size_t err_len) {
             p.max = s["max"].as<float>();
             p.zero = s["zero"] | 2048.0f;   // calibration, counts at 0 rad
             p.sign = s["sign"] | 1.0f;
+            if (!(p.min <= p.max)) {
+                snprintf(err, err_len, "/control.json: servo %d has min %.3f above max %.3f", id,
+                         p.min, p.max);
+                return false;
+            }
         } else {
             snprintf(err, err_len, "/control.json: servo %d mode '%s', expected position or wheel", id, mode);
             return false;
@@ -125,6 +138,11 @@ bool load_config(Config& cfg, char* err, size_t err_len) {
         }
         if (format >= 5) {
             p.couple_to = s["couple_to"] | -1;
+            if (p.couple_to < -1 || p.couple_to >= n) {
+                snprintf(err, err_len, "/control.json: servo %d couple_to %d, expected -1 to %d",
+                         id, p.couple_to, n - 1);
+                return false;
+            }
             p.couple_k = s["couple_k"] | 0.0f;
             p.couple_lag = s["couple_lag"] | 0.0f;
         }

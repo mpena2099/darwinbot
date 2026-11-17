@@ -34,6 +34,13 @@ void Bus::send(const uint8_t* packet, size_t n) {
     bus.write(packet, n);
     bus.flush();                          // the last stop bit is out before we listen
     digitalWrite(kDirPin, LOW);
+#if DARWIN_BUS_ECHO
+    // The adapter looped our own bytes back; they sit in front of any answer.
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t echo;
+        if (!get_byte(echo)) break;
+    }
+#endif
 }
 
 bool Bus::get_byte(uint8_t& b) {
@@ -47,7 +54,7 @@ bool Bus::get_byte(uint8_t& b) {
     return false;
 }
 
-bool Bus::read_answer(uint8_t id, uint8_t* params, int& n) {
+bool Bus::read_answer(uint8_t id, uint8_t* params, uint8_t expect) {
     uint8_t b;
     if (!get_byte(b) || b != kHeader) return false;
     if (!get_byte(b) || b != kHeader) return false;
@@ -56,16 +63,15 @@ bool Bus::read_answer(uint8_t id, uint8_t* params, int& n) {
         if (!get_byte(h)) return false;
     }
     if (head[0] != id) return false;
-    const uint8_t length = head[1];
-    if (length < 2 || length - 2 > kMaxPayload) return false;
-    const int count = length - 2;
+    // LEN counts the error byte, the parameters and the checksum.
+    if (head[1] != expect + 2 || expect > kMaxPayload) return false;
     uint8_t sum = head[0] + head[1] + head[2];
-    for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < expect; ++i) {
         if (!get_byte(params[i])) return false;
         sum += params[i];
     }
     if (!get_byte(b) || static_cast<uint8_t>(~sum) != b) return false;
-    n = count;
+    last_error_ = head[2];
     return true;
 }
 
@@ -86,21 +92,54 @@ bool Bus::read_regs(uint8_t id, uint8_t reg, uint8_t* out, uint8_t len) {
     p[7] = checksum(p + 2, 5);
     send(p, sizeof(p));
     uint8_t params[kMaxPayload];
-    int n = 0;
-    if (!read_answer(id, params, n) || n < len) return false;
+    if (!read_answer(id, params, len)) return false;
     std::memcpy(out, params, len);
     return true;
 }
 
-void Bus::set_mode(uint8_t id, bool wheel) {
-    write_reg(id, kRegStatusReturn, 1);                  // answer reads only
-    write_reg(id, kRegTorqueEnable, 0);                  // free before the mode
-    write_reg(id, kRegMode, wheel ? kModeWheel : kModePosition);
-    if (!wheel) {                                        // move speed limit
-        const uint16_t speed = kPositionGoalSpeed;
-        write_regs(kRegGoalSpeed, &id, &speed, 1);
+bool Bus::write_eeprom(uint8_t id, uint8_t reg, uint8_t value) {
+    uint8_t current = 0;
+    if (!read_regs(id, reg, &current, 1)) return false;
+    if (current == value) return true;       // the EEPROM has limited write cycles
+    write_reg(id, kRegTorqueEnable, 0);      // a mode change needs the torque off
+    write_reg(id, kRegLock, 0);
+    write_reg(id, reg, value);
+    delay(10);                               // the EEPROM write takes a moment
+    write_reg(id, kRegLock, 1);
+    return true;
+}
+
+bool Bus::set_mode(uint8_t id, bool wheel) {
+    return write_eeprom(id, kRegStatusReturn, 1) &&      // answer reads only
+           write_eeprom(id, kRegMode, wheel ? kModeWheel : kModePosition);
+}
+
+void Bus::set_torque_limit(uint8_t id, float fraction) {
+    int permille = static_cast<int>(fraction * 1000.0f + 0.5f);
+    if (permille < 1) permille = 1;
+    if (permille > 1000) permille = 1000;
+    const uint16_t value = static_cast<uint16_t>(permille);
+    write_regs(kRegTorqueLimit, &id, &value, 1);
+}
+
+bool Bus::arm(uint8_t id, bool wheel, uint16_t speed_steps, uint16_t& position) {
+    uint16_t zero = 0;
+    if (wheel) {
+        write_regs(kRegGoalSpeed, &id, &zero, 1);        // not turning when torque comes on
+        position = 0;
+    } else {
+        uint8_t raw[2];
+        if (!read_regs(id, kRegPresentPosition, raw, 2)) return false;
+        position = static_cast<uint16_t>((raw[0] | (raw[1] << 8)) & 0x0FFF);
+        write_regs(kRegGoalSpeed, &id, &speed_steps, 1);
+        write_regs(kRegGoalPosition, &id, &position, 1);
     }
     write_reg(id, kRegTorqueEnable, 1);
+    return true;
+}
+
+void Bus::torque(uint8_t id, bool on) {
+    write_reg(id, kRegTorqueEnable, on ? 1 : 0);
 }
 
 bool Bus::read_load(uint8_t id, float& load) {

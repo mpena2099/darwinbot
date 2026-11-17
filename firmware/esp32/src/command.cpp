@@ -2,57 +2,80 @@
 
 #include <Arduino.h>
 
-#include <atomic>
+#include <cmath>
 
 namespace cmd {
 namespace {
 
-std::atomic<float> g_command{0.0f};
-std::atomic<float> g_speed{0.0f};
-std::atomic<unsigned long> g_stamp{0};   // millis() of the last command
-bool g_stamped = false;                  // no transport has sent anything yet
+portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
+float g_command = 0.0f;
+float g_speed = 0.0f;
+unsigned long g_stamp = 0;   // millis() of the last command
+bool g_running = false;      // boots STOPPED until the first command
 
 float clampf(float v, float lo, float hi) {
+    if (!std::isfinite(v)) return 0.0f;
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-void stamp() {
-    g_stamp.store(millis());
-    g_stamped = true;
+// Caller holds g_mux.
+void commit() {
+    g_stamp = millis();
+    g_running = g_command != 0.0f || g_speed != 0.0f;
 }
 
 }  // namespace
 
-void set_command(float c) {
-    g_command.store(clampf(c, -1.0f, 1.0f));
-    stamp();
+bool set_command(float c) {
+    if (!std::isfinite(c)) return false;
+    portENTER_CRITICAL(&g_mux);
+    g_command = clampf(c, -1.0f, 1.0f);
+    commit();
+    portEXIT_CRITICAL(&g_mux);
+    return true;
 }
 
-void set_speed(float s) {
-    g_speed.store(clampf(s, 0.0f, 1.0f));
-    stamp();
+bool set_speed(float s) {
+    if (!std::isfinite(s)) return false;
+    portENTER_CRITICAL(&g_mux);
+    g_speed = clampf(s, 0.0f, 1.0f);
+    commit();
+    portEXIT_CRITICAL(&g_mux);
+    return true;
+}
+
+bool set(float c, float s) {
+    if (!std::isfinite(c) || !std::isfinite(s)) return false;
+    portENTER_CRITICAL(&g_mux);
+    g_command = clampf(c, -1.0f, 1.0f);
+    g_speed = clampf(s, 0.0f, 1.0f);
+    commit();
+    portEXIT_CRITICAL(&g_mux);
+    return true;
 }
 
 void stop() {
-    g_command.store(0.0f);
-    g_speed.store(0.0f);
-    stamp();
+    portENTER_CRITICAL(&g_mux);
+    g_command = 0.0f;
+    g_speed = 0.0f;
+    g_stamp = millis();
+    g_running = false;
+    portEXIT_CRITICAL(&g_mux);
 }
 
-void read(float& c, float& s) {
-    c = g_command.load();
-    s = g_speed.load();
-}
-
-void upkeep(float dt) {
-    // With no transport at all the robot waits at the ramped-to-stop state.
-    if (g_stamped && millis() - g_stamp.load() < kTimeoutMs) return;
-    const float step = dt / kFallbackSeconds;
-    const float c = g_command.load();
-    const float s = g_speed.load();
-    g_command.store(c > 0.0f ? (c - step > 0.0f ? c - step : 0.0f)
-                             : (c + step < 0.0f ? c + step : 0.0f));
-    g_speed.store(s > step ? s - step : 0.0f);
+State read() {
+    State st;
+    portENTER_CRITICAL(&g_mux);
+    if (g_running && millis() - g_stamp >= kTimeoutMs) {
+        g_command = 0.0f;
+        g_speed = 0.0f;
+        g_running = false;
+    }
+    st.command = g_command;
+    st.speed = g_speed;
+    st.running = g_running;
+    portEXIT_CRITICAL(&g_mux);
+    return st;
 }
 
 }  // namespace cmd

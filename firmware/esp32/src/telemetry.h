@@ -11,6 +11,9 @@ struct Telemetry {
     float command = 0.0f;
     float speed = 0.0f;
     float volts = 0.0f;
+    bool running = false;     // false: STOPPED
+    bool fault = false;       // a servo reported overload or overheat
+    bool undervolt = false;   // battery below the 3S limit
     float load[kMaxServos] = {};     // signed, over the maximum torque
     float target[kMaxServos] = {};   // rad (wheel: rad/s), as the core commands
     float phase[kMaxServos] = {};    // rad

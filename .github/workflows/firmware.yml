@@ -49,5 +49,12 @@ jobs:
         with:
           path: .pio-core
           key: pio-core-ros-${{ hashFiles('firmware/esp32/platformio.ini') }}
+      # micro_ros_platformio builds its library with the Python of PlatformIO's
+      # own environment, which needs these packages.
+      - name: Python packages for the micro-ROS build
+        run: |
+          export PLATFORMIO_CORE_DIR=$PWD/.pio-core
+          python -m venv $PLATFORMIO_CORE_DIR/penv
+          $PLATFORMIO_CORE_DIR/penv/bin/pip install platformio catkin_pkg lark-parser empy==3.3.4 colcon-common-extensions importlib-resources pyyaml pytz markupsafe==2.0.1
       - name: Build esp32-ros (web + serial + micro-ROS)
         run: PLATFORMIO_CORE_DIR=$PWD/.pio-core pio run -d firmware/esp32 -e esp32-ros

@@ -23,11 +23,20 @@ packet, so the bus is released before the servo answers. Use the 74HCT part if
 the bus idles at 5 V. A "one resistor and a diode" adapter may work at low servo
 counts but corrupts answers at 1 Mbps.
 
+Many adapters loop every transmitted byte back to RX (the echo). The firmware
+expects that by default (`-DDARWIN_BUS_ECHO=1`): after each packet it discards
+exactly the bytes it sent before reading the answer. If your adapter keeps RX
+silent while transmitting, build with `-DDARWIN_BUS_ECHO=0`, or the first bytes
+of every answer are lost. A status packet whose length does not match the
+request is rejected.
+
 Power the servos from the 3S LiPo directly (the 12 V STS3215 takes 6 to 12.6 V)
 and the ESP32 from a step-down on the same pack. Give every servo its own ID
-before it goes on the bus: all of them ship as ID 1. The firmware sets each
-servo's mode from `control.json` (position for joints, wheel for wheels) and
-enables torque at boot.
+before it goes on the bus: all of them ship as ID 1. At boot the firmware sets each
+servo's mode from `control.json` (position for joints, wheel for wheels), writes
+the EEPROM registers only when the value differs, limits the torque to
+`load_full_scale` of the maximum, reads every joint's present position and takes
+it as the goal, and only then enables torque, so nothing jumps.
 
 ## Build and upload
 
@@ -53,18 +62,25 @@ still: no torque is enabled and no control task starts.
 ## Wi-Fi and the page
 
 Without `/wifi.json` the robot is its own access point, `darwinbot-XXXX` (the
-last two bytes of the MAC), at `http://192.168.4.1/`. To join an existing
+last two bytes of the MAC), at `http://192.168.4.1/`, protected with WPA2. The
+default password is `darwinbot` and is printed on the serial console at boot.
+**Change it** before anyone else is in range: add `"ap_password": "..."` (8 to 63
+characters) to `/wifi.json`. To join an existing
 network instead, add `firmware/esp32/data/wifi.json` (uploaded with the same
 `uploadfs`):
 
 ```json
 {"ssid": "my-network", "password": "secret",
- "ros_agent_ip": "192.168.1.20", "ros_agent_port": 8888}
+ "ros_agent_ip": "192.168.1.20", "ros_agent_port": 8888,
+ "ap_password": "something-else"}
 ```
+
+`ap_password` also works in a file with no `ssid` (access point only).
 
 The page (`data/index.html`, everything inline, no external download) has a
 touch joystick (left is negative, as `docs/formato-controle.md` defines), a
-speed slider and a stop button, and shows the load and phase of every servo and
+speed slider (it starts at 0, so the robot stays stopped when you connect) and a
+stop button, and repeats its command every 200 ms while the link is open. It shows the load and phase of every servo and
 the battery voltage, pushed at 10 Hz over a WebSocket on port 81:
 
 ```bash
@@ -80,12 +96,33 @@ core 1, the web and serial on core 0.
 |---|---|
 | `cmd <c>` | steering, -1 to 1 (negative turns left) |
 | `speed <s>` | speed, 0 to 1 (1 is the gait as evolved) |
-| `stop` | steering straight, slowest gait |
+| `stop` | enter STOPPED (see below) |
 | `status` | robot, rates, command, battery, load/target/phase of every servo |
 
-If no transport sends anything for one second, the firmware ramps the steering
-and the speed back to the stop state, so a dropped Wi-Fi link does not leave the
-robot walking away. Send `status` from the serial console to check.
+Non-finite values (`nan`, `inf`) are rejected on every transport.
+
+## Run state and safety
+
+The robot boots STOPPED and stays so until the first command. STOPPED holds every
+joint at its last goal (the present position at boot), keeps the wheels at speed
+0 and does not run the controller. Speed 0 with steering other than 0 is the
+slowest gait; speed 0 and steering 0 together are a stop. These enter STOPPED:
+
+- the page's STOP button, serial `stop`, a ROS `cmd_vel` with `linear.x` and
+  `angular.z` both 0;
+- no command from any transport for 1 s (a dropped Wi-Fi link);
+- a status error byte with the overheat, overcurrent or overload bit from any
+  servo: that servo is reported on the serial console and the robot stays
+  STOPPED until reboot;
+- the battery below 9.6 V (3S): torque is switched off on every servo, and the
+  next command after the voltage recovers (10.2 V) re-enables torque from the
+  present positions.
+
+Leaving STOPPED restarts the controller, so its ramp starts again. While it
+ramps (`ramp_time` of the control file) the joints move at 20 % of
+`servo_speed`; after that at `servo_speed` itself. A task watchdog on the control
+task (2 s) reboots the board if the loop hangs; the servos keep their last goal.
+`status` shows whether the robot is running or STOPPED, and why.
 
 ## ROS 2 (`-e esp32-ros`)
 
@@ -115,4 +152,16 @@ PLATFORMIO_CORE_DIR=$PWD/.pio-core pio run -d firmware/esp32 -e esp32-ros
 ```
 
 `micro_ros_platformio` downloads a prebuilt micro-ROS library at the first build
-and needs network access; the first build of this environment takes minutes.
+and needs network access; the first build of this environment takes minutes. It
+also builds with the Python of PlatformIO's own environment, which needs these
+packages (install them once; CI does the same):
+
+```bash
+export PLATFORMIO_CORE_DIR=$PWD/.pio-core
+python -m venv $PLATFORMIO_CORE_DIR/penv
+$PLATFORMIO_CORE_DIR/penv/bin/pip install platformio catkin_pkg lark-parser \
+    empy==3.3.4 colcon-common-extensions importlib-resources pyyaml pytz markupsafe==2.0.1
+```
+
+`ros_agent_ip` must be an IPv4 address; without it the node does not start. An
+all-zero `cmd_vel` is a stop.

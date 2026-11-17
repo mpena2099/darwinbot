@@ -7,6 +7,7 @@
 #include <WebSocketsServer.h>
 #include <WiFi.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -20,6 +21,7 @@ NetConfig g_net;
 WebServer g_http(80);
 WebSocketsServer g_ws(81);
 uint32_t g_last_push = 0;
+constexpr char kDefaultApPassword[] = "darwinbot";
 
 void on_ws(uint8_t client, WStype_t type, uint8_t* payload, size_t len) {
     if (type != WStype_TEXT) return;
@@ -32,9 +34,9 @@ void on_ws(uint8_t client, WStype_t type, uint8_t* payload, size_t len) {
     if (std::strcmp(text, "stop") == 0) {
         cmd::stop();
     } else if (sscanf(text, "cmd %f", &value) == 1) {
-        cmd::set_command(value);
+        if (std::isfinite(value)) cmd::set_command(value);
     } else if (sscanf(text, "speed %f", &value) == 1) {
-        cmd::set_speed(value);
+        if (std::isfinite(value)) cmd::set_speed(value);
     }
 }
 
@@ -64,11 +66,20 @@ void net_begin() {
     WiFi.macAddress(mac);
     snprintf(g_net.ap, sizeof(g_net.ap), "darwinbot-%02X%02X", mac[4], mac[5]);
 
+    strlcpy(g_net.ap_password, kDefaultApPassword, sizeof(g_net.ap_password));
     File f = LittleFS.open("/wifi.json", "r");
     if (f) {
         JsonDocument doc;
         const bool ok = !deserializeJson(doc, f);
         f.close();
+        if (ok && doc["ap_password"].is<const char*>()) {
+            const char* pw = doc["ap_password"];
+            if (std::strlen(pw) >= 8 && std::strlen(pw) <= 63) {   // WPA2 limits
+                strlcpy(g_net.ap_password, pw, sizeof(g_net.ap_password));
+            } else {
+                Serial.println("wifi.json: ap_password must be 8 to 63 characters, using the default");
+            }
+        }
         if (ok && doc["ssid"].is<const char*>()) {
             g_net.station = true;
             strlcpy(g_net.ssid, doc["ssid"] | "", sizeof(g_net.ssid));
@@ -96,9 +107,12 @@ void net_begin() {
         }
     } else {
         WiFi.mode(WIFI_AP);
-        WiFi.softAP(g_net.ap);
-        Serial.printf("Wi-Fi: access point '%s', http://%s/\n", g_net.ap,
-                      WiFi.softAPIP().toString().c_str());
+        WiFi.softAP(g_net.ap, g_net.ap_password);   // WPA2
+        Serial.printf("Wi-Fi: access point '%s', password '%s', http://%s/\n", g_net.ap,
+                      g_net.ap_password, WiFi.softAPIP().toString().c_str());
+        if (std::strcmp(g_net.ap_password, kDefaultApPassword) == 0) {
+            Serial.println("Wi-Fi: default password, set \"ap_password\" in /wifi.json");
+        }
     }
 }
 

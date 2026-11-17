@@ -63,8 +63,8 @@
   <div id="pad"><div id="stick"></div></div>
   <div class="side">
     <div class="speed">
-      <label for="speed">Speed <output id="speedout">100 %</output></label>
-      <input id="speed" type="range" min="0" max="100" value="100">
+      <label for="speed">Speed <output id="speedout">0 %</output></label>
+      <input id="speed" type="range" min="0" max="100" value="0">
     </div>
     <button id="stop">STOP</button>
     <p class="hint">Drag left to turn left.</p>
@@ -149,7 +149,7 @@
     stick.style.transform = '';
     send('cmd 0');
   });
-  pad.addEventListener('pointercancel', () => { stick.style.transform = ''; send('cmd 0'); });
+  pad.addEventListener('pointercancel', () => { command = 0; stick.style.transform = ''; send('cmd 0'); });
 
   speed.addEventListener('input', () => {
     speedout.textContent = speed.value + ' %';
@@ -163,6 +163,13 @@
     stick.style.transform = '';
     send('stop');
   });
+
+  // The robot stops by itself when it hears nothing for 1 s, so the page
+  // repeats its current command while the link is open.
+  setInterval(() => {
+    send('cmd ' + command.toFixed(2));
+    send('speed ' + (speed.value / 100).toFixed(2));
+  }, 200);
 
   connect();
 })();

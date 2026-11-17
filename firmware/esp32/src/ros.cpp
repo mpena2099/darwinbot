@@ -4,13 +4,14 @@
 
 #include <Arduino.h>
 #include <geometry_msgs/msg/twist.h>
-#include <micro_ros_arduino.h>
+#include <micro_ros_platformio.h>
 #include <rcl/rcl.h>
 #include <rclc/executor.h>
 #include <rclc/rclc.h>
 #include <rmw_microros/rmw_microros.h>
 #include <sensor_msgs/msg/joint_state.h>
 
+#include <cmath>
 #include <cstring>
 
 #include "bus.h"
@@ -34,18 +35,27 @@ rcl_publisher_t g_pub;
 geometry_msgs__msg__Twist g_twist;
 sensor_msgs__msg__JointState g_state;
 rosidl_runtime_c__String g_names[kMaxServos];
-float g_position[kMaxServos];
-float g_effort[kMaxServos];
+double g_position[kMaxServos];
+double g_effort[kMaxServos];
 
 float clampf(float v, float lo, float hi) {
+    if (!std::isfinite(v)) return 0.0f;
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
 // angular.z positive turns left, which is a negative steering command.
 void on_cmd_vel(const void* msg) {
     const auto* twist = static_cast<const geometry_msgs__msg__Twist*>(msg);
-    cmd::set_command(-clampf(static_cast<float>(twist->angular.z) / kMaxYawRate, -1.0f, 1.0f));
-    cmd::set_speed(clampf(static_cast<float>(twist->linear.x) / kMaxSpeed, 0.0f, 1.0f));
+    const float z = static_cast<float>(twist->angular.z);
+    const float x = static_cast<float>(twist->linear.x);
+    if (!std::isfinite(z) || !std::isfinite(x)) return;
+    const float steer = -clampf(z / kMaxYawRate, -1.0f, 1.0f);
+    const float speed = clampf(x / kMaxSpeed, 0.0f, 1.0f);
+    if (steer == 0.0f && speed == 0.0f) {
+        cmd::stop();   // an all-zero Twist is a stop, not the slowest gait
+    } else {
+        cmd::set(steer, speed);
+    }
 }
 
 void joint_state_init() {
@@ -73,7 +83,7 @@ void publish_joint_state() {
         g_position[i] = t.target[i];
         g_effort[i] = t.load[i];
     }
-    rcl_publish(&g_pub, &g_state, nullptr);
+    if (rcl_publish(&g_pub, &g_state, nullptr) != RCL_RET_OK) rcl_reset_error();
 }
 
 // One agent session: create the entities, run until the agent stops answering,
@@ -89,25 +99,28 @@ void session() {
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist);
     const rosidl_message_type_support_t* joint_state =
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, JointState);
-    if (rclc_subscription_init_default(&g_sub, &g_node, twist, "cmd_vel") != RCL_RET_OK ||
+    if (rclc_subscription_init_best_effort(&g_sub, &g_node, twist, "cmd_vel") != RCL_RET_OK ||
         rclc_publisher_init_default(&g_pub, &g_node, joint_state,
                                     "darwinbot/joint_states") != RCL_RET_OK) {
-        rcl_node_fini(&g_node);
+        (void)rcl_node_fini(&g_node);
         rclc_support_fini(&g_support);
         return;
     }
 
     rclc_executor_t executor;
     if (rclc_executor_init(&executor, &g_support.context, 1, &alloc) != RCL_RET_OK) {
-        rcl_subscription_fini(&g_sub, &g_node);
-        rcl_publisher_fini(&g_pub, &g_node);
-        rcl_node_fini(&g_node);
+        (void)rcl_subscription_fini(&g_sub, &g_node);
+        (void)rcl_publisher_fini(&g_pub, &g_node);
+        (void)rcl_node_fini(&g_node);
         rclc_support_fini(&g_support);
         return;
     }
     g_twist = geometry_msgs__msg__Twist();
     joint_state_init();
-    rclc_executor_add_subscription(&executor, &g_sub, &g_twist, &on_cmd_vel, ON_NEW_DATA);
+    if (rclc_executor_add_subscription(&executor, &g_sub, &g_twist, &on_cmd_vel, ON_NEW_DATA) !=
+        RCL_RET_OK) {
+        Serial.println("ROS: could not add the cmd_vel subscription");
+    }
 
     uint32_t last = millis();
     while (rmw_uros_ping_agent(200, 1) == RMW_RET_OK) {
@@ -119,17 +132,24 @@ void session() {
     }
 
     rclc_executor_fini(&executor);
-    rcl_subscription_fini(&g_sub, &g_node);
-    rcl_publisher_fini(&g_pub, &g_node);
-    rcl_node_fini(&g_node);
+    (void)rcl_subscription_fini(&g_sub, &g_node);
+    (void)rcl_publisher_fini(&g_pub, &g_node);
+    (void)rcl_node_fini(&g_node);
     rclc_support_fini(&g_support);
 }
 
 void task(void*) {
     const NetConfig& net = net_config();
-    // The transport API takes mutable strings and only reads them.
+    IPAddress agent;
+    if (!agent.fromString(net.agent_ip)) {
+        Serial.printf("ROS: ros_agent_ip '%s' in /wifi.json is not an address, node not started\n",
+                      net.agent_ip);
+        vTaskDelete(nullptr);
+    }
+    // The transport API takes mutable strings and only reads them. It joins the
+    // network again (already joined by net_begin) and blocks until connected.
     set_microros_wifi_transports(const_cast<char*>(net.ssid), const_cast<char*>(net.password),
-                                 const_cast<char*>(net.agent_ip), net.agent_port);
+                                 agent, net.agent_port);
     vTaskDelay(pdMS_TO_TICKS(500));
     for (;;) {
         if (rmw_uros_ping_agent(1000, 1) == RMW_RET_OK) {

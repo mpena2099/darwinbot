@@ -75,8 +75,9 @@ def polish_elite(job, workers=1):
             elite = dataclasses.replace(elite, fitness=fit, scores=list(scores))
         if workers > 1:
             init = (m, terrains, a.seconds, a.payload, a.variants, seed, a.task)
+            # initargs is the tuple of the initializer's arguments: one here
             with Pool(workers, _init_population_worker,
-                      ((init, factors), plugins.loaded())) as pool:
+                      (((init, factors), plugins.loaded()),)) as pool:
                 r = optimise_controller(m, terrains, map_many=lambda cs: pool.map(_score_one, cs), **kw)
         else:
             r = optimise_controller(m, terrains, **kw)

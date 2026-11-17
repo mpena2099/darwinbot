@@ -88,9 +88,23 @@ against the current rules:
 
 ## After release 3
 
-Release 4 starts with three changes that open body plans the current limits
-hold back:
+Release 4 puts training speed first, then three changes that open body plans
+the current limits hold back.
 
+- **Faster training, the levers left out of release 3** (release 4, first):
+  release 3 brings the compiled loop's successors (diagonal and focused
+  CMA-ES steps, one physics variant per candidate, a quick screen before the
+  inner loop), worth about 2 to 3 times fewer evaluations per body. Still to
+  build and gate, each against the current search:
+  - a race rule that stops a child early when its first evaluations cannot
+    beat the elite of its cell;
+  - fewer random bodies once the archive is mature, since most random bodies
+    are rejected after a full inner loop;
+  - fewer evaluations per body on a mature archive, where children differ
+    little from their parents;
+  - a cheaper `mj_step`: collision geoms that only matter for assembly, and
+    solver iterations, measured first and changed only if the physics stays
+    the same.
 - **Balance sense, optional** (release 4): an IMU on the ESP32 (an MPU-6050, for example)
   feeding the torso's tilt back into the controller through evolved gains that
   start at zero, so each leg can correct a lean. Today the controller only

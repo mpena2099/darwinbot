@@ -119,7 +119,7 @@ def _prune_steps(name, elite, a, budget, tol, seed):
         floor = max(floor, fit - tol * abs(fit))
     morph = morpho.encode(m) if cut else elite.morph
     print(f"{name}: cut {len(cut)} parts {cut}, score {start:.3f} -> {fit:.3f}", flush=True)
-    return Elite(morph, ctrl, fit, scores, elite.born, beh)
+    return Elite(morph, ctrl, fit, scores, elite.born, beh, elite.uid)
 
 
 def _step(name, gen, send, active, done):

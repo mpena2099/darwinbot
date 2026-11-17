@@ -114,9 +114,7 @@ def test_names_round_trip_with_parse():
     assert len(set(names.values())) == len(names)          # unique
     for cell, name in names.items():
         assert archive.find(name) == cell
-    shared = [n for n in names.values() if n.rsplit("-", 1)[-1].isdigit()
-              and evolve._NAME.match(n).group(4)]
-    assert shared, "40 elites in few name bins should collide at least once"
+    assert all(evolve._NAME.match(n).group(4) for n in names.values())   # always suffixed
 
 
 def _at(i):
@@ -126,26 +124,115 @@ def _at(i):
             evolve.COT_MIN * (evolve.COT_MAX / evolve.COT_MIN) ** cot, legs * mo.MAX_LEGS]
 
 
-def test_name_collision_appends_cell_index():
+def _two_cells_of_one_type():
     by_name = {}
     for i in range(evolve.N_CELLS):
         by_name.setdefault(evolve.type_name(_at(i)), []).append(i)
-    name, (i, j) = next((n, c[:2]) for n, c in by_name.items() if len(c) > 1)
+    return next((n, c[:2]) for n, c in by_name.items() if len(c) > 1)
+
+
+def test_uids_are_assigned_in_insert_order_and_names_carry_them():
+    name, (i, j) = _two_cells_of_one_type()
     archive = evolve.Archive(terrains="flat")
     archive.insert(_elite(1.0, _at(i)))
     archive.insert(_elite(2.0, _at(j)))
     names = archive.names()
-    assert set(names.values()) == {f"{name}-{evolve.cell_of(_at(i))}",
-                                   f"{name}-{evolve.cell_of(_at(j))}"}
-    assert archive.find(names[evolve.cell_of(_at(j))]) == evolve.cell_of(_at(j))
+    assert names[evolve.cell_of(_at(i))] == f"{name}-0"
+    assert names[evolve.cell_of(_at(j))] == f"{name}-1"
+    assert sorted(e.uid for e in archive.cells.values()) == [0, 1]
+    assert archive.next_uid == 2
     with pytest.raises(ValueError, match="ambiguous"):
         archive.find(name)
+
+
+def test_names_do_not_change_when_a_same_type_robot_arrives():
+    name, (i, j) = _two_cells_of_one_type()
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, _at(i)))
+    before = archive.names()[evolve.cell_of(_at(i))]
+    archive.insert(_elite(2.0, _at(j)))
+    assert archive.names()[evolve.cell_of(_at(i))] == before == f"{name}-0"
+    assert archive.find(name + "-0") == evolve.cell_of(_at(i))
+
+
+def test_a_rejected_insert_does_not_use_a_uid():
+    archive = evolve.Archive(terrains="flat")
+    assert archive.insert(_elite(2.0, _at(5)))
+    assert not archive.insert(_elite(1.0, _at(5)))          # worse, same cell
+    assert archive.next_uid == 1
+    assert archive.insert(_elite(3.0, _at(5)))              # better: replaces, new uid
+    assert [e.uid for e in archive.cells.values()] == [1]
+
+
+def test_find_by_uid_and_by_renamed_type(capsys):
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, _at(3)))
+    cell = evolve.cell_of(_at(3))
+    uid = archive.cells[cell].uid
+    assert archive.find(str(uid)) == cell
+    current = evolve.type_name(_at(3))
+    assert archive.find(f"{current}-{uid}") == cell
+    assert capsys.readouterr().out == ""
+    # the body was pruned: the type part is stale, the uid still names the robot
+    assert archive.find(f"99servos-low-roll-{uid}".replace("99", "5")) == cell
+    assert f"now {current}-{uid}" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="uid 77"):
+        archive.find("77")
+
+
+def test_replaced_elites_keep_their_uid_in_another_archive():
+    import dataclasses
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, _at(3)))
+    archive.insert(_elite(1.0, _at(9)))
+    elite = archive.cells[evolve.cell_of(_at(9))]
+    other = archive.like()
+    assert other.insert(dataclasses.replace(elite, fitness=5.0))
+    assert other.cells[evolve.cell_of(_at(9))].uid == elite.uid
+    assert other.next_uid == archive.next_uid
+
+
+def test_old_archive_without_uids_is_numbered_on_load(tmp_path):
+    import pickle
+    archive = evolve.Archive(terrains="flat")
+    for i in (30, 4, 17):
+        archive.insert(_elite(1.0, _at(i)))
+    archive.uids, archive.next_uid = {}, 0          # as pickled before uids
+    state = archive.__dict__.copy()
+    del state["uids"], state["next_uid"]
+    archive.__dict__.clear()
+    archive.__setstate__(state)
+    path = tmp_path / "old.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(archive, f)
+    loaded = evolve.load_archive(path)
+    cells = sorted(loaded.cells)
+    assert [loaded.cells[c].uid for c in cells] == [0, 1, 2]    # sorted cell order
+    assert loaded.next_uid == 3
+    again = evolve.load_archive(path)
+    assert [again.cells[c].uid for c in cells] == [0, 1, 2]     # deterministic
+
+
+def test_merge_gives_colliding_uids_new_numbers():
+    a, b = evolve.Archive(terrains="flat"), evolve.Archive(terrains="flat")
+    a.insert(_elite(1.0, _at(3)))
+    b.insert(_elite(1.0, _at(9)))                    # also uid 0
+    b.insert(_elite(1.0, _at(20)))                   # uid 1
+    out = evolve.merge([a, b])
+    by_cell = {c: e.uid for c, e in out.cells.items()}
+    assert by_cell[evolve.cell_of(_at(3))] == 0       # the first archive keeps its uids
+    assert sorted(by_cell.values()) == sorted(set(by_cell.values()))
+    assert len(by_cell) == 3
+    again = evolve.merge([a, b])
+    assert {c: e.uid for c, e in again.cells.items()} == by_cell
+    assert out.next_uid == 3
 
 
 def test_parse_rejects_bad_names():
     assert evolve.parse_cell_name("8servos-low-crawl") == ("8servos-low-crawl", None)
     assert evolve.parse_cell_name("8servos-low-crawl-17") == ("8servos-low-crawl", 17)
-    for bad in ("6legs-2wheels-14servos", "8servos-tiny-crawl", "x"):
+    assert evolve.parse_cell_name("17") == (None, 17)
+    for bad in ("6legs-2wheels-14servos", "8servos-tiny-crawl", "x", ""):
         with pytest.raises(ValueError):
             evolve.parse_cell_name(bad)
 

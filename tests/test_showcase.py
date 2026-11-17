@@ -11,12 +11,14 @@ import showcase   # noqa: E402
 
 
 def test_stage_order():
-    assert showcase.plan() == ["polish", "prune", "validate", "assembly", "snapshot"]
+    assert showcase.plan() == ["polish", "prune", "validate", "assembly", "snapshot",
+                               "export"]
 
 
 def test_skip_leaves_stages_out_but_keeps_the_order():
-    assert showcase.plan(["polish", "prune"]) == ["validate", "assembly", "snapshot"]
-    assert showcase.plan(["assembly"]) == ["polish", "prune", "validate", "snapshot"]
+    assert showcase.plan(["polish", "prune"]) == ["validate", "assembly", "snapshot", "export"]
+    assert showcase.plan(["assembly"]) == ["polish", "prune", "validate", "snapshot",
+                                           "export"]
 
 
 def test_polish_gets_workers_and_budget(tmp_path):
@@ -45,8 +47,23 @@ def test_validate_and_assembly_take_one_robot(tmp_path):
         assert "--out" not in argv
 
 
-def test_snapshot_is_the_last_stage_and_writes_the_snapshot(tmp_path):
-    assert showcase.plan()[-1] == "snapshot"
+def test_export_writes_into_exports_by_name(tmp_path):
+    assert showcase.plan()[-1] == "export"
+    argv = showcase.command("export", "f.pkl", ["7"], str(tmp_path), name="4servos-low-roll-7")
+    assert argv[1].endswith("experiments/export.py")
+    assert argv[argv.index("--type") + 1] == "7"
+    assert argv[argv.index("--out") + 1] == str(tmp_path / "exports" / "4servos-low-roll-7")
+
+
+def test_choose_prefers_pruned_then_polished_then_pruned():
+    assert showcase.choose("PASS", "PASS") == "pruned"
+    assert showcase.choose("FAIL", "PASS") == "pruned"
+    assert showcase.choose("PASS", "FAIL") == "polished"
+    assert showcase.choose("FAIL", "FAIL") == "pruned"
+    assert showcase.choose("-", "-") == "pruned"          # validate skipped
+
+
+def test_snapshot_writes_the_snapshot(tmp_path):
     argv = showcase.command("snapshot", "p.pkl", ["x", "y"], str(tmp_path))
     assert argv[argv.index("--out") + 1] == str(tmp_path / "showcase.snap.pkl")
 
@@ -100,16 +117,64 @@ def test_warns_about_a_belly_robot_before_the_chain(tmp_path, capsys):
     assert names[0.1] + ":" not in out
 
 
-def test_strict_body_drops_the_belly_robot(tmp_path, monkeypatch):
+def test_strict_body_drops_the_belly_robot(tmp_path):
+    import pickle
     names = _archive_with_belly(tmp_path / "a.pkl")
-    ran = []
-    monkeypatch.setattr(showcase, "_run", lambda stage, argv, log=None: ran.append(argv) or "")
-    monkeypatch.setattr(showcase, "_ordered", lambda path, n: [(0.5, names[0.1])])
     showcase.main(["--archive", str(tmp_path / "a.pkl"),
                    "--types", ",".join(names.values()), "--out", str(tmp_path / "s"),
-                   "--strict-body", "--skip", "assembly,snapshot,validate"])
-    assert all(names[0.93] not in " ".join(argv) for argv in ran)
-    assert any(names[0.1] in " ".join(argv) for argv in ran)
+                   "--strict-body", "--skip", ",".join(showcase.STAGES)])
+    with open(tmp_path / "s" / "final.pkl", "rb") as f:
+        final = pickle.load(f)
+    assert list(final.names().values()) == [names[0.1]]
+
+
+def test_pruned_fail_with_polished_pass_ships_the_polished_version(tmp_path, monkeypatch):
+    import dataclasses
+    import pickle
+    from darwinbot import evolve
+    names = _archive_with_belly(tmp_path / "a.pkl")
+    a = evolve.load_archive(tmp_path / "a.pkl")
+    cell = next(c for c, e in a.cells.items() if e.behaviour.body_ground < 0.5)
+    elite = a.cells[cell]
+    uid = elite.uid
+
+    def stage_archive(path, fitness):
+        out = a.like()
+        out.insert(dataclasses.replace(elite, fitness=fitness))
+        with open(path, "wb") as f:
+            pickle.dump(out, f)
+
+    ran = []
+
+    def fake_run(stage, argv, log=None):
+        ran.append((stage, argv))
+        out = Path(argv[argv.index("--out") + 1]).parent if "--out" in argv else None
+        if stage == "polish":
+            stage_archive(argv[argv.index("--out") + 1], 7.0)
+        elif stage == "prune":
+            stage_archive(argv[argv.index("--out") + 1], 6.0)
+        elif stage.startswith("validate"):
+            pruned = argv[argv.index("--archive") + 1].endswith("pruned.pkl")
+            return "robot (n=5): " + ("FAIL" if pruned else "PASS")
+        elif stage == "assembly":
+            return "0 clash"
+        return ""
+
+    monkeypatch.setattr(showcase, "_run", fake_run)
+    out = tmp_path / "s"
+    showcase.main(["--archive", str(tmp_path / "a.pkl"), "--types", str(uid),
+                   "--out", str(out)])
+    with open(out / "final.pkl", "rb") as f:
+        final = pickle.load(f)
+    chosen = next(iter(final.cells.values()))
+    assert chosen.uid == uid and chosen.fitness == 7.0          # the polished one
+    summary = (out / "summary.txt").read_text()
+    assert "PASS" in summary and "FAIL" in summary and "polished" in summary
+    assert str(uid) in summary.split("\n")[1].split()
+    exports = [argv for stage, argv in ran if stage == "export"]
+    assert len(exports) == 1 and exports[0][exports[0].index("--archive") + 1].endswith(
+        "final.pkl")
+    assert {"validate polished %d" % uid, "validate pruned %d" % uid} <= {s for s, _ in ran}
 
 
 def test_strict_body_with_only_belly_robots_stops(tmp_path):

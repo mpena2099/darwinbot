@@ -65,11 +65,6 @@ against the current rules:
   phases, the way the spinal circuits of each leg synchronise a gait, instead
   of coordinating only through the body and the phase genes. Control only, no
   new part.
-- **Balance sense, optional**: an IMU on the ESP32 (an MPU-6050, for example)
-  feeding the torso's tilt back into the controller through evolved gains that
-  start at zero, so each leg can correct a lean. Today the controller only
-  feels each servo's load, so evolution favours bodies that are stable on their
-  own. A robot built without an IMU keeps working: the gains are simply unused.
 - **A showcase GIF of four environments**, with the flat and rubble island that
   long8 lacked: the best robot trained on flat ground, on flat ground and
   steps, on flat ground and rubble, and on the full set, each on its own
@@ -93,6 +88,28 @@ against the current rules:
 
 ## After release 3
 
+Release 4 starts with three changes that open body plans the current limits
+hold back:
+
+- **Balance sense, optional** (release 4): an IMU on the ESP32 (an MPU-6050, for example)
+  feeding the torso's tilt back into the controller through evolved gains that
+  start at zero, so each leg can correct a lean. Today the controller only
+  feels each servo's load, so evolution favours bodies that are stable on their
+  own. A robot built without an IMU keeps working: the gains are simply unused.
+- **A fixed passive wheel** (release 4): a small free-rolling wheel whose axle
+  is fixed to its segment, so it rolls easily along the body and resists
+  sliding sideways, the way a snake's belly scales do and the way snake robots
+  such as Hirose's ACM move. Today `caster` swivels freely and `skid` slides
+  the same way in every direction, so lateral undulation has nothing to push
+  against. Cheap to print and plain to simulate, since MuJoCo already handles
+  free wheels.
+- **A review of the body limits** (release 4): `MAX_NODES = 20` modules and
+  `MAX_SERVOS = 16` servos fit a dog or a two-servo-leg spider, but leave a
+  centipede with about five leg pairs once six spine servos are spent. Raising
+  them grows the genome and the inner loop's search, and a robot with 24
+  servos needs another battery and wiring (16 STS3215 already peak above
+  30 A on a 3S pack), so each step up is weighed against training time and
+  build cost.
 - **Build one robot**: no robot has been built yet. `tools/check_assembly.py`
   and `tools/render_assembled.py` already check the printed parts on screen;
   next, measure a real STS3215, correct `parts.py`, and print one bracket,

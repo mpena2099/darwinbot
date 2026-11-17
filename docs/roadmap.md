@@ -127,9 +127,6 @@ against the current rules:
   like terrain and task plugins. The same goes for the controller (the CPG
   becomes one implementation among others) and for sensors. First example: a
   wheel driven by a DC motor.
-
-## Later
-
 - **Hardware profiles, the next steps**: every hardware number already comes
   from a kit of one YAML file per component (servo, battery, electronics,
   material, printer), stored in the archive. Still to do: (1) a hardware tab in

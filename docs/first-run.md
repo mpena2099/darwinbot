@@ -122,8 +122,10 @@ A type is a short name derived from the cell, `<servos>servos-<height>-<gait>`
 | `height` | `low`, `mid`, `high` | mean torso height over body reach: below 0.4, below 0.8, above |
 | `gait` | `crawl`, `walk`, `trot`, `belly`, `roll` | duty, the share of time the tips touch the ground: above 0.8, 0.5 to 0.8, 0.15 to 0.5, below 0.15 (sliding on the body); `roll` when wheels carry more than half of the contact time |
 
-Several cells can share a name; the later ones get the cell index appended
-(`12servos-low-walk-133`).
+Every robot name ends with the robot's id (`12servos-low-walk-133`). The id
+never changes, so a robot keeps its name across polish and prune, even when
+its type part changes (the body lost a servo). `--type` takes the full name,
+the bare id (`133`) or a bare type when only one robot has it.
 
 Step 1, see which types the run has found, best first:
 

@@ -118,7 +118,7 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60, seconds: float
             dropped += 1
             continue
         old_id = elite_id(e.morph, e.ctrl)
-        new = Elite(genes, res.ctrl, res.fitness, res.scores, e.born, res.behaviour)
+        new = Elite(genes, res.ctrl, res.fitness, res.scores, e.born, res.behaviour, e.uid)
         if out.insert(new, old_id):
             uid = elite_id(new.morph, new.ctrl)
             if uid == old_id and old_id in archive.lineage:

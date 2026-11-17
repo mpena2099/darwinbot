@@ -140,6 +140,12 @@ def snapshot_robot(snap, name):
     if name is None:
         name = max(snap["robots"], key=lambda n: snap["robots"][n]["fitness"])
     elif name not in snap["robots"]:
+        # a bare uid ("411") or a renamed type part also finds the robot
+        uid = name.strip().rsplit("-", 1)[-1]
+        hits = [n for n in snap["robots"] if n.rsplit("-", 1)[-1] == uid]
+        if len(hits) == 1 and uid.isdigit():
+            name = hits[0]
+    if name not in snap["robots"]:
         raise SystemExit(f"no {name} robot in the snapshot; see the names with --list")
     robot = snap["robots"][name]
     model = mujoco.MjModel.from_xml_string(robot["xml"])

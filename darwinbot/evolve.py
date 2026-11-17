@@ -163,8 +163,11 @@ def load_archive(path, stale: bool = False):
         with open(path, "rb") as f:
             if stale:
                 with loading_stale():
-                    return pickle.load(f)
-            return pickle.load(f)
+                    archive = pickle.load(f)
+            else:
+                archive = pickle.load(f)
+        archive.assign_uids()
+        return archive
     except FileNotFoundError:
         raise SystemExit(f"{path} not found: train first with experiments/train.py")
     except ValueError as e:
@@ -235,15 +238,20 @@ def type_name(behaviour) -> str:
     return f"{int(round(b.servos))}servos-{band}-{gait}"
 
 
-_NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll)(?:-(\d+))?$")
+_NAME = re.compile(r"^(?:(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll))?"
+                   r"(?:-?(\d+))?$")
 
 
-def parse_cell_name(name: str) -> Tuple[str, Optional[int]]:
-    """(type name, cell index or None) of a name printed by Archive.names()."""
-    m = _NAME.match(name.strip().lower())
-    if not m:
-        raise ValueError(f"bad robot type '{name}', expected e.g. 8servos-low-crawl")
-    base = f"{m.group(1)}servos-{m.group(2)}-{m.group(3)}"
+def parse_cell_name(name: str) -> Tuple[Optional[str], Optional[int]]:
+    """(type name or None, uid or None) of a name printed by Archive.names():
+    '8servos-low-crawl-17', the bare uid '17' or the bare type '8servos-low-crawl'."""
+    text = name.strip().lower()
+    m = _NAME.match(text) if text else None
+    if not m or not (m.group(1) or m.group(4)):
+        raise ValueError(f"bad robot name '{name}', expected <type>-<uid> "
+                         "(e.g. 8servos-low-crawl-17), a uid (17) or a type "
+                         "(8servos-low-crawl)")
+    base = f"{m.group(1)}servos-{m.group(2)}-{m.group(3)}" if m.group(1) else None
     return base, int(m.group(4)) if m.group(4) else None
 
 
@@ -256,6 +264,9 @@ class Elite:
     born:    int          # batch index
     # None: a body never simulated
     behaviour: Optional[Behaviour] = None
+    # stable id of the robot inside its archive; -1 until an archive numbers it.
+    # Copies made with dataclasses.replace (polish, prune, migrate) keep it.
+    uid: int = -1
 
     def __post_init__(self):
         if self.behaviour is None:
@@ -267,6 +278,7 @@ class Elite:
     def __setstate__(self, state):
         # elites pickled before Behaviour carry a plain array or tuple
         self.__dict__.update(state)
+        self.__dict__.setdefault("uid", -1)
         if self.__dict__.get("behaviour") is not None:
             self.behaviour = Behaviour.of(self.behaviour)
 
@@ -302,6 +314,8 @@ class Archive:
     # search options of the run that wrote it (not the score): SEARCH_FLAGS keys
     search:   dict = field(default_factory=dict)
     body_model: int = BODY_MODEL
+    uids:     Dict[Cell, int] = field(default_factory=dict)   # cell -> uid of its elite
+    next_uid: int = 0          # the next uid to hand out; never reused
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
 
     @property
@@ -334,7 +348,7 @@ class Archive:
         return {int(data["index"][i]): Elite(
                     data["solution"][i], data["ctrl"][i], float(data["objective"][i]),
                     data["scores"][i].tolist(), int(data["born"][i]),
-                    data["behaviour"][i])
+                    data["behaviour"][i], self.uids.get(int(data["index"][i]), -1))
                 for i in range(len(data["solution"]))}
 
     def like(self) -> "Archive":
@@ -343,7 +357,8 @@ class Archive:
                        seconds=self.seconds, variants=self.variants, task=self.task,
                        payload=self.payload, ablate=self.ablate, rules=self.rules,
                        body=self.body, axes=self.axes, profile=copy.deepcopy(self.profile),
-                       locked=self.locked, plugin=dict(self.plugin))
+                       locked=self.locked, plugin=dict(self.plugin),
+                       next_uid=self.next_uid)
 
     def activate(self) -> None:
         """Turn on the ablations, score rules and body limits this archive was
@@ -352,32 +367,41 @@ class Archive:
         rules.set_active(self.rules)
         body_options.set_active(self.body)
 
+    def assign_uids(self) -> None:
+        """Number the cells that have no uid (archives saved before uids), in
+        cell order, and change nothing else."""
+        for c in sorted(self.cells):
+            if c not in self.uids:
+                self.uids[c] = self.next_uid
+                self.next_uid += 1
+
     def names(self) -> Dict[Cell, str]:
-        """Unique readable name of every filled cell. Cells that share a type
-        name get their cell index appended."""
-        cells = self.cells
-        base = {c: type_name(e.behaviour) for c, e in cells.items()}
-        count: Dict[str, int] = {}
-        for n in base.values():
-            count[n] = count.get(n, 0) + 1
-        return {c: n if count[n] == 1 else f"{n}-{c}" for c, n in base.items()}
+        """Name of every filled cell: '<type>-<uid>'. The uid never changes, so
+        a robot keeps its name while others come and go."""
+        return {c: f"{type_name(e.behaviour)}-{e.uid}" for c, e in self.cells.items()}
 
     def find(self, name: str) -> Cell:
-        """Cell of a name printed by names(); ValueError when absent or ambiguous."""
-        base, index = parse_cell_name(name)
-        names = self.names()
-        if index is not None:
-            stored = names.get(index, "")
-            # a unique name carries no cell suffix, so both spellings name the cell
-            if stored != base and stored.rsplit("-", 1)[0] != base:
-                raise ValueError(f"no {name} robot in the archive")
-            return index
-        hits = [c for c, n in names.items() if n == base]
-        if hits:
+        """Cell of a robot by full name ('8servos-low-crawl-17'), bare uid ('17')
+        or a bare type that only one robot has. A uid whose type part is stale
+        (the body was pruned) still finds the robot and prints its current name.
+        ValueError when absent or ambiguous."""
+        base, uid = parse_cell_name(name)
+        cells = self.cells
+        if uid is not None:
+            hits = [c for c, e in cells.items() if e.uid == uid]
+            if not hits:
+                raise ValueError(f"no robot with uid {uid} in the archive (names are "
+                                 "<type>-<uid>, e.g. 8servos-low-crawl-17)")
+            current = type_name(cells[hits[0]].behaviour)
+            if base is not None and base != current:
+                print(f"note: {name} is now {current}-{uid}", flush=True)
             return hits[0]
-        if any(n.startswith(base + "-") for n in names.values()):
+        hits = [c for c, e in cells.items() if type_name(e.behaviour) == base]
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
             raise ValueError(f"'{name}' is ambiguous, use one of: " + ", ".join(
-                sorted(n for n in names.values() if n.startswith(base + "-"))))
+                sorted(f"{base}-{cells[c].uid}" for c in hits)))
         raise ValueError(f"no {name} robot in the archive")
 
     def insert(self, elite: Elite, parent: Optional[str] = None) -> bool:
@@ -390,6 +414,12 @@ class Archive:
                         behaviour=[elite.behaviour[:width]])
         added = int(info["status"][0]) != 0
         if added:
+            cell = cell_of(elite.behaviour, self.n_descriptors)
+            number = elite.uid
+            if number < 0 or any(u == number for c, u in self.uids.items() if c != cell):
+                number = self.next_uid          # new robot, or a uid another cell holds
+            self.uids[cell] = number
+            self.next_uid = max(self.next_uid, number + 1)
             uid = elite_id(elite.morph, elite.ctrl)
             if parent == uid:       # no self-loops in the family tree
                 parent = None
@@ -454,6 +484,8 @@ class Archive:
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
         self.__dict__.setdefault("variants", 0)    # and no randomisation
         self.__dict__.setdefault("lineage", {})    # nor lineage records
+        self.__dict__.setdefault("uids", {})       # nor stable robot ids
+        self.__dict__.setdefault("next_uid", 0)
         self.__dict__.setdefault("task", "forward")   # nor tasks
         self.__dict__.setdefault("payload", 0.0)      # nor payload
         self.__dict__.setdefault("ablate", ())        # nor ablations
@@ -502,6 +534,8 @@ def merge(archives: List[Archive]) -> Archive:
     if not archives:
         raise ValueError("nothing to merge")
     first = archives[0]
+    for a in archives:
+        a.assign_uids()
     for a in archives[1:]:
         for k in MERGE_KEYS:
             if getattr(a, k) != getattr(first, k):
@@ -514,6 +548,10 @@ def merge(archives: List[Archive]) -> Archive:
     base_evals = first.history[shared - 1]["evals"] if shared else 0
 
     out = pickle.loads(pickle.dumps(first))
+    out.assign_uids()
+    # the first archive keeps its uids; a uid another island already holds in a
+    # different cell gets a fresh one when its elite is inserted (Archive.insert)
+    out.next_uid = max(out.next_uid, *(a.next_uid for a in archives))
     lineage: Dict[str, tuple] = {}
     for a in archives:
         lineage.update(a.lineage)

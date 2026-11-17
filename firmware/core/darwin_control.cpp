@@ -1,7 +1,9 @@
 #include "darwin_control.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <utility>
 
 namespace darwinbot {
@@ -69,8 +71,14 @@ void Controller::tick(const float* loads_normalised) {
     const float ramp =
         ramp_time_ > 0.0f ? std::min(1.0f, time_ / ramp_time_) : 1.0f;
     const float h = dt_ / static_cast<float>(kSubsteps);
+    // A body never has more servos than morphology.MAX_SERVOS, so the rates of
+    // one substep live in a fixed array: no heap use on the robot.
+    const std::size_t n =
+        std::min(servos_.size(), static_cast<std::size_t>(kMaxServos));
+    std::array<float, kMaxServos> rate{};
 
-    for (size_t i = 0; i < servos_.size(); ++i) {
+    // Targets from the phases at t, before any substep advances them.
+    for (std::size_t i = 0; i < n; ++i) {
         const ServoParams& p = servos_[i];
 
         if (p.mode == ServoParams::Mode::Wheel) {
@@ -88,16 +96,37 @@ void Controller::tick(const float* loads_normalised) {
         steps[i] = static_cast<int>(
             std::lround(p.zero + p.sign * targets[i] * kStepsPerRad));
         wheel_speeds[i] = 0.0f;
+    }
 
-        const float n =
-            loads_normalised
-                ? std::clamp(p.sign * loads_normalised[i] / load_full_scale_, -1.0f,
-                           1.0f)
-                : 0.0f;
-        for (int k = 0; k < kSubsteps; ++k) {
-            const float dtheta = omega_ - p.sigma * n * std::cos(theta_[i]);
-            theta_[i] += h * dtheta;
+    for (int k = 0; k < kSubsteps; ++k) {
+        // Every rate reads the phases from the start of the substep.
+        for (std::size_t i = 0; i < n; ++i) {
+            const ServoParams& p = servos_[i];
+            const float load =
+                loads_normalised
+                    ? std::clamp(p.sign * loads_normalised[i] /
+                                     load_full_scale_,
+                                 -1.0f, 1.0f)
+                    : 0.0f;
+            rate[i] = omega_ - p.sigma * load * std::cos(theta_[i]);
         }
+        for (std::size_t j = 0; j < n; ++j) {
+            const ServoParams& p = servos_[j];
+            if (p.couple_k == 0.0f || p.couple_to < 0 ||
+                p.couple_to >= static_cast<int>(n)) {
+                continue;
+            }
+            const std::size_t partner = static_cast<std::size_t>(p.couple_to);
+            rate[j] += p.couple_k *
+                       std::sin(theta_[partner] - theta_[j] - p.couple_lag);
+            rate[partner] +=
+                p.couple_k *
+                std::sin(theta_[j] - theta_[partner] + p.couple_lag);
+        }
+        for (std::size_t i = 0; i < n; ++i) theta_[i] += h * rate[i];
+    }
+
+    for (std::size_t i = 0; i < n; ++i) {
         // keep the phase small so float precision never stalls it
         theta_[i] = std::fmod(theta_[i], kTwoPi);
         if (theta_[i] < 0.0f) theta_[i] += kTwoPi;

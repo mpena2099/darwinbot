@@ -76,9 +76,9 @@ Por servo:
 | `steer_shift` | position | deslocamento do offset central com o comando `c`, em rad |
 | `speed_gain` | position | ganho de amplitude com o comando de velocidade: o fator `1 - d * speed_gain`, com `d = 1 - s`, é cortado em `[0, 2]` |
 | `speed_shift` | position | deslocamento do offset central com o comando de velocidade, `d * speed_shift`, em rad |
-| `couple_to` | position | parceiro do acoplamento: índice do servo na ordem do layout, ou `-1` sem parceiro |
-| `couple_k` | position | força do acoplamento de fase, em rad/s (`0` desliga) |
-| `couple_lag` | position | defasagem do acoplamento, em rad |
+| `couple_to` | todos | parceiro do acoplamento: índice do servo na ordem do layout, ou `-1` sem parceiro (rodas: sempre `-1`) |
+| `couple_k` | todos | força do acoplamento de fase, em rad/s (`0` desliga; rodas: sempre `0`) |
+| `couple_lag` | todos | defasagem do acoplamento, em rad (rodas: sempre `0`) |
 | `min`, `max` | position | limites da junta em radianos; o firmware corta o alvo neles |
 | `speed` | wheel | velocidade base em rad/s (positiva anda para a frente), antes da direção |
 | `steer_shift` | wheel | mudança da velocidade com o comando `c`, em rad/s, cortada em `±servo_speed` (`WHEEL_RANGE`) |
@@ -179,7 +179,9 @@ vel     = ramp * speed * sign                     # wheel
   as pernas se coordenam sem acoplamento programado entre elas.
 - O acoplamento é calculado com as fases do início do subpasso, como na
   simulação: cada termo usa `theta` antes da atualização. Com todos os
-  `couple_k` iguais a zero nada muda em relação ao formato 4.
+  `couple_k` iguais a zero nada muda em relação ao formato 4. O núcleo
+  portátil em `firmware/core` lê `couple_to`, `couple_k` e `couple_lag` de
+  cada servo e aplica a mesma conta a cada subpasso do tick.
 - A fase é integrada em 5 subpassos de 4 ms por tick, como na simulação
   (passo de física de 4 ms, alvo recalculado a cada 20 ms). A carga `N` é lida
   uma vez por tick e usada nos 5 subpassos; na simulação ela é atualizada a

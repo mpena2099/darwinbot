@@ -2,7 +2,8 @@
 test_firmware_parity.py
 -----------------------
 Compile the portable C++ controller core and check, tick by tick, that it
-reproduces the targets of darwinbot/controller.py (format 4 firmware rules).
+reproduces the targets and phases of darwinbot/controller.py (format 5
+firmware rules, coupling included).
 """
 
 import shutil
@@ -30,14 +31,25 @@ SIGNS = (-1.0, 1.0, -1.0, -1.0, 1.0)      # one reversed wheel, one not
 LIMITS = JOINT_RANGE      # same joint limits as the simulation
 TICKS = 200
 
+# Partner maps over LAYOUT: "ring" couples the three limb roots in a cycle,
+# "tree" makes joints 1 and 2 follow joint 0 while it follows the last root.
+# Wheels have no partner, as in controller.couple_partners.
+PARTNERS = {
+    "ring": np.array([2, 0, 1, -1, -1]),
+    "tree": np.array([2, 0, 0, -1, -1]),
+}
+
 
 def _fmt(v):
     return f"{float(v):.9g}"
 
 
-def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_SPEED):
+def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_SPEED,
+                partners=None):
     """Write a case file; expected targets come from controller.py."""
-    c = co.Controller(ctrl, LAYOUT, command, speed)
+    if partners is None:
+        partners = np.full(len(LAYOUT), -1)
+    c = co.Controller(ctrl, LAYOUT, command, speed, partners)
     p = c.params
     n = len(LAYOUT)
     limits = [LIMITS.get(a.axis, 0.0) for a in LAYOUT]
@@ -50,13 +62,16 @@ def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_
         sign, lim = SIGNS[i], limits[i]
         if act.kind == "wheel":
             fields = (0, 0, 0, 0, 0, 0, p.steer_gain[i], p.steer_shift[i],
-                      p.speed_gain[i], p.speed_shift[i], sign, 0, 0, 0, p.offset_base[i])
+                      p.speed_gain[i], p.speed_shift[i], partners[i],
+                      p.couple_k[i], p.couple_lag[i],
+                      sign, 0, 0, 0, p.offset_base[i])
             lines.append("wheel " + " ".join(_fmt(v) for v in fields))
         else:
             fields = (p.amp1_base[i], p.phase1[i], p.offset_base[i],
                       p.amp2_base[i], p.phase2[i], p.sigma[i],
                       p.steer_gain[i], p.steer_shift[i],
                       p.speed_gain[i], p.speed_shift[i],
+                      partners[i], p.couple_k[i], p.couple_lag[i],
                       sign, 2048, -lim, lim, 0)
             lines.append("position " + " ".join(_fmt(v) for v in fields))
 
@@ -75,18 +90,19 @@ def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_
         # bus load / servo maximum torque: the simulation's full scale is
         # LOAD_FULL_SCALE of it, which the core divides out again
         row = ([load[i] * SIGNS[i] * co.LOAD_FULL_SCALE for i in range(n)]
-               + expected + speeds)
+               + expected + speeds + list(c.theta))
         lines.append(" ".join(_fmt(v) for v in row))
 
     path.write_text("\n".join(lines) + "\n")
 
 
-def _run_case(tmp_path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_SPEED):
+def _run_case(tmp_path, ctrl, loads, command=0.0, speed=1.0,
+              servo_speed=co.SERVO_SPEED, partners=None):
     compiler = next((c for c in COMPILERS if shutil.which(c)), None)
     if compiler is None:
         pytest.skip("no C++ compiler found")
     case = tmp_path / "case.txt"
-    _write_case(case, ctrl, loads, command, speed, servo_speed)
+    _write_case(case, ctrl, loads, command, speed, servo_speed, partners)
     exe = tmp_path / "parity"
     build = subprocess.run(
         [compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-o", str(exe),
@@ -119,6 +135,51 @@ def test_parity_random_genes_and_loads(tmp_path):
     assert np.all(p.amp2[[0, 1, 2]] > 0)
     loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
     _run_case(tmp_path, ctrl, loads)
+
+
+@pytest.mark.parametrize("kind", ["ring", "tree"])
+def test_parity_with_coupled_joints(tmp_path, kind):
+    """Random coupling genes on the partner maps of a real body: phases and
+    targets must follow controller.py."""
+    rng, ctrl = _genes(11)
+    partners = PARTNERS[kind]
+    p = co.Controller(ctrl, LAYOUT, partner=partners).params
+    assert np.any(p.couple_k[:3] > 0.0)
+    assert np.any(p.couple_lag[:3] != 0.0)
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads, partners=partners)
+    # the coupling really moves the phases, so the comparison above is not
+    # vacuous
+    free = co.Controller(ctrl, LAYOUT, partner=np.full(len(LAYOUT), -1))
+    coupled = co.Controller(ctrl, LAYOUT, partner=partners)
+    force = np.asarray(loads[0]) * co.SERVO_TORQUE
+    for _ in range(TICKS):
+        for _ in range(5):
+            free.advance(co.CONTROL_DT / 5, force)
+            coupled.advance(co.CONTROL_DT / 5, force)
+    assert np.max(np.abs(coupled.theta - free.theta)) > 1e-2
+
+
+def test_parity_with_every_couple_k_zero(tmp_path):
+    """With k = 0 and the partner map in place, the core runs the old
+    load-coupled CPG bit for bit."""
+    rng, ctrl = _genes(12)
+    for slot in (1, 2, 3):
+        b = co.node_base(slot)
+        ctrl[b + co.COUPLE_K] = 0.0
+    partners = PARTNERS["ring"]
+    p = co.Controller(ctrl, LAYOUT, partner=partners).params
+    assert np.all(p.couple_k == 0.0)
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads, partners=partners)
+    coupled = co.Controller(ctrl, LAYOUT, partner=partners)
+    free = co.Controller(ctrl, LAYOUT, partner=np.full(len(LAYOUT), -1))
+    force = np.asarray(loads[0]) * co.SERVO_TORQUE
+    for _ in range(TICKS):
+        for _ in range(5):
+            coupled.advance(co.CONTROL_DT / 5, force)
+            free.advance(co.CONTROL_DT / 5, force)
+    assert np.array_equal(coupled.theta, free.theta)
 
 
 @pytest.mark.parametrize("command", [-1.0, 0.3, 1.0])

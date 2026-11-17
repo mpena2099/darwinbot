@@ -119,22 +119,35 @@ def _psum(a, n):
 
 
 @njit(cache=True)
-def _advance(theta, omega, sigma, force, dt, torque):
+def _advance(theta, omega, sigma, force, dt, torque, couple_k, couple_lag,
+             partner):
     # advance_phases of controller.py, repeated here so the cached loop does
-    # not depend on another module's compiled function
-    for i in range(theta.shape[0]):
-        n = force[i] / torque
-        if n > 1.0:
-            n = 1.0
-        elif n < -1.0:
-            n = -1.0
-        theta[i] += dt * (omega - sigma[i] * n * math.cos(theta[i]))
+    # not depend on another module's compiled function. Every term reads the
+    # phases from the start of the step; with every k = 0 it is the old update.
+    n = theta.shape[0]
+    rate = np.empty(n)
+    for i in range(n):
+        load = force[i] / torque
+        if load > 1.0:
+            load = 1.0
+        elif load < -1.0:
+            load = -1.0
+        rate[i] = omega - sigma[i] * load * math.cos(theta[i])
+    for j in range(n):
+        k = couple_k[j]
+        p = partner[j]
+        if k != 0.0 and p >= 0:
+            rate[j] += k * math.sin(theta[p] - theta[j] - couple_lag[j])
+            rate[p] += k * math.sin(theta[j] - theta[p] + couple_lag[j])
+    for i in range(n):
+        theta[i] += dt * rate[i]
 
 
 @njit(cache=True)
 def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
              ramp_time, upright_min,
-             theta, omega, sigma, offset, amp1, ph1, amp2, ph2,
+             theta, omega, sigma, couple_k, couple_lag, partner,
+             offset, amp1, ph1, amp2, ph2,
              force, velocity, ctrl, qacc, qvel, xmat, xpos, geom_xpos,
              time_v, ncon_v, warn_v, widx, cptr_v, stride, goff,
              robot, tgeoms, sgeoms, bgeoms, feet, lat_buf, mid,
@@ -179,7 +192,8 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
                 head = (head + 1) % L
         _mj_step(step_fn, model_addr, data_addr)
         done = n
-        _advance(theta, omega, sigma, force, dt, torque)
+        _advance(theta, omega, sigma, force, dt, torque,
+                 couple_k, couple_lag, partner)
         for i in range(nu):
             scratch[i] = abs(force[i] * velocity[i])
         energy += _psum(scratch, nu) * dt
@@ -449,7 +463,9 @@ def run(ep, prep, controller, sim_model, variant_latency, torque, ramp_time, upr
     lat = np.zeros((variant_latency, d.ctrl.shape[0]))
     run_loop(prep.info["fn"], sim_model._address, d._address, ep.n_steps, ep.hold,
              ep.model.opt.timestep, torque, ramp_time, upright_min,
-             controller.theta, controller.omega, p.sigma, p.offset, p.amp1,
+             controller.theta, controller.omega, p.sigma,
+             p.couple_k, p.couple_lag, p.partner,
+             p.offset, p.amp1,
              p.phase1, p.amp2, p.phase2,
              d.actuator_force, d.actuator_velocity, d.ctrl, d.qacc, d.qvel,
              prep.xmat, prep.xpos, d.geom_xpos,

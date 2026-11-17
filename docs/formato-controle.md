@@ -5,17 +5,18 @@ ESP32. Descreve um robô já evoluído: quais servos
 existem e o controlador que cada um segue. O firmware não precisa saber nada
 sobre evolução, morfologia ou MuJoCo.
 
-Este é o formato 4, do controlador com dois harmônicos por junta, retorno de
-carga (Tegotae), comando de direção e comando de velocidade. Os formatos 2 e 3
-continuam sendo lidos, com os ganhos que faltam (direção no 2, velocidade no 2
-e no 3) iguais a zero. O formato 1 (um seno por junta, em malha
-aberta) não é mais lido nem gerado.
+Este é o formato 5, do controlador com dois harmônicos por junta, retorno de
+carga (Tegotae), comando de direção, comando de velocidade e acoplamento de
+fase entre juntas. Os formatos 2, 3 e 4 continuam sendo lidos, com os ganhos que
+faltam (direção no 2, velocidade no 2 e no 3, acoplamento no 2, 3 e 4) iguais a
+zero. O formato 1 (um seno por junta, em malha aberta) não é mais lido nem
+gerado.
 
 ## Exemplo
 
 ```json
 {
-  "format": 4,
+  "format": 5,
   "robot": "8servos-mid-trot",
   "fitness": 0.11,
   "control_hz": 50,
@@ -29,16 +30,19 @@ aberta) não é mais lido nem gerado.
      "amp2": 0.11, "phase2": 1.97, "sigma": 0.62,
      "steer_gain": 0.40, "steer_shift": 0.15,
      "speed_gain": 0.50, "speed_shift": 0.10,
+     "couple_to": 3, "couple_k": 1.20, "couple_lag": 0.00,
      "sign": -1, "zero": 2048, "min": -1.3, "max": 1.3},
     {"id": 2, "name": "s4_roll", "mode": "position",
      "amp1": 0.20, "phase1": 5.71, "offset": 0.10,
      "amp2": 0.00, "phase2": 0.00, "sigma": -1.20,
      "steer_gain": -0.25, "steer_shift": -0.10,
      "speed_gain": 0.20, "speed_shift": -0.05,
+     "couple_to": 0, "couple_k": 0.80, "couple_lag": -0.50,
      "sign": 1, "zero": 2048, "min": -0.9, "max": 0.9},
     {"id": 3, "name": "s9_wheel", "mode": "wheel",
      "speed": 4.0, "steer_gain": 0.0, "steer_shift": 2.5,
-     "speed_gain": 0.0, "speed_shift": -1.5, "sign": 1}
+     "speed_gain": 0.0, "speed_shift": -1.5,
+     "couple_to": -1, "couple_k": 0.0, "couple_lag": 0.0, "sign": 1}
   ]
 }
 ```
@@ -47,7 +51,7 @@ aberta) não é mais lido nem gerado.
 
 | Campo | Tipo | Significado |
 |---|---|---|
-| `format` | int | versão deste formato (4); o firmware também lê os formatos 2 e 3, sem os ganhos que faltam |
+| `format` | int | versão deste formato (5); o firmware também lê os formatos 2, 3 e 4, sem os ganhos e o acoplamento que faltam |
 | `robot` | str | tipo do robô, igual a `replay.py --list` |
 | `fitness` | float | só informativo |
 | `control_hz` | int | frequência do laço de controle; a simulação usa a mesma (50) |
@@ -72,6 +76,9 @@ Por servo:
 | `steer_shift` | position | deslocamento do offset central com o comando `c`, em rad |
 | `speed_gain` | position | ganho de amplitude com o comando de velocidade: o fator `1 - d * speed_gain`, com `d = 1 - s`, é cortado em `[0, 2]` |
 | `speed_shift` | position | deslocamento do offset central com o comando de velocidade, `d * speed_shift`, em rad |
+| `couple_to` | position | parceiro do acoplamento: índice do servo na ordem do layout, ou `-1` sem parceiro |
+| `couple_k` | position | força do acoplamento de fase, em rad/s (`0` desliga) |
+| `couple_lag` | position | defasagem do acoplamento, em rad |
 | `min`, `max` | position | limites da junta em radianos; o firmware corta o alvo neles |
 | `speed` | wheel | velocidade base em rad/s (positiva anda para a frente), antes da direção |
 | `steer_shift` | wheel | mudança da velocidade com o comando `c`, em rad/s, cortada em `±servo_speed` (`WHEEL_RANGE`) |
@@ -100,6 +107,23 @@ muda. O firmware expõe `set_speed(s)`, que corta o valor em `[0, 1]` e
 recalcula os alvos; direção e velocidade valem ao mesmo tempo. O `speed_gain`
 da roda não é usado.
 
+## Acoplamento de fase
+
+Opcional, fora das duas fases do controlador Tegotae. Cada junta pode sentir o
+movimento de outra junta: `couple_to` diz qual, pelo índice na ordem do layout
+(0 é o primeiro servo do arquivo). `couple_k` (rad/s) é a força e `couple_lag`
+(rad) a defasagem desejada. Duas juntas com o mesmo `couple_k` e `couple_lag`
+zero puxam as fases uma para a outra até ficarem em fase; uma defasagem de
+`pi` as mantém em oposição.
+
+O mapa de parceiros vem da árvore do corpo: o parceiro de uma junta é a junta
+ancestral mais próxima; uma junta sem ancestral junta é a raiz de um membro, e
+as raízes formam um anel na ordem do layout (o parceiro de cada raiz é a raiz
+anterior, e o da primeira é a última). Com menos de duas raízes a raiz fica sem
+parceiro (`couple_to = -1`). Rodas nunca acoplam: gravam `couple_to = -1`,
+`couple_k = 0` e `couple_lag = 0`. Nos formatos 2, 3 e 4 o acoplamento é
+desligado (`couple_to = -1`, `couple_k = couple_lag = 0`).
+
 ## Regras do firmware
 
 Cada servo de posição `i` tem uma fase `theta_i`, estado do firmware, que
@@ -114,7 +138,12 @@ ganho   = clamp(1 + c * steer_gain, 0, 2)         # position
         * clamp(1 - d * speed_gain, 0, 2)
 N       = sign * (carga_lida / carga_máxima) / load_full_scale   # cortado em -1 e 1
 repetir 5 vezes, com h = dt / 5:                   # mesmos 4 ms da simulação
-    dtheta = omega - sigma * N * cos(theta)       # Tegotae
+    acopla = 0
+    se couple_to >= 0:
+        acopla += couple_k * sin(theta[couple_to] - theta - couple_lag)
+    para j com couple_to[j] == i:
+        acopla += couple_k[j] * sin(theta[j] - theta + couple_lag[j])
+    dtheta = omega - sigma * N * cos(theta) + acopla   # Tegotae + acoplamento
     theta  = theta + h * dtheta
 theta   = theta mod 2π                            # uma vez por tick, mantém a precisão do float
 
@@ -148,6 +177,9 @@ vel     = ramp * speed * sign                     # wheel
   malha aberta. Com `sigma` diferente de zero, uma perna que sustenta peso
   atrasa ou adianta a própria fase conforme a carga (Tegotae, Owaki et al.), e
   as pernas se coordenam sem acoplamento programado entre elas.
+- O acoplamento é calculado com as fases do início do subpasso, como na
+  simulação: cada termo usa `theta` antes da atualização. Com todos os
+  `couple_k` iguais a zero nada muda em relação ao formato 4.
 - A fase é integrada em 5 subpassos de 4 ms por tick, como na simulação
   (passo de física de 4 ms, alvo recalculado a cada 20 ms). A carga `N` é lida
   uma vez por tick e usada nos 5 subpassos; na simulação ela é atualizada a

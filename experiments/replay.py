@@ -29,7 +29,7 @@ import numpy as np
 from darwinbot import hardware, plugins, robot_file
 from darwinbot.evolve import load_archive
 from darwinbot import controller as ctl
-from darwinbot.controller import Params
+from darwinbot.controller import Params, couple_partners
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
@@ -240,7 +240,8 @@ def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0, reload=None)
                         speed_command = min(1.0, max(0.0, speed_command + SPEED_KEYS[key]))
                     else:
                         continue
-                    cpg.params = Params(ctrl, episode.layout, command, speed_command)
+                    cpg.params = Params(ctrl, episode.layout, command, speed_command,
+                                        couple_partners(episode.morph))
                     print(f"steering {command:+.0f}, speed {speed_command:.1f}")
                 episode.step(cpg)
                 handle.sync()

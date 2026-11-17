@@ -67,14 +67,15 @@ it as YAML and seed an archive with `experiments/seed.py`
 ([Starting from your own design](https://mpena2099.github.io/darwinbot/own-design/)).
 
 To watch the showcase robots without training, download their snapshot from
-the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-1):
+the [showcase release](https://github.com/mpena2099/darwinbot/releases/tag/showcase-2):
 
 ```bash
-curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-1/showcase.snap.pkl
-python experiments/replay.py --snapshot showcase.snap.pkl --type 13servos-mid-trot --speed 0.5
+curl -LO https://github.com/mpena2099/darwinbot/releases/download/showcase-2/showcase.snap.pkl
+python experiments/replay.py --snapshot showcase.snap.pkl --list
+python experiments/replay.py --snapshot showcase.snap.pkl --type flat-3servos-low-roll --speed 0.5
 ```
 
-The release also carries the archive (`showcase.pkl`, body model 20);
+The release also carries the archives (`showcase-*.pkl` and `long8-*.pkl`, body model 23);
 `experiments/migrate_archive.py` brings it up to the current code.
 
 ## Documentation

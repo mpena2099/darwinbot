@@ -109,6 +109,13 @@ the current limits hold back.
   and `sim_warp.py` (MuJoCo Warp) do not simulate the coupling that release 3
   adds to the controller, so `--device gpu` and `--device warp` refuse to
   train until they do and a GPU session checks their parity with the CPU.
+- **Turning in place** (release 4): the `steer` task trains turns while the
+  robot walks at full speed, so on the real robot a turn at speed 0 only bends
+  its slowest gait. An extra episode, turning with as little displacement as
+  possible, would teach it. It enters the score as one more term, weighted
+  like the half-speed episode, so a robot that only spins cannot lead; the
+  gate checks that variety does not shrink and that spin-only robots gain no
+  cells, and weighs the extra quarter of evaluation cost.
 - **Balance sense, optional** (release 4): an IMU on the ESP32 (an MPU-6050, for example)
   feeding the torso's tilt back into the controller through evolved gains that
   start at zero, so each leg can correct a lean. Today the controller only

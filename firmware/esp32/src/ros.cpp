@@ -51,7 +51,7 @@ void on_cmd_vel(const void* msg) {
     if (!std::isfinite(z) || !std::isfinite(x)) return;
     const float steer = -clampf(z / kMaxYawRate, -1.0f, 1.0f);
     const float speed = clampf(x / kMaxSpeed, 0.0f, 1.0f);
-    cmd::set(steer, speed);   // speed 0 is a stop, whatever the steering
+    cmd::set(steer, speed);   // stops only when both are 0
 }
 
 void joint_state_init() {

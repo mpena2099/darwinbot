@@ -139,7 +139,13 @@ def active_genes(morph: Morphology) -> np.ndarray:
 
 
 def random_controller(rng: np.random.Generator) -> np.ndarray:
-    return rng.uniform(0.0, 1.0, CTRL_LENGTH)
+    """Uniform genes, except the coupling strength, which starts at 0 so a new
+    body begins with independent oscillators and evolution adds coupling only
+    where it helps (random coupling scrambled young gaits: the first gate lost
+    40% of the body types)."""
+    ctrl = rng.uniform(0.0, 1.0, CTRL_LENGTH)
+    ctrl[1 + COUPLE_K::CTRL_PER_NODE] = 0.0
+    return ctrl
 
 
 # ---- the update rule, one place, so the firmware math can be documented ----

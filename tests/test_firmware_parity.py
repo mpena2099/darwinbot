@@ -158,6 +158,8 @@ def test_parity_with_coupled_joints(tmp_path, kind):
     """Random coupling genes on the partner maps of a real body: phases and
     targets must follow controller.py."""
     rng, ctrl = _genes(11)
+    for slot in range(3):                    # random_controller starts at k = 0
+        ctrl[co.node_base(slot) + co.COUPLE_K] = rng.uniform(0.2, 1.0)
     partners = PARTNERS[kind]
     p = co.Controller(ctrl, LAYOUT, partner=partners).params
     assert np.any(p.couple_k[:3] > 0.0)

@@ -136,7 +136,7 @@ def test_migration_23_keeps_the_old_genes():
     assert np.array_equal(n_new[:, :10], n_old)
     assert np.all(n_new[:, co.COUPLE_K] == 0.0)
     assert np.all(n_new[:, co.COUPLE_LAG] == 0.5)   # gene 0.5 is lag 0 rad
-    assert evolve.migration_path(23) == [23]
+    assert evolve.migration_path(23) == [23, 24]
 
 
 def test_control_file_format_5_round_trip(tmp_path):

@@ -42,3 +42,77 @@ def test_fully_blocked_joint_keeps_a_limit(monkeypatch):
     m = mujoco.MjModel.from_xml_string(xml)
     assert m.jnt_limited[m.actuator_trnid[:, 0]].all()
     assert m.actuator_ctrllimited[:len(layout)].all()
+
+
+def _body_with_tip_and_side_servo():
+    """template(2) with a servo on the tip of the hip as well as the knee on
+    its side: the knee's elbow fin is printed on the side of the tip cradle."""
+    from darwinbot import morphology as mo
+    morph = mo.template(2)
+    morph.nodes[2].offset = 0.5           # the knee hangs 62 mm out on the side
+    i = mo._free_id(morph)
+    morph.nodes[i] = mo.Node(i, "joint", 1, 0, axis="pitch", length=0.08, flip=True)
+    return morph
+
+
+def _side_links(rules, parent):
+    """Geoms of the printed link of `parent`: its plate, bosses, fork and the
+    fins of its side mounts (role "link", printed with it)."""
+    return [g for g in range(len(rules.role))
+            if rules.role[g] == "link" and rules.part[g] == ("link", parent.id)]
+
+
+def test_every_elbow_tongue_reaches_its_link():
+    """A side servo hangs on an elbow whose tongue is bolted to a fin of the
+    link tip: no strut or tongue may float, leaving the moulded gap a body
+    without the fin had."""
+    import mujoco
+    from darwinbot import builder
+    morph = _body_with_tip_and_side_servo()
+    xml, _ = builder.build_mjcf(morph, ranges={})
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    rules = builder.AssemblyRules(morph, model)
+    fromto = np.zeros(6)
+    tested = 0
+    for parent in morph.nodes.values():
+        if parent.kind not in ("joint", "link", "spring"):
+            continue                      # a torso mount hangs on a tab, no fin
+        side = [c for s, c in morph.child_map().get(parent.id, {}).items()
+                if s and morph.nodes[c].kind in ("joint", "segment", "wheel")]
+        if not side:
+            continue
+        link = _side_links(rules, parent)
+        assert any(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
+                   .startswith("fin") for g in link), parent.id
+        for g in range(model.ngeom):
+            if rules.role[g] not in ("strut", "tongue"):
+                continue
+            if rules.parent[rules.node[g]] != parent.id:
+                continue
+            d = min(mujoco.mj_geomDistance(model, data, g, h, 1.0, fromto)
+                    for h in link)
+            assert d <= 0.0005, (mujoco.mj_id2name(
+                model, mujoco.mjtObj.mjOBJ_GEOM, g), d)
+            tested += 1
+    assert tested >= 2
+
+
+def test_a_missing_fin_is_not_buildable(monkeypatch):
+    """The fin is what the tongue bolts to: without it the elbow floats, and
+    the spawn check refuses the body. The fin carries the link plate's mass."""
+    import mujoco
+    from darwinbot import builder, sim
+    morph = _body_with_tip_and_side_servo()
+    xml, _ = builder.build_mjcf(morph, ranges={})
+    model = mujoco.MjModel.from_xml_string(xml)
+    assert sim.is_buildable(model, morph)
+    monkeypatch.setattr(builder, "_fin_geom", lambda *args, **kwargs: "")
+    xml, _ = builder.build_mjcf(morph, ranges={})
+    assert 'name="fin' not in xml
+    bare = mujoco.MjModel.from_xml_string(xml)
+    assert not sim.is_buildable(bare, morph)
+    body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "n1")
+    assert model.body_mass[body] > bare.body_mass[body]
+

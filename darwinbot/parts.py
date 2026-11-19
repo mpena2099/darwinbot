@@ -100,6 +100,8 @@ BACK_FOOT_X = dims.BACK_FOOT_X_MM   # a cradle whose output axis stands vertical
 # where a link plate or an elbow deck stops
 CRADLE_BACK = dims.CRADLE_BACK_MM
 TONGUE_T = dims.TONGUE_T_MM   # elbow tongue lapped on the link tip (<= 0.5 mm)
+TONGUE_W = dims.TONGUE_HALF_W_MM   # tongue half width along the link, as wide as its cradle
+FIN_W = dims.FIN_HALF_W_MM   # link fin under the tongue: same half width, so it laps it whole
 TONGUE_Z = dims.TONGUE_HALF_H_MM   # tongue half height, clear of the link tip holes
 STRUT_HW = dims.STRUT_HALF_W_MM   # elbow strut half width along the link
 SPIGOT_R = 5.5          # link tip spigot inside a TPU foot socket
@@ -389,6 +391,26 @@ def link(length_mm: float, width_mm: float = LINK_W,
         part -= frame * bore
     elif bars is not None:
         part += bars
+    for spec in (elbow[:2] if len(elbow) >= 2 else ()):
+        # the fin a side servo's elbow plate is bolted to: from the link tip
+        # out to the face the tongue laps, with the two M3 holes the tongues
+        # on both sides share (the tip cradle's bore stays clear)
+        if spec is None:
+            continue
+        at = spec[0]
+        sign = 1.0 if at > 0 else -1.0
+        end = at - sign * TONGUE_T          # the near face of the elbow's tongue
+        if abs(end) <= width_mm / 2 - 1.0:
+            continue                      # the tip itself reaches the tongue
+        fin = _boxc(-FIN_W, FIN_W, sign * (width_mm / 2 - 1.0), end,
+                    -thick_mm / 2, thick_mm / 2)
+        if tip_axis:
+            fin -= Rot(X=roll) * _cradle_shell(tip_axis, False)[1]
+        for x in (-MOUNT_SIDE / 2, MOUNT_SIDE / 2):
+            fin -= Pos(x, end / 2, 0) * Rot(X=90) \
+                * Cylinder(M3 / 2, 2 * abs(end) + 4)
+        if fin.solids():
+            part += frame * fin
     for pos, rot, args in (elbow[3] if len(elbow) > 3 else ()):
         # a plain link hung on this one is rigid with it and overlaps its end:
         # printed as one piece, placed where the module tree puts it
@@ -501,7 +523,7 @@ def elbow_plate(distance_mm: float, angle_deg: float = 90.0,
         axis, roll = _axis_roll(axis)
         frame = Pos(0, distance_mm, 0) * Rot(Z=angle_deg) * Rot(X=roll)
         at = (distance_mm - CRADLE_BACK - CRADLE_GAP) if trim is None else trim
-        hx = SERVO_W / 2 + SERVO_CLEARANCE + CRADLE_T
+        hx = TONGUE_W             # as wide as the cradle the plate carries
         shell, bore = _cradle_shell(axis, False)
         box = (frame * shell).bounding_box()
         hz = max(1.0, min(-box.min.Z, box.max.Z) - 0.5)

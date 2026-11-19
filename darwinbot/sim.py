@@ -198,9 +198,11 @@ def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
     """True when the printed parts of the body assemble in the spawn pose: no
     two robot geoms overlap except where the design laps them (a servo in its
     cradle, a link in the U fork around its servo, an elbow on its link tip;
-    see builder.AssemblyRules). The parent filter of MuJoCo is switched off,
-    so a part that cuts into the one it is mounted on counts, and pairs of
-    parts that cannot move against each other are measured one by one."""
+    see builder.AssemblyRules), and every elbow strut or tongue reaches the
+    link it is bolted to (the fin under it bridges the gap). The parent filter
+    of MuJoCo is switched off, so a part that cuts into the one it is mounted
+    on counts, and pairs of parts that cannot move against each other are
+    measured one by one."""
     data = mujoco.MjData(model)
     flags = model.opt.disableflags
     model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
@@ -208,7 +210,10 @@ def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
         mujoco.mj_forward(model, data)
         if ablate.active("assembly"):
             return not _servo_clashes(morph, model, data)
-        return not AssemblyRules(morph, model).clashes(model, data, fixed=True, first=True)
+        rules = AssemblyRules(morph, model)
+        if rules.clashes(model, data, fixed=True, first=True):
+            return False
+        return not rules.floating(model, data)
     finally:
         model.opt.disableflags = flags
 

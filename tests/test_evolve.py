@@ -578,6 +578,29 @@ def test_servo_count_is_an_archive_axis():
     assert len(archive.cells) == 2
 
 
+def test_four_axes_archive_has_five_hundred_cells():
+    archive = evolve.Archive(terrains="flat", axes="four")
+    assert archive.n_descriptors == 4
+    assert len(evolve._centroids("four")) == evolve.N_CELLS_FOUR == 500
+    assert archive.insert(_elite(1.0, [0.9, 0.3, 8, 0.0, 1.0, 2]))
+    assert archive._grid.measure_dim == 4
+    assert len(archive.cells) == 1
+
+
+def test_four_axes_resume_with_default_is_refused(tmp_path):
+    archive = evolve.Archive(terrains="flat", axes="four")
+    archive.insert(_elite(1.0, [0.9, 0.3, 8, 0.0, 1.0, 2]))
+    path = tmp_path / "four.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(archive, f)
+    with pytest.raises(ValueError, match="axes"):
+        evolve.run(resume=str(path), axes="default", n_batches=0, workers=1,
+                   out_dir=str(tmp_path / "refused"))
+    again = evolve.run(resume=str(path), n_batches=0, workers=1,
+                       out_dir=str(tmp_path / "kept"))
+    assert again.axes == "four"
+
+
 def test_archive_with_four_axes_is_refused():
     from ribs.archives import CVTArchive
     old = evolve.Archive(terrains="flat")

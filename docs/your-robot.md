@@ -29,8 +29,10 @@ Pass one or more tokens separated by commas, in any order:
 | Token | Default | What it allows |
 |-------|---------|----------------|
 | `no-wheels` | wheels allowed | No `wheel` modules. |
+| `no-torso-wheels` | wheels allowed anywhere | No `wheel` bolted straight to the core or a spine plate; wheels on limbs are still allowed. |
 | `no-passive` | passive modules allowed | No `spring`, `tail`, `skid`, `spike` or `caster`. |
-| `no-segments` | spine segments allowed | No `segment` plates (the spine), so every limb hangs on the core. |
+| `no-segments` | spine segments allowed | No `segment` plates (the spine), so every limb hangs on the core; the same as `max-segments=0`. |
+| `max-segments=N` | 6 | At most N `segment` plates, from 0 to 6. |
 | `max-servos=N` | 16 | At most N servos, counting joints, wheels and spine segments. N must be at least 1. |
 | `legs=A..B` | any number of legs | Between A and B legs. `legs=N` means exactly N. |
 | `max-size=MM` | no limit | Largest side of the body's bounding box at the spawn, in mm. |

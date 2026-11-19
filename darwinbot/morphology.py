@@ -264,6 +264,10 @@ def _max_servos() -> int:
     return min(MAX_SERVOS, _body_options().max_servos)
 
 
+def _max_segments() -> int:
+    return min(MAX_SEGMENTS, _body_options().segment_limit)
+
+
 def _bed() -> float:
     """Print bed side in metres, from the active body options."""
     opts = _body_options()
@@ -887,6 +891,14 @@ def violations(morph: Morphology) -> List[str]:
         out.append(f"modules the body options forbid: {', '.join(bad)}")
     if morph.n_servos > opts.max_servos:
         out.append(f"{morph.n_servos} servos, more than the {opts.max_servos} allowed")
+    if morph.n_segments > opts.segment_limit:
+        out.append(f"{morph.n_segments} spine segments, more than the "
+                   f"{opts.segment_limit} allowed")
+    torso_wheels = [n.id for n in morph.nodes.values()
+                    if n.kind == "wheel"
+                    and not opts.allows_at("wheel", morph.nodes[n.parent].kind)]
+    if torso_wheels:
+        out.append("a wheel bolted to the torso or a spine plate is not allowed")
     legs = morph.n_legs
     if legs < opts.min_legs or (opts.max_legs is not None and legs > opts.max_legs):
         upper = "no upper bound" if opts.max_legs is None else str(opts.max_legs)
@@ -1325,6 +1337,17 @@ def _to_link(n: Node) -> None:
     n.kind, n.axis, n.flip = "link", "pitch", False
 
 
+def _segment_to_joint(morph: Morphology, i: int) -> None:
+    """Turn a spine plate into a joint, dropping what no longer sits on it."""
+    n = morph.nodes[i]
+    n.kind = "joint"
+    n.length = float(np.clip(n.length, *LENGTH_RANGE))
+    n.width = float(np.clip(n.width, *LINK_WIDTH_RANGE))
+    for s, c in list(morph.child_map().get(i, {}).items()):
+        if s >= N_SLOTS["joint"] or morph.nodes[c].kind == "segment":
+            _drop_subtree(morph, c)
+
+
 def _drop_disallowed(morph: Morphology) -> None:
     """Turn a module no active option allows into the nearest allowed one: a
     wheel into a foot, a passive module into a printed link, a spine segment
@@ -1332,19 +1355,28 @@ def _drop_disallowed(morph: Morphology) -> None:
     opts = _body_options()
     for i in sorted(morph.nodes):
         n = morph.nodes[i]
-        if i == 0 or opts.allows(n.kind):
+        if i == 0:
+            continue
+        parent = morph.nodes[n.parent].kind if n.parent >= 0 else ""
+        if n.kind == "wheel" and not opts.allows_at(n.kind, parent):
+            _to_foot(n)
+            continue
+        if opts.allows(n.kind):
             continue
         if n.kind == "wheel":
             _to_foot(n)
         elif n.kind == "segment":
-            n.kind = "joint"
-            n.length = float(np.clip(n.length, *LENGTH_RANGE))
-            n.width = float(np.clip(n.width, *LINK_WIDTH_RANGE))
-            for s, c in list(morph.child_map().get(i, {}).items()):
-                if s >= N_SLOTS["joint"] or morph.nodes[c].kind == "segment":
-                    _drop_subtree(morph, c)
+            _segment_to_joint(morph, i)
         else:
             _to_link(n)
+
+
+def _fit_segments(morph: Morphology) -> None:
+    """Turn the extra spine plates (deepest first) back into joints."""
+    while morph.n_segments > _max_segments():
+        i = max((i for i, n in morph.nodes.items() if n.kind == "segment"),
+                key=lambda i: (morph.depth(i), i))
+        _segment_to_joint(morph, i)
 
 
 def _fit_servos(morph: Morphology) -> None:
@@ -1418,6 +1450,7 @@ def fit_rules(morph: Morphology) -> Morphology:
     that already follows the rules is left as it is."""
     _drop_disallowed(morph)
     _fit_servos(morph)
+    _fit_segments(morph)
     _fit_contour(morph)
     for i in sorted(morph.nodes):
         n = morph.nodes[i]
@@ -1511,11 +1544,13 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
         if not opts.allows(node.kind):
             continue
         parent_kind = morph.nodes[par].kind
+        if not opts.allows_at(node.kind, parent_kind):
+            continue
         if parent_kind == "segment" and sl == 1:
             continue
         if node.kind == "segment" and (
                 not _segment_slot(parent_kind, sl)
-                or morph.n_segments >= MAX_SEGMENTS):
+                or morph.n_segments >= _max_segments()):
             continue
         if (is_joint(node.kind) or node.kind == "wheel") \
                 and morph.n_servos >= servos_limit:
@@ -1647,8 +1682,9 @@ def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     kinds = tuple(k for k in TYPE_KINDS if k != "segment")
     probs = [0.45, 0.14, 0.10, 0.18, 0.05, 0.03, 0.02, 0.02, 0.01]
     opts = _body_options()
+    parent_kind = morph.nodes[p].kind
     allowed = [(k, w) for k, w in zip(kinds, probs)
-               if k not in DISABLED_KINDS and opts.allows(k)]
+               if k not in DISABLED_KINDS and opts.allows_at(k, parent_kind)]
     if not allowed:
         return None
     weights = np.array([w for _, w in allowed])
@@ -1664,8 +1700,7 @@ def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
 def _add_segment(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     """A segment on a core or segment front/back slot, within the limit."""
     i = _free_id(morph)
-    if (i is None or morph.n_segments >= MAX_SEGMENTS
-            or not _body_options().allow_segments
+    if (i is None or morph.n_segments >= _max_segments()
             or not _segment_slot(morph.nodes[p].kind, s)):
         return None
     node = _random_node(rng, "segment", p, s)
@@ -1680,7 +1715,7 @@ WHEEL_LIMB_P = 0.15   # share of limbs that are a single wheel bolted to the tor
 def _grow_limb(morph: Morphology, rng, slot: int) -> Optional[int]:
     """A chain of 1 to 3 joints or links from a core slot, maybe a wheel/foot,
     or one wheel bolted straight to the torso."""
-    if (rng.random() < WHEEL_LIMB_P and _body_options().allow_wheels
+    if (rng.random() < WHEEL_LIMB_P and _body_options().allows_at("wheel", "core")
             and morph.n_servos < _max_servos()):
         i = _free_id(morph)
         if i is not None:
@@ -1838,12 +1873,12 @@ def _op_type(morph, rng):
         if i not in parents else [])
     if n.kind == "segment":
         kinds.append("segment")
-    elif (morph.n_segments < MAX_SEGMENTS and opts.allow_segments
+    elif (morph.n_segments < _max_segments()
           and _segment_slot(morph.nodes[n.parent].kind, n.slot)):
         kinds.append("segment")
     kinds = [k for k in kinds if k not in DISABLED_KINDS]
     if not opts.is_default():
-        kinds = [k for k in kinds if opts.allows(k)]
+        kinds = [k for k in kinds if opts.allows_at(k, morph.nodes[n.parent].kind)]
     kinds = [k for k in kinds if k != n.kind]
     if not kinds:
         return
@@ -1880,7 +1915,7 @@ def _op_add(morph, rng):
         return
     seg = [fs for fs in free
            if _segment_slot(morph.nodes[fs[0]].kind, fs[1])]
-    if (seg and morph.n_segments < MAX_SEGMENTS and _body_options().allow_segments
+    if (seg and morph.n_segments < _max_segments()
             and rng.random() < 0.1):
         _add_segment(morph, rng, *seg[int(rng.integers(len(seg)))])
         return

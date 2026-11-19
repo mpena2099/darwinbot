@@ -58,6 +58,7 @@ from darwinbot.terrain import flat, get_terrains
 
 BODY_MODEL = 24                     # bump when the genome meaning changes
 N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
+N_CELLS_FOUR = 500                  # CVT cells for the four axes of --axes four
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
@@ -185,36 +186,57 @@ Cell = int                          # index of the CVT cell
 
 
 N_DESCRIPTORS = 5
-AXES = ("default", "body")      # archive axes: five, or five plus body_ground
-                                # (experiments; stored in the Archive)
+AXES = ("default", "body", "four")   # archive axes (experiments; stored in Archive)
+DESCRIPTORS = ("duty", "height", "servos", "legs", "cot")
+AXES_DESCRIPTORS = {
+    "default": DESCRIPTORS,
+    "body": DESCRIPTORS + ("body_ground",),
+    "four": ("duty", "height", "legs", "cot"),     # --axes four
+}
+AXES_CELLS = {"default": N_CELLS, "body": N_CELLS, "four": N_CELLS_FOUR}
 
 
-def normalise(behaviour, n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
-    """Descriptor in [0, 1]^n_descriptors (duty, height, servos, legs, cot and,
-    for a body archive, body_ground: the archive axes, not the order of the
-    Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost
-    of transport spans decades, so it is taken in log."""
+def descriptor_count(axes: str = "default") -> int:
+    """Number of descriptors an archive with these axes stores."""
+    return len(AXES_DESCRIPTORS[axes])
+
+
+def _axes_key(axes) -> str:
+    """Axes name; an axis count is accepted too (old callers)."""
+    if isinstance(axes, str):
+        return axes
+    return {4: "four", N_DESCRIPTORS: "default",
+            N_DESCRIPTORS + 1: "body"}.get(int(axes), "default")
+
+
+def normalise(behaviour, axes: str = "default") -> np.ndarray:
+    """Descriptor in [0, 1]^n for the archive axes (duty, height, servos, legs,
+    cot and, for a body archive, body_ground; --axes four drops servos: the
+    archive axes, not the order of the Behaviour fields) from a Behaviour, so
+    that every axis weighs the same. Cost of transport spans decades, so it is
+    taken in log."""
     b = Behaviour.of(behaviour)
     cot = np.log(np.clip(b.cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    point = [b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
-             b.legs / morpho.MAX_LEGS, cot]
-    if n_descriptors > N_DESCRIPTORS:
-        point.append(b.body_ground)     # already a share
-    return np.clip(point[:n_descriptors], 0.0, 1.0)
+    values = {"duty": b.duty, "height": b.height / HEIGHT_MAX,
+              "servos": b.servos / morpho.MAX_SERVOS,
+              "legs": b.legs / morpho.MAX_LEGS, "cot": cot,
+              "body_ground": b.body_ground}
+    return np.clip([values[k] for k in AXES_DESCRIPTORS[_axes_key(axes)]], 0.0, 1.0)
 
 
-@lru_cache(maxsize=None)             # one centroid set per axis count
-def _centroids(n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
-    probe = CVTArchive(solution_dim=1, centroids=N_CELLS,
-                       ranges=[(0.0, 1.0)] * n_descriptors,
+@lru_cache(maxsize=None)             # one centroid set per axes
+def _centroids(axes: str = "default") -> np.ndarray:
+    axes = _axes_key(axes)
+    probe = CVTArchive(solution_dim=1, centroids=AXES_CELLS[axes],
+                       ranges=[(0.0, 1.0)] * descriptor_count(axes),
                        seed=CVT_SEED, samples=20000)
     return np.array(probe.centroids)
 
 
-def cell_of(behaviour, n_descriptors: int = N_DESCRIPTORS) -> Cell:
-    """CVT cell of a Behaviour."""
-    point = normalise(behaviour, n_descriptors)
-    return int(np.argmin(((_centroids(n_descriptors) - point) ** 2).sum(axis=1)))
+def cell_of(behaviour, axes: str = "default") -> Cell:
+    """CVT cell of a Behaviour on these archive axes."""
+    point = normalise(behaviour, axes)
+    return int(np.argmin(((_centroids(axes) - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
@@ -307,7 +329,7 @@ class Archive:
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body:     str = ""         # body_options limits, as given to train.py --body
-    axes:     str = "default"  # AXES: archive descriptors, five or with body_ground
+    axes:     str = "default"  # AXES: five, six with body_ground, four without servos
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
     plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
@@ -320,15 +342,16 @@ class Archive:
 
     @property
     def n_descriptors(self) -> int:
-        """Archive axes: five, or six with body_ground on top."""
-        return N_DESCRIPTORS + 1 if self.axes == "body" else N_DESCRIPTORS
+        """Archive axes: five by default, six with body_ground, four without
+        servos."""
+        return descriptor_count(self.axes)
 
     def _ensure(self, n_scores: int) -> CVTArchive:
         """Build the ribs archive on first insert, when score count is known."""
         if self._grid is None:
             self._grid = CVTArchive(
                 solution_dim=morpho.MORPH_LENGTH,
-                centroids=_centroids(self.n_descriptors),
+                centroids=_centroids(self.axes),
                 ranges=[(0.0, 1.0)] * self.n_descriptors,
                 extra_fields={
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
@@ -409,12 +432,12 @@ class Archive:
         # an archive written before body_ground stores a narrower record
         width = grid.data()["behaviour"].shape[1]
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
-                        measures=[normalise(elite.behaviour, self.n_descriptors)],
+                        measures=[normalise(elite.behaviour, self.axes)],
                         ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
                         behaviour=[elite.behaviour[:width]])
         added = int(info["status"][0]) != 0
         if added:
-            cell = cell_of(elite.behaviour, self.n_descriptors)
+            cell = cell_of(elite.behaviour, self.axes)
             number = elite.uid
             if number < 0 or any(u == number for c, u in self.uids.items() if c != cell):
                 number = self.next_uid          # new robot, or a uid another cell holds
@@ -474,7 +497,7 @@ class Archive:
             raise ValueError("archive from an older body model, retrain")
         if grid is not None and not _stale_ok:
             axes = state.get("axes", "default")
-            n_descriptors = N_DESCRIPTORS + 1 if axes == "body" else N_DESCRIPTORS
+            n_descriptors = descriptor_count(axes)
             if grid.measure_dim != n_descriptors:
                 raise ValueError(
                     f"archive with {grid.measure_dim} archive axes, this archive "
@@ -803,7 +826,7 @@ def run(
     ablations: tuple = (),
     score_rules: Optional[tuple] = None,   # None: not given, so a resume keeps the archive's
     body: str = "",
-    axes: str = "default",
+    axes: Optional[str] = None,   # None: the archive's, or default for a new run
     plugin: Optional[dict] = None,
     inner_strategy: Optional[str] = None,
     variant_mode: str = "all",
@@ -832,7 +855,7 @@ def run(
         # sim_gpu and sim_warp do not simulate the oscillator coupling yet
         # (BODY_MODEL 24); every controller drawn here carries it.
         raise ValueError(f"--device {device} does not simulate coupled oscillators yet; use --device cpu")
-    if axes not in AXES:
+    if axes is not None and axes not in AXES:
         raise ValueError(f"axes must be one of {AXES}")
     if task not in task_names():
         raise ValueError(f"task must be one of {task_names()}")
@@ -852,7 +875,7 @@ def run(
 
     if resume:
         archive: Archive = load_archive(resume)
-        if axes != "default" and axes != archive.axes:
+        if axes is not None and axes != archive.axes:
             raise ValueError(f"{resume} uses --axes {archive.axes}; --axes {axes} "
                              "applies to a new archive only")
         if score_rules is not None and rules.normalise(score_rules) != archive.rules:
@@ -862,6 +885,7 @@ def run(
         terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:
+        axes = axes or "default"
         archive = Archive(terrains=terrains, seconds=episode_seconds,
                           variants=variants, task=task, payload=payload,
                           ablate=ablate.normalise(ablations),
@@ -1023,7 +1047,7 @@ def run(
                     if tdir:
                         _trace_body(tdir, archive, batch_meta, res, None, None, False)
                     continue
-                cell = cell_of(behaviour, archive.n_descriptors) if tdir else None
+                cell = cell_of(behaviour, archive.axes) if tdir else None
                 before = None
                 if tdir:
                     inc = archive.cells.get(cell)

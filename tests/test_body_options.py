@@ -31,8 +31,10 @@ def test_defaults_are_todays_limits():
 def test_each_token_and_round_trip():
     cases = {
         "no-wheels": dict(allow_wheels=False),
+        "no-torso-wheels": dict(allow_torso_wheels=False),
         "no-passive": dict(allow_passive=False),
         "no-segments": dict(allow_segments=False),
+        "max-segments=2": dict(max_segments=2),
         "max-servos=8": dict(max_servos=8),
         "legs=4..6": dict(min_legs=4, max_legs=6),
         "legs=3": dict(min_legs=3, max_legs=3),
@@ -50,6 +52,7 @@ def test_each_token_and_round_trip():
 
 def test_bad_tokens_raise():
     for text in ("fins", "no-wheels=1", "max-servos=x", "max-servos=0",
+                 "max-segments=x", "max-segments=-1", "max-segments=7",
                  "legs=a..b", "legs=5..3", "legs=-1", "max-size=0",
                  "bed=wide", "bed=-4"):
         with pytest.raises(ValueError):
@@ -94,6 +97,35 @@ def test_no_options_is_the_old_random_bodies():
     body_options.set_active(None)
     without = bodies()
     assert all(np.array_equal(a, b) for a, b in zip(with_opts, without))
+
+
+def test_no_segments_is_no_more_segments():
+    zero = body_options.parse("max-segments=0")
+    assert body_options.parse("no-segments") == zero == OPTIONS(max_segments=0)
+    assert body_options.parse(zero.to_string()) == zero
+    assert zero.segment_limit == 0
+
+
+def _torso_wheel(m):
+    return any(n.kind == "wheel" and m.nodes[n.parent].kind in ("core", "segment")
+               for n in m.nodes.values())
+
+
+def test_segment_and_torso_wheel_limits_hold_after_mutate_and_graft():
+    opts = body_options.parse("max-segments=2,no-torso-wheels")
+    body_options.set_active(opts)
+
+    def check(genes):
+        m = mo.decode(genes)
+        assert m.n_segments <= 2
+        assert not _torso_wheel(m)
+
+    rng = np.random.default_rng(11)
+    for _ in range(200):
+        parent = mo.random_morphology(rng)
+        check(parent)
+        check(mo.mutate(parent, rng))
+        check(mo.graft(parent, mo.random_morphology(rng), rng))
 
 
 def test_open_archive_turns_on_its_settings(tmp_path):

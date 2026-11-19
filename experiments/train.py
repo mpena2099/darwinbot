@@ -169,12 +169,14 @@ def main():
                         "resume must repeat the archive's (or give none)")
     p.add_argument("--body", default="", metavar="A,B",
                    help="limits on the bodies evolution may build, comma list of "
-                        "no-wheels, no-passive, no-segments, max-servos=N, "
-                        "legs=A..B, max-size=MM, bed=MM; stored in the archive")
-    p.add_argument("--axes", choices=evolve.AXES, default="default",
-                   help="archive descriptors: default (five) or body (five plus the "
-                        "share of ticks the torso touches the ground); stored in the "
-                        "archive, new archives only")
+                        "no-wheels, no-torso-wheels, no-passive, no-segments, "
+                        "max-segments=N, max-servos=N, legs=A..B, max-size=MM, "
+                        "bed=MM; stored in the archive")
+    p.add_argument("--axes", choices=evolve.AXES, default=None,
+                   help="archive descriptors: default (five), body (five plus the "
+                        "share of ticks the torso touches the ground) or four (duty, "
+                        "height, legs, cot on 500 cells); stored in the archive, new "
+                        "archives only, and a resume keeps the archive's")
     a = p.parse_args()
     rules_given = a.rules is not None          # None: keep the archive's rules on resume
     a.rules = tuple(n for n in (a.rules or "").split(",") if n)

@@ -10,8 +10,10 @@ forbid is never made, and `morphology.violations` rejects one that still breaks
 a limit, so it is never simulated.
 
   no-wheels         no wheel modules
+  no-torso-wheels   no wheel bolted straight to the core or a spine plate
   no-passive        no spring, tail, skid, spike or caster
-  no-segments       no spine segments
+  no-segments       no spine segments (the same as max-segments=0)
+  max-segments=N    at most N spine segments, 0 to MAX_SEGMENTS
   max-servos=N      at most N servos (joints, wheels and segments)
   legs=A..B         between A and B legs (legs=N means exactly N)
   max-size=MM       largest bounding-box side of the body at spawn, in mm
@@ -30,8 +32,10 @@ BED_MM = float(round(morpho.BED * 1000.0, 6))
 @dataclass(frozen=True)
 class BodyOptions:
     allow_wheels: bool = True
+    allow_torso_wheels: bool = True
     allow_passive: bool = True
     allow_segments: bool = True
+    max_segments: int = morpho.MAX_SEGMENTS
     max_servos: int = morpho.MAX_SERVOS
     min_legs: int = 0
     max_legs: Optional[int] = None
@@ -41,6 +45,11 @@ class BodyOptions:
     def __post_init__(self):
         if self.max_servos < 1:
             raise ValueError("max-servos must be at least 1 (a body needs a servo)")
+        if not 0 <= self.max_segments <= morpho.MAX_SEGMENTS:
+            raise ValueError(f"max-segments must be between 0 and {morpho.MAX_SEGMENTS}")
+        if self.max_segments == 0:      # the same limit as no-segments
+            object.__setattr__(self, "allow_segments", False)
+            object.__setattr__(self, "max_segments", morpho.MAX_SEGMENTS)
         if self.min_legs < 0 or (self.max_legs is not None and self.max_legs < 0):
             raise ValueError("legs must not be negative")
         if self.max_legs is not None and self.max_legs < self.min_legs:
@@ -59,8 +68,20 @@ class BodyOptions:
         if kind in PASSIVE_KINDS:
             return self.allow_passive
         if kind == "segment":
-            return self.allow_segments
+            return self.segment_limit > 0
         return True
+
+    def allows_at(self, kind: str, parent_kind: str) -> bool:
+        """True when a module of this kind may hang from that parent."""
+        if kind == "wheel" and not self.allow_torso_wheels \
+                and parent_kind in ("core", "segment"):
+            return False
+        return self.allows(kind)
+
+    @property
+    def segment_limit(self) -> int:
+        """Spine segments allowed: max-segments, or none at all."""
+        return self.max_segments if self.allow_segments else 0
 
     def is_default(self) -> bool:
         return self == BodyOptions()
@@ -70,10 +91,14 @@ class BodyOptions:
         out = []
         if not self.allow_wheels:
             out.append("no-wheels")
+        if not self.allow_torso_wheels:
+            out.append("no-torso-wheels")
         if not self.allow_passive:
             out.append("no-passive")
         if not self.allow_segments:
             out.append("no-segments")
+        if self.max_segments != morpho.MAX_SEGMENTS:
+            out.append(f"max-segments={self.max_segments}")
         if self.max_servos != morpho.MAX_SERVOS:
             out.append(f"max-servos={self.max_servos}")
         if self.max_legs is not None:
@@ -108,8 +133,8 @@ def _float(name: str, text: str) -> float:
     return value
 
 
-FLAGS = {"no-wheels": "allow_wheels", "no-passive": "allow_passive",
-         "no-segments": "allow_segments"}
+FLAGS = {"no-wheels": "allow_wheels", "no-torso-wheels": "allow_torso_wheels",
+         "no-passive": "allow_passive", "no-segments": "allow_segments"}
 
 
 def parse(text: str) -> BodyOptions:
@@ -129,6 +154,8 @@ def parse(text: str) -> BodyOptions:
         name = name.lower()
         if name == "max-servos":
             opts = replace(opts, max_servos=_int(name, value))
+        elif name == "max-segments":
+            opts = replace(opts, max_segments=_int(name, value))
         elif name == "legs":
             low, _, high = value.partition("..")
             low = _int(name, low)
@@ -147,7 +174,8 @@ def parse(text: str) -> BodyOptions:
 
 def _unknown(token: str) -> str:
     return (f"unknown body option '{token}', expected some of no-wheels, "
-            "no-passive, no-segments, max-servos=N, legs=A..B, max-size=MM, bed=MM")
+            "no-torso-wheels, no-passive, no-segments, max-segments=N, "
+            "max-servos=N, legs=A..B, max-size=MM, bed=MM")
 
 
 _active = BodyOptions()

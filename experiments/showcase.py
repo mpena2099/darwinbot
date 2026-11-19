@@ -223,7 +223,7 @@ def main(argv=None):
             pickle.dump(out, f)
         final = path["final"]
         final_names = [out.names()[evolve.cell_of(rows[chosen[i]][uid][2].behaviour,
-                                                  out.n_descriptors)]
+                                                  out.axes)]
                        for i, uid in enumerate(uids)]
 
     for stage in run:

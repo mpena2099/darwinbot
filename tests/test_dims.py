@@ -23,6 +23,8 @@ def _pairs():
         ("BRIDGE_X", mo.FORK_BRIDGE_X * mm, parts.BRIDGE_X),
         ("BRIDGE_T", mo.FORK_BRIDGE_T * mm, parts.BRIDGE_T),
         ("STRUT_HW", mo.STRUT_HALF_W * mm, parts.STRUT_HW),
+        ("TONGUE_W", mo.TONGUE_HALF_W * mm, parts.TONGUE_W),
+        ("FIN_W", mo.FIN_HALF_W * mm, parts.FIN_W),
         ("TONGUE_Z", mo.TONGUE_HALF_H * mm, parts.TONGUE_Z),
         ("PLATE_T", mo.PLATE_THICK * mm, parts.PLATE_T),
         ("PLATE_T export", export.PLATE_T, parts.PLATE_T),

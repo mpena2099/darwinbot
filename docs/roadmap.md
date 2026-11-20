@@ -105,6 +105,13 @@ the current limits hold back.
   - a cheaper `mj_step`: collision geoms that only matter for assembly, and
     solver iterations, measured first and changed only if the physics stays
     the same.
+- **The score rules, one at a time** (release 4): `energy_abs`, `turn_forward`,
+  `fall_zero` and `body_ground` each passed or nearly passed a short gate,
+  but together they left almost no robot that moves (9 and 0 movers against
+  35 and 31 without them, two seeds, flat, 22 to 37 batches), so long9 runs
+  without them. Each one gets its own run against no rules, from scratch,
+  with two seeds and at least 80 batches, and the user's review in replay,
+  before it enters a long run. A rule that drops the movers fails.
 - **Coupled oscillators on the GPU backends** (release 4): `sim_gpu.py` (MJX)
   and `sim_warp.py` (MuJoCo Warp) do not simulate the coupling that release 3
   adds to the controller, so `--device gpu` and `--device warp` refuse to

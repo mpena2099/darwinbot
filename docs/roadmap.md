@@ -91,6 +91,15 @@ against the current rules:
 Release 4 puts training speed first, then three changes that open body plans
 the current limits hold back.
 
+- **Shorter release cycles** (release 4, how the release is run): release 3
+  took about a week from its first gate to the end of training. To shorten it:
+  - code-only releases (firmware, tools, docs) ship on their own, without
+    waiting for a training run from scratch;
+  - every gate is sized right from the start, two seeds and enough batches,
+    all arms in parallel on Kaggle, instead of short gates that show nothing
+    and have to be run again;
+  - the speed levers below, worth 2 to 3 times less time per batch;
+  - a Kaggle GPU island whenever the weekly quota allows it.
 - **Faster training, the levers left out of release 3** (release 4, first):
   release 3 brings the compiled loop's successors (diagonal and focused
   CMA-ES steps, one physics variant per candidate, a quick screen before the

@@ -205,9 +205,6 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
             unstable = True
             break
         t_prev = time_v[0]
-        if xmat[8] < upright_min:
-            fell = True
-            break
         if n == mid:
             x_mid = xpos[0]
         if n % hold == 0:
@@ -252,6 +249,10 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
             upsum += xmat[8]
             tiltsum += math.acos(min(1.0, max(-1.0, xmat[8])))
             ticks += 1
+        if xmat[8] < upright_min:
+            # The tick a fall is seen on still counts in the behaviour sample.
+            fell = True
+            break
     out[0] = energy
     out[1] = yaw
     out[2] = 1.0 if fell else 0.0

@@ -56,7 +56,7 @@ from darwinbot.sim import (COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behavi
                            Episode)
 from darwinbot.terrain import flat, get_terrains
 
-BODY_MODEL = 25                     # bump when the genome meaning changes
+BODY_MODEL = 26                     # bump when the genome meaning changes
 N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
@@ -131,7 +131,8 @@ def _migrate_23(genes, cvec):
 
 MIGRATIONS = {20: _migrate_20, 21: _migrate_21,
               22: lambda morph, cvec: (morph, cvec), 23: _migrate_23,
-              24: lambda morph, cvec: (morph, cvec)}   # 24: the elbow fin, parts only
+              24: lambda morph, cvec: (morph, cvec),   # 24: the elbow fin, parts only
+              25: lambda morph, cvec: (morph, cvec)}   # 25: the fall tick counts, physics only
 _stale_ok = False                   # set by loading_stale()
 
 

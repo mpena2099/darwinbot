@@ -17,13 +17,20 @@ metrics the rules read (`tilt`, `slip`, `servo_ground`) are always measured, in
                 itself touches the ground
   energy_abs    subtract ENERGY_ABS_W * energy / (M_REF g): the servo work
                 itself, not divided by the robot's own mass, so dead weight costs
+  basal         subtract BASAL_PER_SERVO * n_servos + BASAL_PER_KG * mass (kg)
+                once per evaluation: the idle current of every servo and the
+                weight every gram adds, as a living body's basal metabolism
   fall_zero     an episode that ends in a fall earns no progress credit (only
                 FALL_PENALTY is left), in every task
 """
 from typing import Iterable
 
 NAMES = ("worse_turn", "turn_forward", "tilt", "slip", "servo_ground",
-         "body_ground", "energy_abs", "fall_zero")
+         "body_ground", "energy_abs", "basal", "fall_zero")
+
+# Score units (metres) per servo and per kg of rule `basal`, tuned by the gate.
+BASAL_PER_SERVO = 0.01
+BASAL_PER_KG = 0.05
 
 _active: frozenset = frozenset()
 

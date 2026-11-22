@@ -64,6 +64,8 @@ Optional rules (darwinbot/rules.py, off by default, switched on per run with
   servo_ground  every episode: - SERVO_GROUND_W * Metrics.servo_ground (share of ticks)
   body_ground   every episode: - BODY_GROUND_W * Metrics.body_ground (share of ticks)
   energy_abs    every episode: - ENERGY_ABS_W * energy / (M_REF g), M_REF = 1 kg
+  basal         once per evaluation: - BASAL_PER_SERVO * n_servos
+                - BASAL_PER_KG * mass (kg), the idle draw and the weight carried
   fall_zero     an episode that fell: its progress credit (up(progress) or
                 up(|yaw|), and the half-speed credit) is 0; FALL_PENALTY stays
 """
@@ -154,6 +156,15 @@ def rule_cost(m: Metrics) -> float:
     return c
 
 
+def basal_cost(ms: Sequence[Metrics]) -> float:
+    """Rule `basal`: what the body costs while it stands still, once per
+    evaluation (every episode of a task runs the same body)."""
+    if not rules.active("basal") or any(m.unstable for m in ms):
+        return 0.0
+    m = ms[0]
+    return rules.BASAL_PER_SERVO * m.n_servos + rules.BASAL_PER_KG * m.mass
+
+
 def score(m: Metrics, task: str = "forward") -> float:
     if task not in TASKS:
         raise ValueError(f"unknown task '{task}', expected one of {TASKS}")
@@ -182,11 +193,12 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         raise ValueError(f"unknown task '{task}', expected one of {TASKS}")
     if task != "steer":
         if task in BUILTIN_TASKS:
-            return score(ms[0], task)
+            return float(score(ms[0], task) - basal_cost(ms))
         if any(m.unstable for m in ms):
             return UNSTABLE_SCORE
         fn = _TASK_SCORES[task]
-        return float(fn(ms) if len(commands(task)) > 1 else fn(ms[0]))
+        s = fn(ms) if len(commands(task)) > 1 else fn(ms[0])
+        return float(s - basal_cost(ms))
     if any(m.unstable for m in ms):
         return UNSTABLE_SCORE
     turns = []
@@ -204,7 +216,8 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
             - ENERGY_W * ms[3].energy / (ms[3].mass * G) - rule_cost(ms[3]))
     if ms[3].fell:
         half -= FALL_PENALTY
-    return float(0.4 * score(ms[0], "forward") + 0.4 * turn + 0.2 * half)
+    return float(0.4 * score(ms[0], "forward") + 0.4 * turn + 0.2 * half
+                 - basal_cost(ms))
 
 
 def aggregate(scores: Sequence[float]) -> float:

@@ -45,6 +45,7 @@ class BatchEpisode:
         self.buildable = is_buildable(model, morph) and not violations(morph)
         self.mass = float(model.body_subtreemass[
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso")])
+        self.n_servos = morph.n_servos
         if not self.buildable:
             return
         self.model = mjx.put_model(model)
@@ -79,7 +80,8 @@ class BatchEpisode:
             theta = theta + dt * (omega - sigma * load * jnp.cos(theta))
             work = jnp.abs(d.actuator_force * d._impl.actuator_velocity).sum() * dt
             blew_up = ~jnp.isfinite(d.qacc).all() | (jnp.abs(d.qvel).max() > 1e3)
-            ended = blew_up | (d.xmat[torso, 2, 2] < UPRIGHT_MIN)
+            falling = ~blew_up & (d.xmat[torso, 2, 2] < UPRIGHT_MIN)
+            ended = blew_up | falling
             first = ended & ~done
             dx = jnp.where(done, dx, d.xpos[torso, 0] - x0)
             dy = jnp.where(done, dy, d.xpos[torso, 1] - y0)
@@ -90,7 +92,9 @@ class BatchEpisode:
             duration = jnp.where(done, duration, d.time)
             unstable = jnp.where(first, blew_up, unstable)
             # Behaviour is sampled once per control tick, while the episode runs.
-            sample = ((k + 1) % self.hold == 0) & ~(done | ended)
+            # The tick a fall is seen on still counts, as in Episode.run; a blow
+            # up does not.
+            sample = ((k + 1) % self.hold == 0) & ~(done | (ended & ~falling))
             now_touch = self._hits(d, self.tgeoms)
             touch = touch + sample * now_touch
             # As in Episode: servo housing and body contact, tilt angle and foot
@@ -169,6 +173,7 @@ class BatchEpisode:
             Metrics(dx=float(dx[i]), dy=float(dy[i]), energy=float(energy[i]),
                     fell=bool(fell[i]), unstable=bool(unstable[i]),
                     duration=float(duration[i]), mass=self.mass,
+                    n_servos=self.n_servos,
                     duty=beh[i][0], height=beh[i][1], wheel_share=beh[i][2],
                     yaw=float(yaw[i]), progress=float(progress[i]),
                     upright=float(upsum[i] / ticks[i]) if ticks[i] else 1.0,

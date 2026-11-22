@@ -172,15 +172,24 @@ def _sample(
     xmat: wp.array2d(dtype=wp.mat33),
     torso: int,
     done: wp.array(dtype=int),
+    fell: wp.array(dtype=int),
+    step: wp.array(dtype=int),
+    hold: int,
     zsum: wp.array(dtype=float),
     upsum: wp.array(dtype=float),
     tiltsum: wp.array(dtype=float),
     ticks: wp.array(dtype=int),
+    live: wp.array(dtype=int),
 ):
-    """Torso height, uprightness and tilt angle of one behaviour tick."""
+    """Torso height, uprightness and tilt angle of one behaviour tick. The
+    tick a fall was seen on still counts, as in Episode.run; the ticks after
+    it do not. `step` freezes on the fall step, so a multiple of `hold` there
+    means the fall landed on this sample."""
     w = wp.tid()
-    if done[w] != 0:
+    if done[w] != 0 and (fell[w] == 0 or step[w] % hold != 0):
+        live[w] = 0
         return
+    live[w] = 1
     c = xmat[w, torso][2, 2]
     zsum[w] = zsum[w] + xpos[w, torso][2]
     upsum[w] = upsum[w] + c
@@ -222,7 +231,7 @@ def _contacts(
 
 @wp.kernel
 def _touch(
-    done: wp.array(dtype=int),
+    live: wp.array(dtype=int),
     xpos: wp.array2d(dtype=wp.vec3),
     tip_geom: wp.array(dtype=int),
     feet: wp.array(dtype=int),
@@ -237,7 +246,7 @@ def _touch(
     of feet that touched on two consecutive ticks, then clear the contacts."""
     w, k = wp.tid()
     on = hit[w, k]
-    if done[w] == 0:
+    if live[w] != 0:
         touch[w, k] = touch[w, k] + on
         pos = xpos[w, tip_geom[k]]
         if on > 0.5 and prev_touch[w, k] > 0.5 and feet[k] != 0:
@@ -252,7 +261,7 @@ def _touch(
 
 @wp.kernel
 def _servo_ground(
-    done: wp.array(dtype=int),
+    live: wp.array(dtype=int),
     sghit: wp.array(dtype=float),
     bghit: wp.array(dtype=float),
     sgsum: wp.array(dtype=float),
@@ -260,7 +269,7 @@ def _servo_ground(
 ):
     """Add this tick's servo housing and body contact of the worlds still running."""
     w = wp.tid()
-    if done[w] == 0:
+    if live[w] != 0:
         sgsum[w] = sgsum[w] + sghit[w]
         bgsum[w] = bgsum[w] + bghit[w]
     sghit[w] = 0.0
@@ -281,6 +290,7 @@ class WarpBatchEpisode:
         self.layout = ep.layout
         self.buildable = ep.buildable
         self.mass = ep.mass
+        self.n_servos = ep.morph.n_servos
         self.hold = ep.hold
         self.n_steps = ep.n_steps
         self.dt = float(ep.model.opt.timestep)
@@ -360,6 +370,7 @@ class WarpBatchEpisode:
              "prev_touch": zeros((n, self.n_tips)),
              "sghit": zeros(n),
              "done": zeros(n, wp.int32), "fell": zeros(n, wp.int32),
+             "live": zeros(n, wp.int32),
              "unstable": zeros(n, wp.int32), "touch": zeros((n, self.n_tips)), "hit": zeros((n, self.n_tips)),
              "theta": zeros((n, nu)), "target": zeros((n, nu)),
              "ring": zeros((n, nlat, nu)),
@@ -406,18 +417,20 @@ class WarpBatchEpisode:
         if not sample:
             return
         wp.launch(_sample, dim=d.nworld, device=dev, inputs=[
-            d.xpos, d.xmat, self.torso, b["done"]],
-            outputs=[b["zsum"], b["upsum"], b["tiltsum"], b["ticks"]])
+            d.xpos, d.xmat, self.torso, b["done"], b["fell"], b["step"],
+            self.hold],
+            outputs=[b["zsum"], b["upsum"], b["tiltsum"], b["ticks"],
+                     b["live"]])
         wp.launch(_contacts, dim=d.contact.geom.shape[0], device=dev,
                   inputs=[d.nacon, d.contact.worldid, d.contact.geom,
                           self.robot, self.servo, self.body, self.tip_of],
                   outputs=[b["hit"], b["sghit"], b["bghit"]])
         wp.launch(_touch, dim=(d.nworld, self.n_tips), device=dev,
-                  inputs=[b["done"], d.geom_xpos, self.tip_geom, self.feet,
+                  inputs=[b["live"], d.geom_xpos, self.tip_geom, self.feet,
                           self.hold * self.dt],
                   outputs=[b["hit"], b["touch"], b["prev_pos"],
                            b["prev_touch"], b["slipsum"]])
-        wp.launch(_servo_ground, dim=d.nworld, device=dev, inputs=[b["done"]],
+        wp.launch(_servo_ground, dim=d.nworld, device=dev, inputs=[b["live"]],
                   outputs=[b["sghit"], b["bghit"], b["sgsum"], b["bgsum"]])
 
     def _reset(self, b: dict) -> None:
@@ -497,7 +510,8 @@ class WarpBatchEpisode:
     def finish(self, token) -> List[Metrics]:
         n, b = token
         if b is None:
-            return [Metrics(0.0, 0.0, 0.0, False, True, 0.0, self.mass)] * n
+            return [Metrics(0.0, 0.0, 0.0, False, True, 0.0, self.mass,
+                            self.n_servos)] * n
         if self.stream is not None:
             wp.synchronize_stream(self.stream)
         return self._metrics(b, n)
@@ -527,7 +541,8 @@ class WarpBatchEpisode:
                           else 0.0 if out["fell"][i] else float(out["dx"][i])) * keep,
                 energy=float(out["energy"][i]), fell=bool(out["fell"][i]),
                 unstable=unstable, duration=float(out["duration"][i]),
-                mass=self.mass, duty=duty, height=height, wheel_share=share,
+                mass=self.mass, n_servos=self.n_servos, duty=duty, height=height,
+                wheel_share=share,
                 yaw=float(out["yaw"][i]) * keep,
                 upright=(float(out["upsum"][i]) / int(out["ticks"][i])
                          if out["ticks"][i] else 1.0),

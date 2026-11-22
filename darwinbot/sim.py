@@ -50,6 +50,7 @@ class Metrics:
     unstable: bool    # physics blew up (NaN or runaway velocity)
     duration: float   # simulated seconds before the episode ended
     mass:     float   # total robot mass (kg)
+    n_servos: int = 0       # servos of the body (joints, segments and wheels)
     duty:     float = 0.0   # mean fraction of control ticks a terminal point touches the ground
     height:   float = 0.0   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
@@ -346,9 +347,6 @@ class Episode:
                 unstable = True
                 break
             t_prev = d.time
-            if xmat[8] < UPRIGHT_MIN:
-                fell = True
-                break
             if n == mid:
                 x_mid = float(xpos[0])
             if n % hold == 0:          # behaviour sampled once per control tick
@@ -365,6 +363,11 @@ class Episode:
                 upsum += float(xmat[8])
                 tiltsum += math.acos(min(1.0, max(-1.0, float(xmat[8]))))
                 ticks += 1
+            if xmat[8] < UPRIGHT_MIN:
+                # The tick a fall is seen on still counts in the behaviour
+                # sample (as the compiled loop and the GPU ones do).
+                fell = True
+                break
 
         return (energy, yaw, fell, unstable, x_mid, touch, zsum, upsum, ticks,
                 tiltsum, slipsum, sgsum, bgsum)
@@ -412,6 +415,7 @@ class Episode:
                       float(x - x0) if x_mid is None else 2.0 * float(x - x_mid)),
             energy=energy, fell=fell, unstable=unstable,
             duration=float(d.time), mass=self.mass,
+            n_servos=self.morph.n_servos,
             duty=duty, height=height, wheel_share=share,
             yaw=yaw if not unstable else 0.0,
             upright=upsum / ticks if ticks else 1.0,

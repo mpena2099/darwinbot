@@ -23,14 +23,17 @@ metrics the rules read (`tilt`, `slip`, `servo_ground`) are always measured, in
   fall_zero     an episode that ends in a fall earns no progress credit (only
                 FALL_PENALTY is left), in every task
 """
+import os
 from typing import Iterable
 
 NAMES = ("worse_turn", "turn_forward", "tilt", "slip", "servo_ground",
          "body_ground", "energy_abs", "basal", "fall_zero")
 
 # Score units (metres) per servo and per kg of rule `basal`, tuned by the gate.
-BASAL_PER_SERVO = 0.01
-BASAL_PER_KG = 0.05
+# DARWINBOT_BASAL_SCALE multiplies both, for the strength gate (1 = these values).
+BASAL_SCALE = float(os.environ.get("DARWINBOT_BASAL_SCALE", "1"))
+BASAL_PER_SERVO = 0.01 * BASAL_SCALE
+BASAL_PER_KG = 0.05 * BASAL_SCALE
 
 _active: frozenset = frozenset()
 

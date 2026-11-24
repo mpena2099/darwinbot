@@ -1962,17 +1962,35 @@ def _op_scale(morph, rng):
 MUTATIONS = ((_op_param, 0.30), (_op_type, 0.15), (_op_add, 0.2),
              (_op_remove, 0.1), (_op_mirror, 0.15), (_op_copy, 0.05),
              (_op_scale, 0.05))
+# Optional biases on the add/remove pair; "default" keeps MUTATIONS as is.
+MUTATION_BIASES = {"remove": {_op_add: 0.10, _op_remove: 0.25}}
+_mutation_bias = "default"
+
+
+def set_mutation_bias(bias: str = "default") -> None:
+    """Operator weights of later mutations; workers get the run's value too."""
+    global _mutation_bias
+    if bias != "default" and bias not in MUTATION_BIASES:
+        raise ValueError(f"mutation_bias must be one of {('default', *MUTATION_BIASES)}")
+    _mutation_bias = bias
+
+
+def mutation_weights(bias: Optional[str] = None) -> np.ndarray:
+    """Probabilities of the mutation operators; None uses the current bias."""
+    override = MUTATION_BIASES.get(_mutation_bias if bias is None else bias, {})
+    return np.array([override.get(op, p) for op, p in MUTATIONS])
 
 
 def mutate(genes: np.ndarray, rng: np.random.Generator,
-           n_ops: Optional[int] = None, mirror_p: float = 0.0) -> np.ndarray:
+           n_ops: Optional[int] = None, mirror_p: float = 0.0,
+           mutation_bias: Optional[str] = None) -> np.ndarray:
     """Apply 1 to 3 tree operators to the decoded body, then repair. With
     mirror_p > 0, that share of mutations copies the limb that changed onto its
     mirror slot afterwards, so a symmetric body can stay symmetric (and a
     mutation can build one); no extra random number is drawn at 0."""
     morph = decode(genes)
     before = morph.copy() if mirror_p > 0 else None
-    probs = np.array([p for _, p in MUTATIONS])
+    probs = mutation_weights(mutation_bias)
     for _ in range(n_ops or int(rng.integers(1, 4))):
         op, _ = MUTATIONS[int(rng.choice(len(MUTATIONS), p=probs / probs.sum()))]
         op(morph, rng)

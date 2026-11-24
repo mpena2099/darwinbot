@@ -138,6 +138,14 @@ def main():
                         "mirror slot, so symmetric bodies can arise and compete; "
                         "0 (default) turns it off and changes nothing; not stored in "
                         "the archive and never part of the score")
+    p.add_argument("--mutation-bias", choices=("default", "remove"), default="default",
+                   help="weigh the add/remove mutation operators towards smaller "
+                        "bodies (add 0.10, remove 0.25 instead of 0.20/0.10); "
+                        "default leaves all weights as they are; stored in the archive")
+    p.add_argument("--tie-parts", type=float, default=0.0, metavar="EPS",
+                   help="let a child with fewer body parts take an occupied cell when "
+                        "its objective is within EPS relative of the incumbent's; "
+                        "0 (default) turns it off; stored in the archive")
     p.add_argument("--screen", type=float, default=1.0, metavar="SHARE",
                    help="cheap evaluation first: every child whose body changed gets "
                         "one quick score (its inherited controller, one flat episode), "
@@ -188,6 +196,8 @@ def main():
         raise SystemExit("--protect-new must be >= 1.0 (1.0 turns it off)")
     if not 0.0 <= a.mirror_p <= 1.0:
         raise SystemExit("--mirror-p must be in [0, 1] (0 turns it off)")
+    if a.tie_parts < 0.0:
+        raise SystemExit("--tie-parts must be >= 0 (0 turns it off)")
     if not 0.0 < a.screen <= 1.0:
         raise SystemExit("--screen must be in (0, 1] (1.0 turns it off)")
 
@@ -240,7 +250,8 @@ def main():
                   body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
                   variant_mode=a.variant_mode, protect_new=a.protect_new,
-                  mirror_p=a.mirror_p, deterministic=a.deterministic,
+                  mirror_p=a.mirror_p, mutation_bias=a.mutation_bias,
+                  tie_parts=a.tie_parts, deterministic=a.deterministic,
                   screen=a.screen)
     forward = "forward" in a.ablate     # the forward task replaces steer
 

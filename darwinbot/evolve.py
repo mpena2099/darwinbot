@@ -432,13 +432,24 @@ class Archive:
         grid = self._ensure(len(elite.scores))
         # an archive written before body_ground stores a narrower record
         width = grid.data()["behaviour"].shape[1]
+        cell = cell_of(elite.behaviour, self.n_descriptors)
+        eps = self.search.get("tie_parts", 0.0)
+        incumbent = self.cells.get(cell) if eps > 0 else None   # off: no extra work
+        if (incumbent is not None and np.isfinite(elite.fitness)
+                and np.isfinite(incumbent.fitness)
+                and elite.fitness <= incumbent.fitness
+                and elite.fitness >= incumbent.fitness - eps * abs(incumbent.fitness)
+                and len(morpho.decode(elite.morph).nodes)
+                    < len(morpho.decode(incumbent.morph).nodes)):
+            # ribs only replaces a cell on a strictly better objective; lower the
+            # incumbent's threshold so this smaller body can take the cell instead
+            grid._store._fields["threshold"][cell] = -np.inf
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
                         measures=[normalise(elite.behaviour, self.n_descriptors)],
                         ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
                         behaviour=[elite.behaviour[:width]])
         added = int(info["status"][0]) != 0
         if added:
-            cell = cell_of(elite.behaviour, self.n_descriptors)
             number = elite.uid
             if number < 0 or any(u == number for c, u in self.uids.items() if c != cell):
                 number = self.next_uid          # new robot, or a uid another cell holds
@@ -676,7 +687,8 @@ def child_budget(m: dict, budget: int, protect_new: float = 1.0) -> int:
 
 SEARCH_FLAGS = {"parent_selection": "--parent-selection", "inner_strategy": "--inner-strategy",
                 "variant_mode": "--variant-mode", "protect_new": "--protect-new",
-                "mirror_p": "--mirror-p", "batch_size": "--batch-size",
+                "mirror_p": "--mirror-p", "mutation_bias": "--mutation-bias",
+                "tie_parts": "--tie-parts", "batch_size": "--batch-size",
                 "budget_init": "--budget-init", "budget_child": "--budget-child",
                 "deterministic": "--deterministic",
                 "screen": "--screen"}           # Archive.search keys and their train.py flags
@@ -686,7 +698,8 @@ def _shown(value):
     return "default" if value is None else value
 
 
-def offspring(parent, donor, grafted: bool, rng, mirror_p: float = 0.0) -> tuple:
+def offspring(parent, donor, grafted: bool, rng, mirror_p: float = 0.0,
+              mutation_bias: Optional[str] = None) -> tuple:
     """(child, origin) of one offspring: a graft of a donor's limb, or a mutation
     of the parent. A graft that fits no slot gives the parent's body back, so it
     is a plain mutation."""
@@ -694,7 +707,10 @@ def offspring(parent, donor, grafted: bool, rng, mirror_p: float = 0.0) -> tuple
         child = morpho.graft(parent, donor, rng)
         if not np.array_equal(child, parent):
             return child, "graft"
-    return morpho.mutate(parent, rng, mirror_p=mirror_p), "mutate"
+    kwargs = {"mirror_p": mirror_p}
+    if mutation_bias is not None:       # callers without a bias keep the old call
+        kwargs["mutation_bias"] = mutation_bias
+    return morpho.mutate(parent, rng, **kwargs), "mutate"
 
 
 SCREENED_ORIGINS = ("mutate", "graft")
@@ -724,6 +740,7 @@ def _work(job):
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
      device, popsize, variants, parent, task, payload) = job[:13]
     opts = job[13] if len(job) > 13 else {}     # inner-loop options of this job
+    morpho.set_mutation_bias(opts.get("mutation_bias", "default"))
     tdir = trace.directory()      # tracing: a 15th job element is the batch index
     t0 = time.time()
     rec = trace.Recorder() if tdir else None
@@ -833,6 +850,8 @@ def run(
     variant_mode: str = "all",
     protect_new: float = 1.0,
     mirror_p: float = 0.0,
+    mutation_bias: str = "default",
+    tie_parts: float = 0.0,
     deterministic: bool = False,
     screen: float = 1.0,
 ) -> Archive:
@@ -848,6 +867,9 @@ def run(
         raise ValueError("protect_new must be >= 1.0 (1.0 turns it off)")
     if not 0.0 <= mirror_p <= 1.0:
         raise ValueError("mirror_p must be in [0, 1] (0 turns it off)")
+    morpho.set_mutation_bias(mutation_bias)     # also validates the name
+    if tie_parts < 0.0:
+        raise ValueError("tie_parts must be >= 0 (0 turns it off)")
     if not 0.0 < screen <= 1.0:
         raise ValueError("screen must be in (0, 1] (1.0 turns it off)")
     if screen < 1.0 and device in ("gpu", "warp"):
@@ -894,7 +916,8 @@ def run(
                           axes=axes, plugin=plugin or {})
     search = {"parent_selection": parent_selection, "inner_strategy": inner_strategy,
               "variant_mode": variant_mode, "protect_new": protect_new,
-              "mirror_p": mirror_p, "batch_size": batch_size,
+              "mirror_p": mirror_p, "mutation_bias": mutation_bias,
+              "tie_parts": tie_parts, "batch_size": batch_size,
               "budget_init": budget_init, "budget_child": budget_child,
               "deterministic": deterministic,
               "screen": screen}
@@ -930,6 +953,7 @@ def run(
     def inner_opts(parent_genes=None) -> dict:
         """Inner-loop options of one job; focused needs the parent's body genes."""
         return {"strategy": inner_strategy, "variant_mode": variant_mode,
+                "mutation_bias": mutation_bias,
                 "parent_genes": None if parent_genes is None else np.array(parent_genes)}
 
     def make_batch() -> list:
@@ -963,7 +987,7 @@ def run(
                 donor = parents["solution"][(i + 1) % batch_size]
                 for _ in range(LOCK_TRIES):
                     child, origin = offspring(parent, donor, rng.random() < GRAFT_P,
-                                              rng, mirror_p)
+                                              rng, mirror_p, mutation_bias)
                     if morpho.keeps_locked(child, parent, archive.locked):
                         break
                 else:                    # same body, its controller searched again
@@ -988,6 +1012,8 @@ def run(
           + (f" variant_mode={variant_mode}" if variant_mode != "all" else "")
           + (f" protect_new={protect_new}" if protect_new != 1.0 else "")
           + (f" mirror_p={mirror_p}" if mirror_p else "")
+          + (f" mutation_bias={mutation_bias}" if mutation_bias != "default" else "")
+          + (f" tie_parts={tie_parts}" if tie_parts else "")
           + (f" screen={screen}" if screen != 1.0 else "")
           + (" deterministic" if deterministic else ""))
     if device == "gpu" or (device == "warp" and workers == 1):

@@ -172,9 +172,10 @@ def main():
                         "no-wheels, no-passive, no-segments, max-servos=N, "
                         "legs=A..B, max-size=MM, bed=MM; stored in the archive")
     p.add_argument("--axes", choices=evolve.AXES, default="default",
-                   help="archive descriptors: default (five) or body (five plus the "
-                        "share of ticks the torso touches the ground); stored in the "
-                        "archive, new archives only")
+                   help="archive descriptors: default (five), body (five plus the "
+                        "share of ticks the torso touches the ground) or r1 (the four "
+                        "release-1 descriptors, no servo count, 500 cells); stored in "
+                        "the archive, new archives only")
     a = p.parse_args()
     rules_given = a.rules is not None          # None: keep the archive's rules on resume
     a.rules = tuple(n for n in (a.rules or "").split(",") if n)

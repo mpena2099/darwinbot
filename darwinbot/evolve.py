@@ -19,7 +19,9 @@ trotter, and so on.
 
 An experiment may add body_ground (the share of ticks the torso itself touches
 the ground) as a sixth axis (`train.py --axes body`), which only applies to a
-new archive: `Archive.axes` says which descriptors a grid holds.
+new archive: `Archive.axes` says which descriptors a grid holds. The release 1
+axes (`train.py --axes r1`) keep the four original descriptors, without the
+servo count, in a 500-cell archive.
 
 New bodies are mutated copies of elites drawn with probability proportional to
 their novelty (mean distance to the k nearest elites in descriptor space), or
@@ -57,7 +59,7 @@ from darwinbot.sim import (COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behavi
 from darwinbot.terrain import flat, get_terrains
 
 BODY_MODEL = 26                     # bump when the genome meaning changes
-N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
+N_CELLS    = 800                    # CVT cells of the default and body archives
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
@@ -187,36 +189,56 @@ Cell = int                          # index of the CVT cell
 
 
 N_DESCRIPTORS = 5
-AXES = ("default", "body")      # archive axes: five, or five plus body_ground
-                                # (experiments; stored in the Archive)
+R1_DESCRIPTORS = 4              # r1: duty, height, legs, cot (no servo count)
+R1_CELLS = 500                  # r1 CVT grid, cached apart from the 800-cell grids
+AXES = ("default", "body", "r1")   # experiment options, stored in the Archive
+AXES_SPEC = {                   # axes -> (descriptors, CVT cells)
+    "default": (N_DESCRIPTORS, N_CELLS),
+    "body": (N_DESCRIPTORS + 1, N_CELLS),
+    "r1": (R1_DESCRIPTORS, R1_CELLS),
+}
+
+
+def _descriptor_count(axes_or_n) -> int:
+    """Axes name or descriptor count -> descriptor count (call sites that hold
+    an Archive pass n_descriptors; scripts may pass the name instead)."""
+    return AXES_SPEC[axes_or_n][0] if isinstance(axes_or_n, str) else int(axes_or_n)
 
 
 def normalise(behaviour, n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
     """Descriptor in [0, 1]^n_descriptors (duty, height, servos, legs, cot and,
     for a body archive, body_ground: the archive axes, not the order of the
     Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost
-    of transport spans decades, so it is taken in log."""
+    of transport spans decades, so it is taken in log. The r1 archive drops the
+    servo-count axis."""
+    n = _descriptor_count(n_descriptors)
     b = Behaviour.of(behaviour)
     cot = np.log(np.clip(b.cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    point = [b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
-             b.legs / morpho.MAX_LEGS, cot]
-    if n_descriptors > N_DESCRIPTORS:
-        point.append(b.body_ground)     # already a share
-    return np.clip(point[:n_descriptors], 0.0, 1.0)
+    if n == R1_DESCRIPTORS:
+        point = [b.duty, b.height / HEIGHT_MAX, b.legs / morpho.MAX_LEGS, cot]
+    else:
+        point = [b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
+                 b.legs / morpho.MAX_LEGS, cot]
+        if n > N_DESCRIPTORS:
+            point.append(b.body_ground)     # already a share
+    return np.clip(point[:n], 0.0, 1.0)
 
 
 @lru_cache(maxsize=None)             # one centroid set per axis count
 def _centroids(n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
-    probe = CVTArchive(solution_dim=1, centroids=N_CELLS,
-                       ranges=[(0.0, 1.0)] * n_descriptors,
+    n = _descriptor_count(n_descriptors)
+    probe = CVTArchive(solution_dim=1,
+                       centroids=R1_CELLS if n == R1_DESCRIPTORS else N_CELLS,
+                       ranges=[(0.0, 1.0)] * n,
                        seed=CVT_SEED, samples=20000)
     return np.array(probe.centroids)
 
 
 def cell_of(behaviour, n_descriptors: int = N_DESCRIPTORS) -> Cell:
-    """CVT cell of a Behaviour."""
-    point = normalise(behaviour, n_descriptors)
-    return int(np.argmin(((_centroids(n_descriptors) - point) ** 2).sum(axis=1)))
+    """CVT cell of a Behaviour in the given archive axes."""
+    n = _descriptor_count(n_descriptors)
+    point = normalise(behaviour, n)
+    return int(np.argmin(((_centroids(n) - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
@@ -309,7 +331,7 @@ class Archive:
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     body:     str = ""         # body_options limits, as given to train.py --body
-    axes:     str = "default"  # AXES: archive descriptors, five or with body_ground
+    axes:     str = "default"  # AXES: default, body or r1 (new archives only)
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
     plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
@@ -322,8 +344,8 @@ class Archive:
 
     @property
     def n_descriptors(self) -> int:
-        """Archive axes: five, or six with body_ground on top."""
-        return N_DESCRIPTORS + 1 if self.axes == "body" else N_DESCRIPTORS
+        """Archive axes: five by default, six with body_ground, four for r1."""
+        return AXES_SPEC.get(self.axes, AXES_SPEC["default"])[0]
 
     def _ensure(self, n_scores: int) -> CVTArchive:
         """Build the ribs archive on first insert, when score count is known."""
@@ -476,7 +498,7 @@ class Archive:
             raise ValueError("archive from an older body model, retrain")
         if grid is not None and not _stale_ok:
             axes = state.get("axes", "default")
-            n_descriptors = N_DESCRIPTORS + 1 if axes == "body" else N_DESCRIPTORS
+            n_descriptors = AXES_SPEC.get(axes, AXES_SPEC["default"])[0]
             if grid.measure_dim != n_descriptors:
                 raise ValueError(
                     f"archive with {grid.measure_dim} archive axes, this archive "
@@ -493,7 +515,7 @@ class Archive:
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
         self.__dict__.setdefault("body", "")          # nor body options
-        self.__dict__.setdefault("axes", "default")   # nor a sixth archive axis
+        self.__dict__.setdefault("axes", "default")   # nor a different axes option
         self.__dict__.setdefault("locked", ())        # nor locked parts
         self.__dict__.setdefault("plugin", {})        # nor plugins
         self.__dict__.setdefault("search", {})        # nor search options

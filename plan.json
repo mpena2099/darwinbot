@@ -1,0 +1,64 @@
+{
+ "name": "gate-wt-basal",
+ "train_limit": 28000,
+ "summary": false,
+ "commits": {
+  "basal": "e3adbedb8ae6ee2a1667e2814c651cf7b71c2c50"
+ },
+ "islands": {
+  "b5wt-383": [
+   16,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --rules basal,worse_turn",
+   false,
+   "basal",
+   {
+    "DARWINBOT_BASAL_SCALE": "5"
+   }
+  ],
+  "b20wt-383": [
+   16,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --rules basal,worse_turn",
+   false,
+   "basal",
+   {
+    "DARWINBOT_BASAL_SCALE": "20"
+   }
+  ],
+  "wt-383": [
+   16,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --rules worse_turn",
+   false,
+   "basal"
+  ],
+  "b5wt-384": [
+   16,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules basal,worse_turn",
+   false,
+   "basal",
+   {
+    "DARWINBOT_BASAL_SCALE": "5"
+   }
+  ],
+  "b20wt-384": [
+   16,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules basal,worse_turn",
+   false,
+   "basal",
+   {
+    "DARWINBOT_BASAL_SCALE": "20"
+   }
+  ],
+  "wt-384": [
+   16,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules worse_turn",
+   false,
+   "basal"
+  ],
+  "none-383": [
+   16,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383",
+   false,
+   "basal"
+  ]
+ }
+}

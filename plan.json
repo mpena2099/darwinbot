@@ -1,9 +1,11 @@
 {
- "name": "gate-wt-basal",
+ "name": "gate-wt-basal-r1r2",
  "train_limit": 28000,
  "summary": false,
  "commits": {
-  "basal": "e3adbedb8ae6ee2a1667e2814c651cf7b71c2c50"
+  "basal": "e3adbedb8ae6ee2a1667e2814c651cf7b71c2c50",
+  "r1": "76a5ee2375c7f7809f10b7af9d0fe6f93915ff50",
+  "r2": "1543c53c1ae988e66022570cbea597a2026851b2"
  },
  "islands": {
   "b5wt-383": [
@@ -30,35 +32,29 @@
    false,
    "basal"
   ],
-  "b5wt-384": [
-   16,
-   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules basal,worse_turn",
-   false,
-   "basal",
-   {
-    "DARWINBOT_BASAL_SCALE": "5"
-   }
-  ],
-  "b20wt-384": [
-   16,
-   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules basal,worse_turn",
-   false,
-   "basal",
-   {
-    "DARWINBOT_BASAL_SCALE": "20"
-   }
-  ],
-  "wt-384": [
-   16,
-   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules worse_turn",
-   false,
-   "basal"
-  ],
   "none-383": [
    16,
    "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383",
    false,
    "basal"
+  ],
+  "r1-383": [
+   16,
+   "--terrains flat --task steer --seed 383",
+   false,
+   "r1"
+  ],
+  "r2-383": [
+   16,
+   "--terrains flat --task steer --seed 383",
+   false,
+   "r2"
+  ],
+  "r1-384": [
+   16,
+   "--terrains flat --task steer --seed 384",
+   false,
+   "r1"
   ]
  }
 }

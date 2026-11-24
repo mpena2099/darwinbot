@@ -74,6 +74,7 @@ clash on a slot or break a limit are dropped. Mutation works on the tree
 Frames: X forward, Y left, Z up in the torso frame.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
@@ -1676,7 +1677,9 @@ def _add_segment(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     return i
 
 
-WHEEL_LIMB_P = 0.15   # share of limbs that are a single wheel bolted to the torso
+# share of limbs that are a single wheel bolted to the torso; DARWINBOT_WHEEL_LIMB_P
+# overrides it for the single-change gate (the draw is made either way, so 0.15 is unchanged)
+WHEEL_LIMB_P = float(os.environ.get("DARWINBOT_WHEEL_LIMB_P", "0.15"))
 
 
 def _grow_limb(morph: Morphology, rng, slot: int) -> Optional[int]:

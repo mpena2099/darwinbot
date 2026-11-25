@@ -94,6 +94,8 @@ STRAIGHT     = ((0.0, 1.0),)   # other tasks: one straight episode, full speed
 # the turn gate (at 0.2 a full 90-degree turn earns 0.31 m against 2.5-4 m of straight progress)
 TURN_SCALE   = float(os.environ.get("DARWINBOT_TURN_SCALE", "0.2"))
 HEADING_W    = 0.2     # m per radian of heading lost on a straight walk
+# DARWINBOT_TURN_IN_PLACE=1 drops the distance cap on turn credit, so a pivot earns too (turn gate)
+TURN_IN_PLACE = os.environ.get("DARWINBOT_TURN_IN_PLACE", "0") == "1"
 TURN_CAP     = math.pi / 2   # rad: no credit for turning more than 90 degrees
 TILT_W         = 0.2   # m per radian of mean tilt (rule `tilt`): 10 degrees costs 0.035 m
 SLIP_W         = 0.2   # m per m/s of summed foot sliding speed (rule `slip`)
@@ -209,7 +211,9 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         dist = math.hypot(m.dx, m.dy)
         if rules.active("turn_forward") and m.dx <= 0:
             dist = 0.0
-        turn = min(TURN_SCALE * min(-c * m.yaw, TURN_CAP), dist)
+        turn = TURN_SCALE * min(-c * m.yaw, TURN_CAP)
+        if not TURN_IN_PLACE:      # default: a turn earns at most the distance walked
+            turn = min(turn, dist)
         s = credit(turn, m) - ENERGY_W * m.energy / (m.mass * G) - rule_cost(m)
         turns.append(s - FALL_PENALTY if m.fell else s)
     turn = min(turns) if rules.active("worse_turn") else np.mean(turns)

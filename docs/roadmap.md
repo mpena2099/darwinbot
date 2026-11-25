@@ -333,3 +333,10 @@ than evolve missions. What it would take:
 - **Mapping**: with the 2D lidar publishing `/scan`, the usual ROS 2 SLAM and
   Nav2 stack builds a map and plans routes; the evolved gait follows the
   `Twist` it sends.
+- **Sideways walking**: a third command, lateral speed, would let a robot
+  strafe without turning its body (the `linear.y` of a `Twist`), useful to
+  dodge or line up with a door. Today the score measures progress along the
+  torso's axis and charges sideways drift, so a crab-shaped robot can appear
+  but must walk along its own axis. It needs a new gene pair per joint, a
+  firmware change and a task that scores lateral motion, with its own gate.
+  Only after turning works well.

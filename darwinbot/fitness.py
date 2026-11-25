@@ -71,6 +71,7 @@ Optional rules (darwinbot/rules.py, off by default, switched on per run with
 """
 
 import math
+import os
 from typing import Sequence
 
 import numpy as np
@@ -89,8 +90,10 @@ TASKS        = BUILTIN_TASKS   # known task names; register_task() keeps it upda
 SPEED_ASKED  = 0.5     # speed command of the slow episode of the steer task
 COMMANDS     = {"steer": ((0.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (0.0, SPEED_ASKED))}
 STRAIGHT     = ((0.0, 1.0),)   # other tasks: one straight episode, full speed
-TURN_SCALE   = 0.2     # m per radian of heading turned the way asked
-HEADING_W    = TURN_SCALE   # m per radian of heading lost on a straight walk
+# m per radian of heading turned the way asked; DARWINBOT_TURN_SCALE overrides it for
+# the turn gate (at 0.2 a full 90-degree turn earns 0.31 m against 2.5-4 m of straight progress)
+TURN_SCALE   = float(os.environ.get("DARWINBOT_TURN_SCALE", "0.2"))
+HEADING_W    = 0.2     # m per radian of heading lost on a straight walk
 TURN_CAP     = math.pi / 2   # rad: no credit for turning more than 90 degrees
 TILT_W         = 0.2   # m per radian of mean tilt (rule `tilt`): 10 degrees costs 0.035 m
 SLIP_W         = 0.2   # m per m/s of summed foot sliding speed (rule `slip`)

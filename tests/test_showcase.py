@@ -182,3 +182,56 @@ def test_strict_body_with_only_belly_robots_stops(tmp_path):
     with pytest.raises(SystemExit, match="slides on its body"):
         showcase.main(["--archive", str(tmp_path / "a.pkl"), "--types", names[0.93],
                        "--out", str(tmp_path / "s"), "--strict-body"])
+
+
+def test_two_robots_in_one_cell_both_reach_the_snapshot(tmp_path, monkeypatch):
+    import dataclasses
+    import pickle
+    import numpy as np
+    from darwinbot import controller as ctl, evolve, morphology as mo
+    from darwinbot.sim import Behaviour
+
+    a = evolve.Archive(terrains="flat", seconds=1.0, variants=0, task="forward")
+    rng = np.random.default_rng(1)
+    for duty in (0.25, 0.65):                      # two cells in the input archive
+        b = Behaviour(duty, 0.5, 4.0, 0.0, 2.0, 4.0, 0.1)
+        a.insert(evolve.Elite(mo.encode(mo.template(2)), rng.random(ctl.CTRL_LENGTH),
+                              duty, [duty], 0, b))
+    src = tmp_path / "a.pkl"
+    with open(src, "wb") as f:
+        pickle.dump(a, f)
+    uids = [e.uid for e in a.cells.values()]
+    shared = Behaviour(0.5, 0.5, 4.0, 0.0, 2.0, 4.0, 0.1)   # one cell after the stage
+    want = sorted((u, f"{evolve.type_name(shared)}-{u}") for u in uids)
+    snapshotted = []
+
+    def fake_run(stage, argv, log=None):
+        if stage.startswith(("polish", "prune")):
+            one = showcase._load(argv[argv.index("--archive") + 1])
+            out = one.like()
+            for t in argv[argv.index("--types") + 1].split(","):
+                e = next(e for e in one.cells.values() if e.uid == int(t))
+                out.insert(dataclasses.replace(e, behaviour=shared, fitness=int(t) / 10))
+            with open(argv[argv.index("--out") + 1], "wb") as f:
+                pickle.dump(out, f)
+        elif stage.startswith("validate"):
+            return "robot (n=5): PASS"
+        elif stage == "assembly":
+            return "0 clash"
+        elif stage == "snapshot":
+            specs = [s for i, s in enumerate(argv) if argv[i - 1] == "--robot"]
+            names = []
+            for spec in specs:
+                path, uid, name = spec.split(":")
+                robot = next(iter(showcase._load(path).cells.values()))
+                names.append((robot.uid, name))
+            snapshotted.append(sorted(names))
+        return ""
+
+    monkeypatch.setattr(showcase, "_run", fake_run)
+    out = tmp_path / "s"
+    showcase.main(["--archive", str(src), "--types", ",".join(map(str, uids)),
+                   "--out", str(out)])
+    assert snapshotted == [want]
+    summary = (out / "summary.txt").read_text()
+    assert all(f"{evolve.type_name(shared)}-{u}" in summary for u in uids)

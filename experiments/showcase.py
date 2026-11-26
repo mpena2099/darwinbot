@@ -14,8 +14,10 @@ The output directory must not exist yet. It receives polished.pkl, pruned.pkl,
 validate.txt, final.pkl, assembly.txt, showcase.snap.pkl, exports/<name>/ and
 summary.txt. Validate runs on the polished and on the pruned version of every
 robot; the pruned one is chosen if it passes, else the polished one if it
-passes, else the pruned one (marked FAIL). final.pkl holds the chosen version
-of each robot, and assembly, snapshot and export read it. The summary lists
+passes, else the pruned one (marked FAIL). Each stage that writes an archive
+runs once per robot on a one-robot archive, so two robots landing in one cell
+cannot evict each other; final.pkl holds one elite per cell, while the snapshot
+and exports read per-robot archives and keep every robot. The summary lists
 each robot's uid, name, score before and after polish and prune, both
 verdicts, the chosen version and its clash count.
 --skip leaves stages out, --budget is polish's CMA-ES budget.
@@ -30,11 +32,11 @@ import pickle
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from darwinbot import evolve   # noqa: E402
 from darwinbot.evolve import BODY_SHARE   # noqa: E402
 
 STAGES = ("polish", "prune", "validate", "assembly", "snapshot", "export")
@@ -124,6 +126,36 @@ def _by_uid(path, uids):
     return rows
 
 
+def _write_archive(base, elites, path):
+    """Write an archive with `base`'s settings, one elite per cell."""
+    out = base.like()
+    for e in elites:
+        if not out.insert(e):
+            print(f"warning: {e.uid} shares a cell; {path} keeps one of them", flush=True)
+    with open(path, "wb") as f:
+        pickle.dump(out, f)
+
+
+def _stage_each(stage, src, ids, out, work, workers, budget, plugin, rows, sources=None):
+    """Run an archive-writing stage once per robot, in a one-robot archive, so
+    no robot can evict another. Fills `rows` by uid; returns {uid: archive path}.
+    `sources`, when given, maps each uid to its own input archive."""
+    paths = {}
+    for uid in ids:
+        a = _load(sources[uid] if sources else src)
+        one = os.path.join(work, f"{uid}-in.pkl")
+        _write_archive(a, [a.cells[a.find(uid)]], one)
+        dest = os.path.join(work, f"{uid}-{FILES[stage]}")
+        argv = command(stage, one, [uid], out, workers, budget, plugin)
+        argv[argv.index("--out") + 1] = dest
+        _run(stage, argv)
+        rows.update(_by_uid(dest, [int(uid)]))
+        paths[uid] = dest
+    _write_archive(_load(src), [rows[int(u)][2] for u in ids],
+                   os.path.join(out, FILES[stage]))
+    return paths
+
+
 def _run(stage, argv, log=None):
     """Run one stage; with `log`, capture its output there and accept exit 1."""
     print(f"[{stage}] " + " ".join(argv[1:]), flush=True)
@@ -192,6 +224,11 @@ def main(argv=None):
     verdict = {"polished": ["-"] * n, "pruned": ["-"] * n}
     chosen, clashes = ["pruned"] * n, ["-"] * n
     final = None
+    scratch = tempfile.TemporaryDirectory(dir=a.out)   # removed when main returns
+    work = scratch.name
+    original = _by_uid(a.archive, uids)
+    stage_rows = {"polished": original, "pruned": original}
+    stage_files = {"polished": {}, "pruned": {}}       # uid -> one-robot archive
 
     def validate_all():
         seen = {}
@@ -202,7 +239,8 @@ def main(argv=None):
             seen[src] = version
             for i, uid in enumerate(ids):
                 text = _run(f"validate {version} {uid}",
-                            command("validate", src, [uid], a.out, a.workers,
+                            command("validate", stage_files[version].get(uid, src),
+                                    [uid], a.out, a.workers,
                                     plugin=a.plugin, max_body=a.max_body),
                             path["validate"])
                 m = re.findall(r"\): (PASS|FAIL)", text)
@@ -212,49 +250,64 @@ def main(argv=None):
 
     def write_final():
         nonlocal final, final_names
-        rows = {"polished": _by_uid(polished, uids), "pruned": _by_uid(pruned, uids)}
-        out = _load(pruned).like()
-        for i, uid in enumerate(uids):
-            if not out.insert(rows[chosen[i]][uid][2]):
-                raise SystemExit(f"{names[i]} and another chosen robot share a cell, "
-                                 "so one final.pkl cannot hold both; use polished.pkl "
-                                 "and pruned.pkl by hand")
+        base = _load(pruned)
+        out = base.like()
+        finals = {}
+        for i, uid in enumerate(ids):
+            e = stage_rows[chosen[i]][int(uid)][2]
+            p = os.path.join(work, f"{uid}-final.pkl")
+            _write_archive(base, [e], p)
+            finals[uid] = p
+            if not out.insert(e):
+                print(f"warning: {uid} shares a cell in final.pkl; it stays in the "
+                      "snapshot and exports", flush=True)
         with open(path["final"], "wb") as f:
             pickle.dump(out, f)
         final = path["final"]
-        final_names = [out.names()[evolve.cell_of(rows[chosen[i]][uid][2].behaviour,
-                                                  out.n_descriptors)]
-                       for i, uid in enumerate(uids)]
+        final_names = [stage_rows[chosen[i]][int(uid)][1] for i, uid in enumerate(ids)]
+        return finals
 
+    final_paths = {}
     for stage in run:
         if stage in ("polish", "prune"):
             src = polished if stage == "prune" else a.archive
-            _run(stage, command(stage, src, ids, a.out, a.workers, a.budget, a.plugin))
+            sources = stage_files["polished"] if stage == "prune" else None
+            rows = {}
+            files = _stage_each(stage, src, ids, a.out, work, a.workers, a.budget,
+                                a.plugin, rows, sources)
+            fit = [rows[int(u)][0] for u in ids]
             if stage == "polish":
                 polished = pruned = path["polish"]
-                rows = _by_uid(polished, uids)
-                fit_polish = fit_prune = [rows[u][0] for u in uids]
+                fit_polish = fit_prune = fit
+                stage_files["polished"] = stage_files["pruned"] = files
+                stage_rows["polished"] = stage_rows["pruned"] = rows
             else:
                 pruned = path["prune"]
-                rows = _by_uid(pruned, uids)
-                fit_prune = [rows[u][0] for u in uids]
-            names = [rows[u][1] for u in uids]
+                fit_prune = fit
+                stage_files["pruned"] = files
+                stage_rows["pruned"] = rows
         elif stage == "validate":
             validate_all()
         else:
             if final is None:
-                write_final()
+                final_paths = write_final()
             for i, uid in enumerate(ids):
                 if stage == "assembly":
-                    text = _run(stage, command(stage, final, [uid], a.out, a.workers,
-                                               plugin=a.plugin), path["assembly"])
+                    text = _run(stage, command(stage, final_paths[uid], [uid], a.out,
+                                               a.workers, plugin=a.plugin), path["assembly"])
                     m = re.search(r"(\d+) clash", text)
                     clashes[i] = int(m.group(1)) if m else "?"
                 elif stage == "export":
-                    _run(stage, command(stage, final, [uid], a.out, plugin=a.plugin,
-                                        name=final_names[i]))
+                    _run(stage, command(stage, final_paths[uid], [uid], a.out,
+                                        plugin=a.plugin, name=final_names[i]))
             if stage == "snapshot":
-                _run(stage, command(stage, final, ids, a.out, plugin=a.plugin))
+                argv = [sys.executable, os.path.join(ROOT, "experiments/snapshot.py"),
+                        "--out", path["snapshot"]]
+                for uid, name in zip(ids, final_names):
+                    argv += ["--robot", f"{final_paths[uid]}:{uid}:{name}"]
+                if a.plugin:
+                    argv += ["--plugin", a.plugin]
+                _run("snapshot", argv)
     if final is None:
         write_final()
 

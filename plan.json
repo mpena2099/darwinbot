@@ -1,76 +1,52 @@
 {
- "name": "turn-and-terrain",
+ "name": "relative-basal-terrain",
  "train_limit": 28000,
  "summary": false,
  "commits": {
-  "turn": "fe8c93434e2e5a5ee99e0f27e146b322caa7a70f"
+  "rb": "3b8f0169e7d8f56fb0c5824c0501910a560dd5a0"
  },
  "islands": {
-  "ts10-383": [
+  "rb-t-383": [
    16,
-   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --rules basal --basal-mode relative",
    false,
-   "turn",
-   {
-    "DARWINBOT_TURN_SCALE": "2.0"
-   }
-  ],
-  "tip-383": [
-   16,
-   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383",
-   false,
-   "turn",
-   {
-    "DARWINBOT_TURN_SCALE": "2.0",
-    "DARWINBOT_TURN_IN_PLACE": "1"
-   }
-  ],
-  "cand-t-383": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments --rules basal",
-   false,
-   "turn",
-   {
-    "DARWINBOT_TURN_SCALE": "2.0",
-    "DARWINBOT_BASAL_SCALE": "5"
-   }
+   "rb"
   ],
   "none-t-383": [
    16,
    "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383",
    false,
-   "turn",
-   {
-    "DARWINBOT_TURN_SCALE": "0.2"
-   }
+   "rb"
   ],
-  "cand-t-384": [
+  "cand-t-383": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --body no-segments --rules basal",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments --rules basal --basal-mode relative --turn-scale 2.0 --turn-in-place",
    false,
-   "turn",
-   {
-    "DARWINBOT_TURN_SCALE": "2.0",
-    "DARWINBOT_BASAL_SCALE": "5"
-   }
+   "rb"
+  ],
+  "rb-t-384": [
+   16,
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules basal --basal-mode relative",
+   false,
+   "rb"
   ],
   "none-t-384": [
    16,
    "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384",
    false,
-   "turn",
-   {
-    "DARWINBOT_TURN_SCALE": "0.2"
-   }
+   "rb"
   ],
-  "nsts10-383": [
+  "cand-t-384": [
    16,
-   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --body no-segments --rules basal --basal-mode relative --turn-scale 2.0 --turn-in-place",
    false,
-   "turn",
-   {
-    "DARWINBOT_TURN_SCALE": "2.0"
-   }
+   "rb"
+  ],
+  "bg-t-383": [
+   16,
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --rules body_ground",
+   false,
+   "rb"
   ]
  }
 }

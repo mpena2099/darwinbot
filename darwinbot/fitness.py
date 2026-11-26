@@ -90,15 +90,67 @@ TASKS        = BUILTIN_TASKS   # known task names; register_task() keeps it upda
 SPEED_ASKED  = 0.5     # speed command of the slow episode of the steer task
 COMMANDS     = {"steer": ((0.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (0.0, SPEED_ASKED))}
 STRAIGHT     = ((0.0, 1.0),)   # other tasks: one straight episode, full speed
-# m per radian of heading turned the way asked; DARWINBOT_TURN_SCALE overrides it for
-# the turn gate (at 0.2 a full 90-degree turn earns 0.31 m against 2.5-4 m of straight progress)
-TURN_SCALE   = float(os.environ.get("DARWINBOT_TURN_SCALE", "0.2"))
+# m per radian of heading turned the way asked (at 0.2 a full 90-degree turn
+# earns 0.31 m against 2.5-4 m of straight progress). train.py stores these
+# settings in the archive; the env variables win while set (the turn gates).
+DEFAULT_TURN_SCALE = 0.2
+DEFAULT_TURN_IN_PLACE = False
+DEFAULT_TURN_CAP_DEG = 90.0
+
+
+def _turn_scale(value=None) -> float:
+    if "DARWINBOT_TURN_SCALE" in os.environ:
+        return float(os.environ["DARWINBOT_TURN_SCALE"])
+    return DEFAULT_TURN_SCALE if value is None else float(value)
+
+
+def _turn_in_place(value=None) -> bool:
+    if "DARWINBOT_TURN_IN_PLACE" in os.environ:
+        return os.environ["DARWINBOT_TURN_IN_PLACE"] == "1"
+    if value is None:
+        return DEFAULT_TURN_IN_PLACE
+    return value == "1" if isinstance(value, str) else bool(value)
+
+
+def _turn_cap(value=None) -> float:
+    """Radians; `value` and the env variable are in degrees."""
+    if "DARWINBOT_TURN_CAP_DEG" in os.environ:
+        return math.radians(float(os.environ["DARWINBOT_TURN_CAP_DEG"]))
+    return math.radians(DEFAULT_TURN_CAP_DEG if value is None else float(value))
+
+
+TURN_SCALE   = _turn_scale()
 HEADING_W    = 0.2     # m per radian of heading lost on a straight walk
-# DARWINBOT_TURN_IN_PLACE=1: a pivot earns turn credit, capped by the straight progress (turn gate)
-TURN_IN_PLACE = os.environ.get("DARWINBOT_TURN_IN_PLACE", "0") == "1"
-# rad: no credit for turning more than this in one episode (90 degrees); DARWINBOT_TURN_CAP_DEG
-# overrides it for the turn gate (a higher cap pays a faster turn)
-TURN_CAP     = math.radians(float(os.environ.get("DARWINBOT_TURN_CAP_DEG", "90")))
+TURN_IN_PLACE = _turn_in_place()
+TURN_CAP     = _turn_cap()
+
+
+def score_options(turn_scale=None, turn_in_place=None, turn_cap_deg=None) -> dict:
+    """Non-default turn settings for Archive.score (env wins while set)."""
+    out = {}
+    scale = _turn_scale(turn_scale)
+    if scale != DEFAULT_TURN_SCALE:
+        out["turn_scale"] = scale
+    in_place = _turn_in_place(turn_in_place)
+    if in_place != DEFAULT_TURN_IN_PLACE:
+        out["turn_in_place"] = in_place
+    if "DARWINBOT_TURN_CAP_DEG" in os.environ:
+        deg = float(os.environ["DARWINBOT_TURN_CAP_DEG"])
+    else:
+        deg = DEFAULT_TURN_CAP_DEG if turn_cap_deg is None else float(turn_cap_deg)
+    if deg != DEFAULT_TURN_CAP_DEG:
+        out["turn_cap_deg"] = deg
+    return out
+
+
+def apply_score(score: dict) -> None:
+    """Use an archive's stored settings; the environment overrides them when set."""
+    global TURN_SCALE, TURN_IN_PLACE, TURN_CAP
+    TURN_SCALE = _turn_scale(score.get("turn_scale"))
+    TURN_IN_PLACE = _turn_in_place(score.get("turn_in_place"))
+    TURN_CAP = _turn_cap(score.get("turn_cap_deg"))
+
+
 TILT_W         = 0.2   # m per radian of mean tilt (rule `tilt`): 10 degrees costs 0.035 m
 SLIP_W         = 0.2   # m per m/s of summed foot sliding speed (rule `slip`)
 SERVO_GROUND_W = 0.1   # m per share of ticks a servo housing is on the ground (rule `servo_ground`)

@@ -175,6 +175,18 @@ def main():
                    help="experiment: optional score rules to switch on, comma list ("
                         + ", ".join(rules.NAMES) + "); stored in the archive, and a "
                         "resume must repeat the archive's (or give none)")
+    p.add_argument("--basal-scale", type=float, default=None, metavar="SCALE",
+                   help="multiply the basal rule's per-servo and per-kg costs "
+                        "(default 1); stored in the archive")
+    p.add_argument("--turn-scale", type=float, default=None, metavar="M/RAD",
+                   help="metres per radian of asked-for turn (default 0.2); "
+                        "stored in the archive")
+    p.add_argument("--turn-in-place", action="store_true", default=None,
+                   help="let a pivot earn turn credit, capped by the straight "
+                        "walk (default: off); stored in the archive")
+    p.add_argument("--turn-cap-deg", type=float, default=None, metavar="DEG",
+                   help="most turn credited in one episode (default 90 degrees); "
+                        "stored in the archive")
     p.add_argument("--body", default="", metavar="A,B",
                    help="limits on the bodies evolution may build, comma list of "
                         "no-wheels, no-passive, no-segments, max-servos=N, "
@@ -241,12 +253,14 @@ def main():
         a.seed = int.from_bytes(os.urandom(4), "little") >> 1
     print(f"[darwinbot] seed={a.seed}")
     variants = a.variants if a.variants is not None else (0 if a.device == "gpu" else 2)
+    score = evolve.score_options(a.basal_scale, a.turn_scale, a.turn_in_place,
+                                 a.turn_cap_deg)
     common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
                   parent_selection=a.parent_selection, ablations=tuple(a.ablate),
-                  score_rules=a.rules if rules_given else None,
+                  score_rules=a.rules if rules_given else None, score=score,
                   body=a.body, axes=a.axes, plugin=record,
                   inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
                   variant_mode=a.variant_mode, protect_new=a.protect_new,

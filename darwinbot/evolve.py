@@ -49,7 +49,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, fastloop, hardware, plugins, rules, trace
+from darwinbot import ablate, body_options, fastloop, fitness, hardware, plugins, rules, trace
 from darwinbot import controller as ctrl
 from darwinbot import morphology as morpho
 from darwinbot.fitness import commands, task_names, task_score
@@ -177,6 +177,19 @@ def load_archive(path, stale: bool = False):
     except ValueError as e:
         raise SystemExit(f"{path}: {e}. Train a new archive with experiments/train.py "
                          f"(or pass --archive with a newer one).")
+
+
+def score_options(basal_scale=None, turn_scale=None, turn_in_place=None,
+                  turn_cap_deg=None) -> dict:
+    """Non-default score settings from train.py flags and the environment."""
+    return {**rules.score_option(basal_scale),
+            **fitness.score_options(turn_scale, turn_in_place, turn_cap_deg)}
+
+
+def apply_score(score: dict) -> None:
+    """Apply an archive's score settings before scoring (env wins while set)."""
+    rules.apply_score(score)
+    fitness.apply_score(score)
 
 
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
@@ -330,6 +343,7 @@ class Archive:
     payload:  float = 0.0      # extra torso mass in kg
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
+    score:    dict = field(default_factory=dict)   # non-default score settings, from train.py
     body:     str = ""         # body_options limits, as given to train.py --body
     axes:     str = "default"  # AXES: default, body or r1 (new archives only)
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
@@ -380,16 +394,19 @@ class Archive:
         return Archive(terrains=self.terrains, batch=self.batch, evals=self.evals,
                        seconds=self.seconds, variants=self.variants, task=self.task,
                        payload=self.payload, ablate=self.ablate, rules=self.rules,
+                       score=dict(self.score),
                        body=self.body, axes=self.axes, profile=copy.deepcopy(self.profile),
                        locked=self.locked, plugin=dict(self.plugin),
                        next_uid=self.next_uid)
 
     def activate(self) -> None:
-        """Turn on the ablations, score rules and body limits this archive was
-        trained with; scripts that score, decode or build its robots call this."""
+        """Turn on the ablations, score rules, score settings and body limits
+        this archive was trained with; scripts that score, decode or build its
+        robots call this."""
         ablate.set_active(self.ablate)
         rules.set_active(self.rules)
         body_options.set_active(self.body)
+        apply_score(self.score)
 
     def assign_uids(self) -> None:
         """Number the cells that have no uid (archives saved before uids), in
@@ -525,6 +542,7 @@ class Archive:
         self.__dict__.setdefault("payload", 0.0)      # nor payload
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
+        self.__dict__.setdefault("score", {})         # nor score settings
         self.__dict__.setdefault("body", "")          # nor body options
         self.__dict__.setdefault("axes", "default")   # nor a different axes option
         self.__dict__.setdefault("locked", ())        # nor locked parts
@@ -554,7 +572,7 @@ def count_symmetric(archive: Archive) -> int:
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
-              "rules", "body", "axes", "profile", "locked", "plugin")
+              "rules", "score", "body", "axes", "profile", "locked", "plugin")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -629,13 +647,16 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=()):
+def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=(), score=None):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations, optional score rules, body options and plugins."""
+    carry the run's ablations, optional score rules, body options and plugins.
+    A score dict is applied when given; callers with no archive keep their own."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
     rules.set_active(score_rules)
     body_options.set_active(body)
+    if score is not None:
+        apply_score(score)
     plugins.load_all(plugin_paths)
 
 
@@ -645,9 +666,9 @@ def _cuda_devices() -> int:
 
 
 def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body="",
-                 plugin_paths=()):
+                 plugin_paths=(), score=None):
     """Pool initializer for --device warp: bind this worker to the next GPU."""
-    _init_worker(ablations, score_rules, body, plugin_paths)
+    _init_worker(ablations, score_rules, body, plugin_paths, score)
     with counter.get_lock():
         i = counter.value
         counter.value += 1
@@ -843,6 +864,7 @@ def run(
     payload: float = 0.0,
     ablations: tuple = (),
     score_rules: Optional[tuple] = None,   # None: not given, so a resume keeps the archive's
+    score: Optional[dict] = None,          # new archives only; a resume keeps its own
     body: str = "",
     axes: str = "default",
     plugin: Optional[dict] = None,
@@ -912,6 +934,7 @@ def run(
                           variants=variants, task=task, payload=payload,
                           ablate=ablate.normalise(ablations),
                           rules=rules.normalise(score_rules),
+                          score=dict(score or {}),
                           body=body_options.parse(body).to_string(),
                           axes=axes, plugin=plugin or {})
     search = {"parent_selection": parent_selection, "inner_strategy": inner_strategy,
@@ -931,6 +954,7 @@ def run(
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
     rules.set_active(archive.rules)             # and its score rules
     body_options.set_active(archive.body)       # and its body limits
+    apply_score(archive.score)                  # and its score settings
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
@@ -1006,6 +1030,7 @@ def run(
           f"task={archive.task} payload={archive.payload} kg"
           + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
           + (f" rules={list(archive.rules)}" if archive.rules else "")
+          + (f" score={archive.score}" if archive.score else "")
           + (f" body={archive.body}" if archive.body else "")
           + (f" axes={archive.axes}" if archive.axes != "default" else "")
           + (f" inner_strategy={inner_strategy}" if inner_strategy else "")
@@ -1023,11 +1048,12 @@ def run(
         ctx = multiprocessing.get_context("spawn")
         pool = ctx.Pool(workers, _warp_worker,
                         (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules,
-                         archive.body, plugins.loaded()))
+                         archive.body, plugins.loaded(), archive.score))
     else:
         fastloop.warmup()        # compiled before the fork, so workers inherit it
         pool = multiprocessing.Pool(workers, _init_worker,
-                                    (archive.ablate, archive.rules, archive.body, plugins.loaded()))
+                                    (archive.ablate, archive.rules, archive.body,
+                                     plugins.loaded(), archive.score))
     if tdir:
         os.makedirs(tdir, exist_ok=True)
     path = os.path.join(out_dir, "archive.pkl")

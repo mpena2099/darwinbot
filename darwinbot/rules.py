@@ -30,10 +30,36 @@ NAMES = ("worse_turn", "turn_forward", "tilt", "slip", "servo_ground",
          "body_ground", "energy_abs", "basal", "fall_zero")
 
 # Score units (metres) per servo and per kg of rule `basal`, tuned by the gate.
-# DARWINBOT_BASAL_SCALE multiplies both, for the strength gate (1 = these values).
-BASAL_SCALE = float(os.environ.get("DARWINBOT_BASAL_SCALE", "1"))
+# DARWINBOT_BASAL_SCALE multiplies both, for the strength gate (1 = these values);
+# train.py --basal-scale stores the same setting in the archive.
+DEFAULT_BASAL_SCALE = 1.0
+
+
+def _scale(value=None) -> float:
+    """The environment wins while set (gates), then an explicit value."""
+    if "DARWINBOT_BASAL_SCALE" in os.environ:
+        return float(os.environ["DARWINBOT_BASAL_SCALE"])
+    return DEFAULT_BASAL_SCALE if value is None else float(value)
+
+
+BASAL_SCALE = _scale()
 BASAL_PER_SERVO = 0.01 * BASAL_SCALE
 BASAL_PER_KG = 0.05 * BASAL_SCALE
+
+
+def score_option(value=None) -> dict:
+    """Non-default basal scale for Archive.score (env wins while set)."""
+    scale = _scale(value)
+    return {} if scale == DEFAULT_BASAL_SCALE else {"basal_scale": scale}
+
+
+def apply_score(score: dict) -> None:
+    """Use an archive's stored setting; the environment overrides it when set."""
+    global BASAL_SCALE, BASAL_PER_SERVO, BASAL_PER_KG
+    BASAL_SCALE = _scale(score.get("basal_scale"))
+    BASAL_PER_SERVO = 0.01 * BASAL_SCALE
+    BASAL_PER_KG = 0.05 * BASAL_SCALE
+
 
 _active: frozenset = frozenset()
 

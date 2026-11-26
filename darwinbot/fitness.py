@@ -65,7 +65,10 @@ Optional rules (darwinbot/rules.py, off by default, switched on per run with
   body_ground   every episode: - BODY_GROUND_W * Metrics.body_ground (share of ticks)
   energy_abs    every episode: - ENERGY_ABS_W * energy / (M_REF g), M_REF = 1 kg
   basal         once per evaluation: - BASAL_PER_SERVO * n_servos
-                - BASAL_PER_KG * mass (kg), the idle draw and the weight carried
+                - BASAL_PER_KG * mass (kg), the idle draw and the weight carried;
+                --basal-mode relative instead keeps (1 - f) of a positive score,
+                f = servo share * n_servos + part share * passive parts, capped
+                at BASAL_REL_CAP (a non-positive score is left alone)
   fall_zero     an episode that fell: its progress credit (up(progress) or
                 up(|yaw|), and the half-speed credit) is 0; FALL_PENALTY stays
 """
@@ -224,6 +227,25 @@ def basal_cost(ms: Sequence[Metrics]) -> float:
     return rules.BASAL_PER_SERVO * m.n_servos + rules.BASAL_PER_KG * m.mass
 
 
+def basal_factor(ms: Sequence[Metrics]) -> float:
+    """Relative `basal`: the share of a positive score the body keeps."""
+    if (not rules.active("basal") or rules.BASAL_MODE != "relative"
+            or any(m.unstable for m in ms)):
+        return 1.0
+    m = ms[0]
+    other = max(m.n_parts - m.n_servos, 0)   # modules with no servo, not the core
+    f = min(rules.BASAL_SERVO_SHARE * m.n_servos
+            + rules.BASAL_PART_SHARE * other, rules.BASAL_REL_CAP)
+    return 1.0 - f
+
+
+def apply_basal(s: float, ms: Sequence[Metrics]) -> float:
+    """Rule `basal` on one evaluation's score: absolute cost or relative factor."""
+    if rules.BASAL_MODE == "relative" and rules.active("basal"):
+        return float(s * basal_factor(ms)) if s > 0 else float(s)
+    return float(s - basal_cost(ms))
+
+
 def score(m: Metrics, task: str = "forward") -> float:
     if task not in TASKS:
         raise ValueError(f"unknown task '{task}', expected one of {TASKS}")
@@ -252,12 +274,12 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         raise ValueError(f"unknown task '{task}', expected one of {TASKS}")
     if task != "steer":
         if task in BUILTIN_TASKS:
-            return float(score(ms[0], task) - basal_cost(ms))
+            return apply_basal(score(ms[0], task), ms)
         if any(m.unstable for m in ms):
             return UNSTABLE_SCORE
         fn = _TASK_SCORES[task]
         s = fn(ms) if len(commands(task)) > 1 else fn(ms[0])
-        return float(s - basal_cost(ms))
+        return apply_basal(s, ms)
     if any(m.unstable for m in ms):
         return UNSTABLE_SCORE
     turns = []
@@ -279,8 +301,7 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
             - ENERGY_W * ms[3].energy / (ms[3].mass * G) - rule_cost(ms[3]))
     if ms[3].fell:
         half -= FALL_PENALTY
-    return float(0.4 * score(ms[0], "forward") + 0.4 * turn + 0.2 * half
-                 - basal_cost(ms))
+    return apply_basal(0.4 * score(ms[0], "forward") + 0.4 * turn + 0.2 * half, ms)
 
 
 def aggregate(scores: Sequence[float]) -> float:

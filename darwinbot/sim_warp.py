@@ -291,6 +291,7 @@ class WarpBatchEpisode:
         self.buildable = ep.buildable
         self.mass = ep.mass
         self.n_servos = ep.morph.n_servos
+        self.n_parts = ep.morph.n_nodes - 1
         self.hold = ep.hold
         self.n_steps = ep.n_steps
         self.dt = float(ep.model.opt.timestep)
@@ -511,7 +512,7 @@ class WarpBatchEpisode:
         n, b = token
         if b is None:
             return [Metrics(0.0, 0.0, 0.0, False, True, 0.0, self.mass,
-                            self.n_servos)] * n
+                            self.n_servos, n_parts=self.n_parts)] * n
         if self.stream is not None:
             wp.synchronize_stream(self.stream)
         return self._metrics(b, n)
@@ -541,7 +542,8 @@ class WarpBatchEpisode:
                           else 0.0 if out["fell"][i] else float(out["dx"][i])) * keep,
                 energy=float(out["energy"][i]), fell=bool(out["fell"][i]),
                 unstable=unstable, duration=float(out["duration"][i]),
-                mass=self.mass, n_servos=self.n_servos, duty=duty, height=height,
+                mass=self.mass, n_servos=self.n_servos, n_parts=self.n_parts,
+                duty=duty, height=height,
                 wheel_share=share,
                 yaw=float(out["yaw"][i]) * keep,
                 upright=(float(out["upsum"][i]) / int(out["ticks"][i])

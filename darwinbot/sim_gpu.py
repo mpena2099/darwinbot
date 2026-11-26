@@ -46,6 +46,7 @@ class BatchEpisode:
         self.mass = float(model.body_subtreemass[
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso")])
         self.n_servos = morph.n_servos
+        self.n_parts = morph.n_nodes - 1
         if not self.buildable:
             return
         self.model = mjx.put_model(model)
@@ -173,7 +174,7 @@ class BatchEpisode:
             Metrics(dx=float(dx[i]), dy=float(dy[i]), energy=float(energy[i]),
                     fell=bool(fell[i]), unstable=bool(unstable[i]),
                     duration=float(duration[i]), mass=self.mass,
-                    n_servos=self.n_servos,
+                    n_servos=self.n_servos, n_parts=self.n_parts,
                     duty=beh[i][0], height=beh[i][1], wheel_share=beh[i][2],
                     yaw=float(yaw[i]), progress=float(progress[i]),
                     upright=float(upsum[i] / ticks[i]) if ticks[i] else 1.0,

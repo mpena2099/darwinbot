@@ -178,6 +178,17 @@ def main():
     p.add_argument("--basal-scale", type=float, default=None, metavar="SCALE",
                    help="multiply the basal rule's per-servo and per-kg costs "
                         "(default 1); stored in the archive")
+    p.add_argument("--basal-mode", choices=rules.BASAL_MODES, default=None,
+                   help="absolute (default): subtract the per-servo and per-kg "
+                        "costs; relative: keep (1 - f) of a positive score, "
+                        "f = servo share * servos + part share * passive parts, "
+                        "capped at 0.8; stored in the archive")
+    p.add_argument("--basal-servo-share", type=float, default=None, metavar="SHARE",
+                   help="score fraction charged per servo by --basal-mode "
+                        "relative (default 0.04); stored in the archive")
+    p.add_argument("--basal-part-share", type=float, default=None, metavar="SHARE",
+                   help="score fraction charged per passive part by "
+                        "--basal-mode relative (default 0.02); stored in the archive")
     p.add_argument("--turn-scale", type=float, default=None, metavar="M/RAD",
                    help="metres per radian of asked-for turn (default 0.2); "
                         "stored in the archive")
@@ -254,7 +265,8 @@ def main():
     print(f"[darwinbot] seed={a.seed}")
     variants = a.variants if a.variants is not None else (0 if a.device == "gpu" else 2)
     score = evolve.score_options(a.basal_scale, a.turn_scale, a.turn_in_place,
-                                 a.turn_cap_deg)
+                                 a.turn_cap_deg, a.basal_mode, a.basal_servo_share,
+                                 a.basal_part_share)
     common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,

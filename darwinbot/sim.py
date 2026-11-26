@@ -61,6 +61,7 @@ class Metrics:
     slip:     float = 0.0   # mean over ticks of the summed horizontal speed (m/s) of non-wheel terminals that touched the ground on two consecutive ticks
     servo_ground: float = 0.0   # share of control ticks a servo housing touches the ground
     body_ground: float = 0.0    # share of control ticks the body (not a terminal point) touches the ground
+    n_parts:      int = 0       # modules other than the core (n_nodes - 1)
 
     def __post_init__(self):
         # progress = 2 * (x_end - x_mid): only the second half of the episode
@@ -416,6 +417,7 @@ class Episode:
             energy=energy, fell=fell, unstable=unstable,
             duration=float(d.time), mass=self.mass,
             n_servos=self.morph.n_servos,
+            n_parts=self.morph.n_nodes - 1,
             duty=duty, height=height, wheel_share=share,
             yaw=yaw if not unstable else 0.0,
             upright=upsum / ticks if ticks else 1.0,

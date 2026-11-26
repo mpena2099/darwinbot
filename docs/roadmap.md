@@ -207,18 +207,24 @@ the current limits hold back.
   which is not shown; a weak island spreads to the others; and every session
   change gets one more step that can fail. `tools/kaggle/islands.py` already
   resumes islands from a merged archive.
-- **Walking or rolling as the ground asks** (a wheel-stall reflex): a robot
-  with legs ending in wheels has one rhythm, legs and wheels together. A gene
-  per joint that scales the leg amplitude by a low-pass of the wheels' load
-  (branch `tachikoma`) did not work: two 8-batch runs kept the variety (46 and
-  52 cells, 19 moving robots each) but scored lower than without it (best
-  wheeled-legged 0.35 and 0.25 against 0.46 and 0.45), and freezing the signal
-  at its episode mean changed the scores little, so evolution used the gene as
-  a fixed leg weakener. A wheel that rolls freely already carries load, and the
-  signal sat between 0.4 and 0.6 most of the time. A stall signal from the gap
-  between the commanded and the measured wheel speed (the STS3215 reports both)
-  would separate free from stalled wheels; it changes the controller, the
-  firmware and the control file, with a new `BODY_MODEL`.
+- **Walking or rolling as the ground asks** (release 4, a wheel-stall switch,
+  no IMU needed): a robot with legs ending in wheels rolls by default and walks
+  when it is stuck. The wheels drive while the legs hold a posture; when the
+  wheels are commanded to turn but barely move (the gap between commanded and
+  measured wheel speed, both reported by the STS3215, with high load) for a
+  while, the robot switches to its walking rhythm, and goes back to rolling
+  after some time. The stall threshold, the delay and the walking time are
+  genes, next to two sets of rhythm genes (roll and walk). Training needs
+  courses that mix flat ground and a step or rubble in the same episode, so
+  that switching pays. A wheel spinning free on loose ground does not stall and
+  is not detected without odometry; stuck against a step or an obstacle is.
+  It changes the controller, the firmware and the control file, with a new
+  `BODY_MODEL` and its own gate. A first try (branch `tachikoma`) scaled the leg
+  amplitude by a low-pass of the wheels' load and did not work: two 8-batch
+  runs kept the variety (46 and 52 cells) but scored lower than without it
+  (best wheeled-legged 0.35 and 0.25 against 0.46 and 0.45), because a wheel
+  rolling freely already carries load (the signal sat between 0.4 and 0.6) and
+  evolution used the gene as a fixed leg weakener.
 - **A surrogate model**: a small model trained on the thousands of bodies the
   archive has already scored would predict a new body's score before it is
   simulated, so only promising ones are; it complements cheap evaluation

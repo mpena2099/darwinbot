@@ -96,7 +96,9 @@ TURN_SCALE   = float(os.environ.get("DARWINBOT_TURN_SCALE", "0.2"))
 HEADING_W    = 0.2     # m per radian of heading lost on a straight walk
 # DARWINBOT_TURN_IN_PLACE=1: a pivot earns turn credit, capped by the straight progress (turn gate)
 TURN_IN_PLACE = os.environ.get("DARWINBOT_TURN_IN_PLACE", "0") == "1"
-TURN_CAP     = math.pi / 2   # rad: no credit for turning more than 90 degrees
+# rad: no credit for turning more than this in one episode (90 degrees); DARWINBOT_TURN_CAP_DEG
+# overrides it for the turn gate (a higher cap pays a faster turn)
+TURN_CAP     = math.radians(float(os.environ.get("DARWINBOT_TURN_CAP_DEG", "90")))
 TILT_W         = 0.2   # m per radian of mean tilt (rule `tilt`): 10 degrees costs 0.035 m
 SLIP_W         = 0.2   # m per m/s of summed foot sliding speed (rule `slip`)
 SERVO_GROUND_W = 0.1   # m per share of ticks a servo housing is on the ground (rule `servo_ground`)

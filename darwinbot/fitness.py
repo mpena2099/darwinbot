@@ -126,9 +126,24 @@ TURN_SCALE   = _turn_scale()
 HEADING_W    = 0.2     # m per radian of heading lost on a straight walk
 TURN_IN_PLACE = _turn_in_place()
 TURN_CAP     = _turn_cap()
+# Tight-turn bonus (--turn-tight W): a turn's credit grows by up to W times when its
+# radius (distance walked / angle turned) is below TIGHT_R, so a pivot in place pays
+# most; 0 (default) is off. The straight-walk cap above still applies first.
+DEFAULT_TURN_TIGHT = 0.0
+TIGHT_R = 0.5          # m: no bonus at this radius or wider
 
 
-def score_options(turn_scale=None, turn_in_place=None, turn_cap_deg=None) -> dict:
+def _turn_tight(value=None) -> float:
+    if "DARWINBOT_TURN_TIGHT" in os.environ:
+        return float(os.environ["DARWINBOT_TURN_TIGHT"])
+    return DEFAULT_TURN_TIGHT if value is None else float(value)
+
+
+TURN_TIGHT = _turn_tight()
+
+
+def score_options(turn_scale=None, turn_in_place=None, turn_cap_deg=None,
+                  turn_tight=None) -> dict:
     """Non-default turn settings for Archive.score (env wins while set)."""
     out = {}
     scale = _turn_scale(turn_scale)
@@ -143,15 +158,19 @@ def score_options(turn_scale=None, turn_in_place=None, turn_cap_deg=None) -> dic
         deg = DEFAULT_TURN_CAP_DEG if turn_cap_deg is None else float(turn_cap_deg)
     if deg != DEFAULT_TURN_CAP_DEG:
         out["turn_cap_deg"] = deg
+    tight = _turn_tight(turn_tight)
+    if tight != DEFAULT_TURN_TIGHT:
+        out["turn_tight"] = tight
     return out
 
 
 def apply_score(score: dict) -> None:
     """Use an archive's stored settings; the environment overrides them when set."""
-    global TURN_SCALE, TURN_IN_PLACE, TURN_CAP
+    global TURN_SCALE, TURN_IN_PLACE, TURN_CAP, TURN_TIGHT
     TURN_SCALE = _turn_scale(score.get("turn_scale"))
     TURN_IN_PLACE = _turn_in_place(score.get("turn_in_place"))
     TURN_CAP = _turn_cap(score.get("turn_cap_deg"))
+    TURN_TIGHT = _turn_tight(score.get("turn_tight"))
 
 
 TILT_W         = 0.2   # m per radian of mean tilt (rule `tilt`): 10 degrees costs 0.035 m
@@ -292,6 +311,9 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         # pivot earns too, but never more than the straight walk, so a robot that does
         # not walk forward earns nothing for turning (turning is secondary)
         turn = min(turn, max(ms[0].progress, 0.0) if TURN_IN_PLACE else dist)
+        if TURN_TIGHT > 0 and turn > 0:
+            angle = max(min(-c * m.yaw, TURN_CAP), 1e-3)
+            turn *= 1.0 + TURN_TIGHT * max(0.0, 1.0 - math.hypot(m.dx, m.dy) / angle / TIGHT_R)
         s = credit(turn, m) - ENERGY_W * m.energy / (m.mass * G) - rule_cost(m)
         turns.append(s - FALL_PENALTY if m.fell else s)
     turn = min(turns) if rules.active("worse_turn") else np.mean(turns)

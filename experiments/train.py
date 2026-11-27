@@ -195,6 +195,9 @@ def main():
     p.add_argument("--turn-in-place", action="store_true", default=None,
                    help="let a pivot earn turn credit, capped by the straight "
                         "walk (default: off); stored in the archive")
+    p.add_argument("--turn-tight", type=float, default=None, metavar="W",
+                   help="tight-turn bonus: a turn's credit grows by up to W times as its "
+                        "radius falls below 0.5 m (default 0, off); stored in the archive")
     p.add_argument("--turn-cap-deg", type=float, default=None, metavar="DEG",
                    help="most turn credited in one episode (default 90 degrees); "
                         "stored in the archive")
@@ -266,7 +269,7 @@ def main():
     variants = a.variants if a.variants is not None else (0 if a.device == "gpu" else 2)
     score = evolve.score_options(a.basal_scale, a.turn_scale, a.turn_in_place,
                                  a.turn_cap_deg, a.basal_mode, a.basal_servo_share,
-                                 a.basal_part_share)
+                                 a.basal_part_share, turn_tight=a.turn_tight)
     common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,

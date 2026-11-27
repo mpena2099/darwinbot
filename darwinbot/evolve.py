@@ -181,11 +181,11 @@ def load_archive(path, stale: bool = False):
 
 def score_options(basal_scale=None, turn_scale=None, turn_in_place=None,
                   turn_cap_deg=None, basal_mode=None, basal_servo_share=None,
-                  basal_part_share=None) -> dict:
+                  basal_part_share=None, turn_tight=None) -> dict:
     """Non-default score settings from train.py flags and the environment."""
     return {**rules.score_option(basal_scale, basal_mode, basal_servo_share,
                                  basal_part_share),
-            **fitness.score_options(turn_scale, turn_in_place, turn_cap_deg)}
+            **fitness.score_options(turn_scale, turn_in_place, turn_cap_deg, turn_tight)}
 
 
 def apply_score(score: dict) -> None:

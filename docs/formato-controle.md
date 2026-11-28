@@ -58,6 +58,7 @@ gerado.
 | `ramp_time` | float, s | tempo da rampa de partida, igual a `controller.RAMP_TIME` |
 | `load_full_scale` | float | opcional, padrão `0.7`: fração do torque máximo do STS3215 que vale `N = 1`; é a `SERVO_TORQUE` da simulação (70% do torque de travamento) |
 | `servo_speed` | float, rad/s | opcional, padrão `4.71`, deve ser positivo: velocidade sem carga do servo do kit (`hardware.SERVO.speed`); o firmware limita a amplitude (`(amp1 + 2 * amp2) * (omega + |sigma|) <= servo_speed`) e a velocidade das rodas a ela |
+| `clip_mode` | string, opcional | `"command"` (padrão, ausente do arquivo): o corte de `servo_speed` roda depois dos comandos de direção e velocidade; `"headroom"`: antes, com as amplitudes de base escaladas pela folga do lado mais forte, para que os dois lados mantenham a proporção |
 | `frequency` | float, Hz | frequência natural global; `omega = 2π · frequency` |
 | `servos` | lista | um item por servo, na ordem do layout (a ordem do modelo; `id` = posição + 1) |
 

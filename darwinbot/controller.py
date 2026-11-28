@@ -53,6 +53,10 @@ Layout (all genes in [0, 1])
 
 Amplitudes are clipped so no servo is asked to move faster than SERVO_SPEED:
 (amp1 + 2 * amp2) * (omega + |sigma|) <= SERVO_SPEED, scaling both down proportionally.
+In the default "command" clip mode this happens after the commands, so the
+stronger steering side is clipped back to the servo speed. The "headroom" mode
+scales the base amplitudes first by the headroom of the stronger side (see
+CLIP_MODE), so both sides keep their proportion after the commands.
 """
 
 import math
@@ -84,6 +88,19 @@ COUPLE_RANGE      = (0.0, 4.0)      # rad/s, phase coupling strength
 COUPLE_LAG_RANGE  = (-np.pi, np.pi)  # rad, phase offset of the coupling
 CONTROL_DT   = 0.02           # s, the ESP32 updates servo targets at 50 Hz
 RAMP_TIME    = 0.5            # s to fade the gait in from rest
+
+CLIP_MODES = ("command", "headroom")
+CLIP_MODE  = "command"        # command: clip after the commands (default);
+                              # headroom: scale the base amplitudes first so the
+                              # stronger steering side keeps its proportion
+
+
+def set_clip_mode(mode: str) -> None:
+    """Select the servo speed clip mode (see CLIP_MODES)."""
+    global CLIP_MODE
+    if mode not in CLIP_MODES:
+        raise ValueError(f"clip mode must be one of {CLIP_MODES}, got {mode!r}")
+    CLIP_MODE = mode
 
 (AMP1, PHASE1, OFFSET, AMP2, PHASE2, SIGMA, STEER_GAIN, STEER_SHIFT,
  SPEED_GAIN, SPEED_SHIFT, COUPLE_K, COUPLE_LAG) = range(12)
@@ -260,7 +277,17 @@ class Params:
         # receives, so it can steer and clip on the robot the same way
         self.amp1_base, self.amp2_base = self.amp1.copy(), self.amp2.copy()
         self.offset_base = self.offset.copy()
-        apply_commands(self, command, speed)
+        scale = None
+        if CLIP_MODE == "headroom":
+            # Scale the base amplitudes by the headroom of the stronger steering
+            # side before the commands, so a steered joint keeps both sides in
+            # proportion instead of clipping only the stronger one. The usual
+            # clip below stays as a safety net (it can still bite for speed_gain).
+            peak_base = (self.amp1_base + 2.0 * self.amp2_base) * (
+                self.omega + np.abs(self.sigma))
+            g = np.clip(1.0 + np.abs(self.steer_gain), 0.0, 2.0)
+            scale = np.minimum(1.0, SERVO_SPEED / np.maximum(peak_base * g, 1e-12))
+        apply_commands(self, command, speed, scale)
         # A servo cannot follow a signal whose peak speed exceeds its own; with
         # load feedback the phase advances at up to omega + |sigma|.
         peak = (self.amp1 + 2.0 * self.amp2) * (self.omega + np.abs(self.sigma))
@@ -269,18 +296,21 @@ class Params:
         self.amp2 = self.amp2 * k
 
 
-def apply_commands(p: "Params", command: float, speed: float = 1.0) -> None:
+def apply_commands(p: "Params", command: float, speed: float = 1.0,
+                   scale=None) -> None:
     """Apply the steering and speed commands to the decoded params, in place,
     always from the *_base values (before the speed clip, so a stronger side
     still respects the servo). The firmware does the same in set_command and
-    set_speed."""
+    set_speed. scale, when given, multiplies the base amplitudes first."""
     c = float(np.clip(command, -1.0, 1.0))
     d = 1.0 - float(np.clip(speed, 0.0, 1.0))
     gain = (np.clip(1.0 + c * p.steer_gain, 0.0, 2.0)
             * np.clip(1.0 - d * p.speed_gain, 0.0, 2.0))
     shift = c * p.steer_shift + d * p.speed_shift
-    p.amp1 = np.where(p.wheel, p.amp1_base, p.amp1_base * gain)
-    p.amp2 = np.where(p.wheel, p.amp2_base, p.amp2_base * gain)
+    amp1_base = p.amp1_base if scale is None else p.amp1_base * scale
+    amp2_base = p.amp2_base if scale is None else p.amp2_base * scale
+    p.amp1 = np.where(p.wheel, p.amp1_base, amp1_base * gain)
+    p.amp2 = np.where(p.wheel, p.amp2_base, amp2_base * gain)
     p.offset = np.where(p.wheel, np.clip(p.offset_base + shift, *WHEEL_RANGE),
                         p.offset_base + shift)
 

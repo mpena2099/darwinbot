@@ -69,6 +69,14 @@ bool load_config(Config& cfg, char* err, size_t err_len) {
         return fail(err, err_len,
                     "/control.json needs load_full_scale in (0, 1] and a positive servo_speed");
     }
+    const char* clip = doc["clip_mode"] | "command";
+    if (std::strcmp(clip, "headroom") == 0) {
+        c.clip_mode = darwinbot::Controller::ClipMode::Headroom;
+    } else if (std::strcmp(clip, "command") != 0) {
+        snprintf(err, err_len, "/control.json clip_mode '%s', expected command or headroom",
+                 clip);
+        return false;
+    }
     strlcpy(c.robot, doc["robot"] | "robot", sizeof(c.robot));
 
     // Required fields, so a truncated file never turns into a robot that moves

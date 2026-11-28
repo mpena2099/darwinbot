@@ -8,7 +8,9 @@ Format 3 adds the two steering genes to format 2, format 4 the two speed genes,
 format 5 the coupling of each joint to its partner (couple_to, couple_k,
 couple_lag). Files still carry the amplitudes and offsets without either
 command; the firmware applies the steering and speed commands and only then the
-servo speed clip.
+servo speed clip. The optional top-level clip_mode says whether the clip runs
+after the commands ("command", the default) or on the base amplitudes first
+("headroom").
 
 No dependency on morphology or builder: it takes the actuator layout, the
 controller parameters and the joint limits as plain data.
@@ -17,6 +19,7 @@ controller parameters and the joint limits as plain data.
 import json
 import math
 
+from darwinbot import controller
 from darwinbot.controller import CONTROL_DT, LOAD_FULL_SCALE, RAMP_TIME, SERVO_SPEED
 
 FORMAT = 5
@@ -38,7 +41,8 @@ _TOP_KEYS = ("format", "robot", "fitness", "control_hz", "ramp_time", "frequency
 
 def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=None,
                       control_hz=CONTROL_HZ, ramp_time=RAMP_TIME,
-                      load_full_scale=LOAD_FULL_SCALE, servo_speed=SERVO_SPEED) -> dict:
+                      load_full_scale=LOAD_FULL_SCALE, servo_speed=SERVO_SPEED,
+                      clip_mode=None) -> dict:
     """
     Build the control dict. layout items are (slot, kind, axis) in servo order
     (morphology.Actuator), params is controller.Params and signs the mounting
@@ -46,8 +50,13 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
     per axis or one (lo, hi) per servo in layout order (None for a wheel).
     load_full_scale is the fraction of the
     servo maximum torque that the simulation treats as N = 1, servo_speed the
-    no-load speed (rad/s) the amplitude and wheel clips use.
+    no-load speed (rad/s) the amplitude and wheel clips use, clip_mode the
+    controller's clip mode (default: the one currently set).
     """
+    clip_mode = controller.CLIP_MODE if clip_mode is None else clip_mode
+    if clip_mode not in controller.CLIP_MODES:
+        raise ValueError(f"clip_mode must be one of {controller.CLIP_MODES}, "
+                         f"got {clip_mode!r}")
     servos = []
     n = len(layout)
     partner = getattr(params, "partner", None)
@@ -89,11 +98,14 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
                            "couple_k": float(couple_k[i]),
                            "couple_lag": float(couple_lag[i]),
                            "sign": sign, "zero": ZERO, "min": lo, "max": hi})
-    return {"format": FORMAT, "robot": robot_name, "fitness": float(fitness),
-            "control_hz": control_hz, "ramp_time": ramp_time,
-            "load_full_scale": float(load_full_scale),
-            "servo_speed": float(servo_speed),
-            "frequency": float(params.omega) / (2 * math.pi), "servos": servos}
+    d = {"format": FORMAT, "robot": robot_name, "fitness": float(fitness),
+         "control_hz": control_hz, "ramp_time": ramp_time,
+         "load_full_scale": float(load_full_scale),
+         "servo_speed": float(servo_speed),
+         "frequency": float(params.omega) / (2 * math.pi), "servos": servos}
+    if clip_mode == "headroom":
+        d["clip_mode"] = "headroom"
+    return d
 
 
 def write_control_file(d: dict, path) -> None:
@@ -136,6 +148,10 @@ def _validate(d) -> None:
     speed = d.get("servo_speed", SERVO_SPEED)
     if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not speed > 0:
         raise ValueError(f"servo_speed must be a positive number, got {speed!r}")
+    clip = d.get("clip_mode", "command")
+    if clip not in controller.CLIP_MODES:
+        raise ValueError(f"clip_mode must be one of {controller.CLIP_MODES}, "
+                         f"got {clip!r}")
     ids = set()
     for s in d["servos"]:
         mode = s.get("mode")

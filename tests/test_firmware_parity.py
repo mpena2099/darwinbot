@@ -86,6 +86,8 @@ def _write_case(path, ctrl, loads, command=0.0, speed=1.0, servo_speed=co.SERVO_
                       (p.omega / (2 * np.pi), co.RAMP_TIME,
                        round(1 / co.CONTROL_DT), n, co.LOAD_FULL_SCALE,
                        command, speed, servo_speed))]
+    if co.CLIP_MODE == "headroom":          # the clip mode the Python side used
+        lines[0] += " headroom"
     for i, act in enumerate(LAYOUT):
         sign, lim = SIGNS[i], limits[i]
         if act.kind == "wheel":
@@ -303,3 +305,33 @@ def test_reset_restarts_the_controller(tmp_path):
         for _ in range(5):
             moved.advance(co.CONTROL_DT / 5, force)
     assert np.max(np.abs(moved.theta - fresh.theta)) > 1e-2
+
+
+@pytest.fixture
+def headroom():
+    co.set_clip_mode("headroom")
+    try:
+        yield
+    finally:
+        co.set_clip_mode("command")
+
+
+@pytest.mark.parametrize("command", [-0.8, 0.5])
+def test_parity_headroom_clip(tmp_path, headroom, command):
+    """The headroom clip mode: base amplitudes scaled by the stronger side's
+    headroom before the steering command, the core does the same."""
+    rng, ctrl = _genes(14)
+    for slot in (1, 2, 3):
+        b = co.node_base(slot)
+        ctrl[b + co.AMP1] = 1.0
+        ctrl[b + co.AMP2] = 1.0
+        ctrl[b + co.STEER_GAIN] = 0.9        # steer gain 0.8, both sides steered
+    p = co.Controller(ctrl, LAYOUT, command).params
+    co.set_clip_mode("command")
+    try:
+        plain = co.Controller(ctrl, LAYOUT, command).params
+    finally:
+        co.set_clip_mode("headroom")
+    assert np.any(p.amp1[[0, 1, 2]] != plain.amp1[[0, 1, 2]])   # not vacuous
+    loads = rng.uniform(-1.0, 1.0, size=(TICKS, len(LAYOUT)))
+    _run_case(tmp_path, ctrl, loads, command)

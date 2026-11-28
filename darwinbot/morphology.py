@@ -1651,7 +1651,8 @@ def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     probs = [0.45, 0.14, 0.10, 0.18, 0.05, 0.03, 0.02, 0.02, 0.01]
     opts = _body_options()
     allowed = [(k, w) for k, w in zip(kinds, probs)
-               if k not in DISABLED_KINDS and opts.allows(k)]
+               if k not in DISABLED_KINDS and opts.allows(k)
+               and not _face_blocked(p, s, k)]
     if not allowed:
         return None
     weights = np.array([w for _, w in allowed])
@@ -1849,6 +1850,7 @@ def _op_type(morph, rng):
     kinds = [k for k in kinds if k not in DISABLED_KINDS]
     if not opts.is_default():
         kinds = [k for k in kinds if opts.allows(k)]
+    kinds = [k for k in kinds if not _face_blocked(n.parent, n.slot, k)]
     kinds = [k for k in kinds if k != n.kind]
     if not kinds:
         return
@@ -1934,6 +1936,9 @@ def _op_copy(morph, rng):
     if not cand or not free:
         return
     i = int(rng.choice(cand))
+    free = [fs for fs in free if not _face_blocked(fs[0], fs[1], morph.nodes[i].kind)]
+    if not free:
+        return
     p, s = free[int(rng.integers(len(free)))]
     q = p
     while q >= 0 and q != i:          # a subtree cannot grow inside itself
@@ -1976,6 +1981,23 @@ def set_mutation_bias(bias: str = "default") -> None:
     if bias != "default" and bias not in MUTATION_BIASES:
         raise ValueError(f"mutation_bias must be one of {('default', *MUTATION_BIASES)}")
     _mutation_bias = bias
+
+
+# Opt-in: with face_fix on, add, type and copy never leave a joint or wheel on a
+# core face slot (FACE_SLOTS), where fit_rules would turn it into a link or foot.
+_face_fix = False
+
+
+def set_face_fix(on: bool) -> None:
+    """Forbid joints and wheels on the core face slots in later mutations."""
+    global _face_fix
+    _face_fix = bool(on)
+
+
+def _face_blocked(parent: int, slot: int, kind: str) -> bool:
+    """True when face_fix forbids a module of this kind in this slot."""
+    return (_face_fix and parent == 0 and slot in FACE_SLOTS
+            and kind in ("joint", "wheel"))
 
 
 def mutation_weights(bias: Optional[str] = None) -> np.ndarray:

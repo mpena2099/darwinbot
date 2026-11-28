@@ -88,6 +88,7 @@ int main(int argc, char** argv) {
     float command = 0.0f;
     float speed_cmd = 1.0f;
     float servo_speed = darwinbot::Controller::kServoSpeed;
+    std::string clip_name = "command";
     int n_servos = 0;
     {
         std::istringstream header(lines.empty() ? "" : lines[0]);
@@ -100,7 +101,11 @@ int main(int argc, char** argv) {
         header >> command;              // optional, 0 (straight) if absent
         header >> speed_cmd;            // optional, 1 (full speed) if absent
         header >> servo_speed;          // optional, 4.71 if absent
+        header >> clip_name;            // optional, "command" if absent
     }
+    const darwinbot::Controller::ClipMode clip_mode =
+        clip_name == "headroom" ? darwinbot::Controller::ClipMode::Headroom
+                                 : darwinbot::Controller::ClipMode::Command;
 
     if (lines.size() < static_cast<size_t>(n_servos) + 1) {
         std::fprintf(stderr, "missing servo lines\n");
@@ -127,7 +132,7 @@ int main(int argc, char** argv) {
 
     darwinbot::Controller controller(frequency, ramp_time, control_hz,
                                      std::move(servos), load_full_scale,
-                                     servo_speed);
+                                     servo_speed, clip_mode);
     controller.set_command(command);
     controller.set_speed(speed_cmd);
     std::vector<float> loads(static_cast<size_t>(n_servos));

@@ -15,12 +15,13 @@ constexpr float kStepsPerRad = 4096.0f / kTwoPi;
 
 Controller::Controller(float frequency, float ramp_time, float control_hz,
                        std::vector<ServoParams> servos, float load_full_scale,
-                       float servo_speed)
+                       float servo_speed, ClipMode clip_mode)
     : omega_(kTwoPi * frequency),
       ramp_time_(ramp_time),
       dt_(control_hz > 0.0f ? 1.0f / control_hz : 0.0f),
       load_full_scale_(load_full_scale > 0.0f ? load_full_scale : kLoadFullScale),
       servo_speed_(servo_speed > 0.0f ? servo_speed : kServoSpeed),
+      clip_mode_(clip_mode),
       servos_(std::move(servos)),
       base_(servos_) {
     const size_t n = servos_.size();
@@ -64,8 +65,21 @@ void Controller::apply() {
             std::clamp(1.0f + command_ * b.steer_gain, 0.0f, 2.0f) *
             std::clamp(1.0f - d * b.speed_gain, 0.0f, 2.0f);
         p.offset = b.offset + command_ * b.steer_shift + d * b.speed_shift;
-        p.amp1 = b.amp1 * gain;
-        p.amp2 = b.amp2 * gain;
+        float a1 = b.amp1;
+        float a2 = b.amp2;
+        if (clip_mode_ == ClipMode::Headroom) {
+            // Scale the base amplitudes by the headroom of the stronger steering
+            // side first, so both sides keep their proportion after the commands.
+            const float peak_base =
+                (b.amp1 + 2.0f * b.amp2) * (omega_ + std::fabs(b.sigma));
+            const float g = std::clamp(1.0f + std::fabs(b.steer_gain), 0.0f, 2.0f);
+            const float k0 =
+                std::min(1.0f, servo_speed_ / std::max(peak_base * g, 1e-12f));
+            a1 *= k0;
+            a2 *= k0;
+        }
+        p.amp1 = a1 * gain;
+        p.amp2 = a2 * gain;
         // A servo cannot follow a signal whose peak speed exceeds its own.
         // The phase advances at up to omega + |sigma| under load feedback.
         const float peak = (p.amp1 + 2.0f * p.amp2) * (omega_ + std::fabs(b.sigma));

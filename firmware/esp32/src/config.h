@@ -18,6 +18,8 @@ struct Config {
     float control_hz = 50.0f;
     float load_full_scale = darwinbot::Controller::kLoadFullScale;
     float servo_speed = darwinbot::Controller::kServoSpeed;
+    darwinbot::Controller::ClipMode clip_mode =
+        darwinbot::Controller::ClipMode::Command;
     int n = 0;                    // servos, in layout order
     uint8_t ids[kMaxServos] = {};
     bool wheel[kMaxServos] = {};

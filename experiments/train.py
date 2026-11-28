@@ -20,7 +20,7 @@ import argparse
 import os
 import sys
 
-from darwinbot import ablate, body_options, evolve, hardware, plugins, rules
+from darwinbot import ablate, body_options, controller, evolve, hardware, plugins, rules
 from darwinbot.evolve import load_archive
 from darwinbot.fitness import task_names
 from darwinbot.morphology import decode, summary
@@ -112,7 +112,8 @@ def main():
                         "(default: 2 on cpu and warp, 0 on gpu; ignored on --resume)")
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
-                   help="parents drawn by novelty (default) or uniformly")
+                   help="parents drawn by novelty (default), by novelty times "
+                        "the objective rank (novelty-rank) or uniformly")
     p.add_argument("--inner-strategy", choices=("default", "diagonal", "focused",
                                                 "diagonal+focused"),
                    default="default",
@@ -151,6 +152,11 @@ def main():
                         "one quick score (its inherited controller, one flat episode), "
                         "and only the best SHARE of them (0 to 1) go on to the "
                         "inner loop; 1.0 (default) turns it off; CPU only")
+    p.add_argument("--clip-mode", choices=controller.CLIP_MODES, default="command",
+                   help="servo speed clip: command (default) clips after the steering "
+                        "and speed commands; headroom scales the base amplitudes first "
+                        "so the stronger steering side keeps its proportion; stored in "
+                        "the archive and written to the control file")
     p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -207,8 +213,9 @@ def main():
                         "legs=A..B, max-size=MM, bed=MM; stored in the archive")
     p.add_argument("--axes", choices=evolve.AXES, default="default",
                    help="archive descriptors: default (five), body (five plus the "
-                        "share of ticks the torso touches the ground) or r1 (the four "
-                        "release-1 descriptors, no servo count, 500 cells); stored in "
+                        "share of ticks the torso touches the ground), r1 (the four "
+                        "release-1 descriptors, no servo count, 500 cells) or c300 "
+                        "(the five default descriptors in 300 cells); stored in "
                         "the archive, new archives only")
     a = p.parse_args()
     rules_given = a.rules is not None          # None: keep the archive's rules on resume
@@ -281,7 +288,7 @@ def main():
                   variant_mode=a.variant_mode, protect_new=a.protect_new,
                   mirror_p=a.mirror_p, mutation_bias=a.mutation_bias,
                   tie_parts=a.tie_parts, deterministic=a.deterministic,
-                  screen=a.screen)
+                  screen=a.screen, clip_mode=a.clip_mode)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

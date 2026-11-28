@@ -47,7 +47,7 @@ void build_controller() {
     std::vector<darwinbot::ServoParams> params(g_cfg.params, g_cfg.params + g_cfg.n);
     g_controller = new (g_controller_storage)
         darwinbot::Controller(g_cfg.frequency, g_cfg.ramp_time, g_cfg.control_hz, params,
-                              g_cfg.load_full_scale, g_cfg.servo_speed);
+                              g_cfg.load_full_scale, g_cfg.servo_speed, g_cfg.clip_mode);
 }
 
 // Torque on for every servo that has none, each one starting from where it is.

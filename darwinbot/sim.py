@@ -21,8 +21,9 @@ import mujoco
 import numpy as np
 from numba import njit
 
-from darwinbot import ablate, fastloop
-from darwinbot.builder import AssemblyRules, build_mjcf
+from darwinbot import ablate, body_options, fastloop
+from darwinbot import morphology as morpho
+from darwinbot.builder import AssemblyRules, build_mjcf, joint_ranges
 from darwinbot.controller import (CONTROL_DT, RAMP_TIME, SERVO_TORQUE, Controller,
                                   advance_phases, couple_partners)
 from darwinbot.morphology import Morphology, violations
@@ -204,20 +205,36 @@ def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
     link it is bolted to (the fin under it bridges the gap). The parent filter
     of MuJoCo is switched off, so a part that cuts into the one it is mounted
     on counts, and pairs of parts that cannot move against each other are
-    measured one by one."""
+    measured one by one. With the body option live-servos, every servo joint
+    must also keep LIVE_SERVO_SPAN of usable range (builder.joint_ranges, which
+    the Episode that calls this has just measured, so it is cached)."""
     data = mujoco.MjData(model)
     flags = model.opt.disableflags
     model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     try:
         mujoco.mj_forward(model, data)
         if ablate.active("assembly"):
-            return not _servo_clashes(morph, model, data)
-        rules = AssemblyRules(morph, model)
-        if rules.clashes(model, data, fixed=True, first=True):
-            return False
-        return not rules.floating(model, data)
+            fits = not _servo_clashes(morph, model, data)
+        else:
+            rules = AssemblyRules(morph, model)
+            fits = not rules.clashes(model, data, fixed=True, first=True) \
+                and not rules.floating(model, data)
     finally:
         model.opt.disableflags = flags
+    if not fits:
+        return False
+    return not body_options.active().live_servos or _servos_live(morph)
+
+
+LIVE_SERVO_SPAN = math.radians(8.0)   # least usable range of a servo, both ways summed
+
+
+def _servos_live(morph: Morphology) -> bool:
+    """True when every servo joint (joint or spine segment) has at least
+    LIVE_SERVO_SPAN of usable range in total, from builder.joint_ranges."""
+    ranges = joint_ranges(morph)
+    return all(ranges[i][1] - ranges[i][0] >= LIVE_SERVO_SPAN
+               for i, n in morph.nodes.items() if morpho.is_joint(n.kind))
 
 
 @njit(cache=True)

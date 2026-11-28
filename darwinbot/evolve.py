@@ -21,11 +21,14 @@ An experiment may add body_ground (the share of ticks the torso itself touches
 the ground) as a sixth axis (`train.py --axes body`), which only applies to a
 new archive: `Archive.axes` says which descriptors a grid holds. The release 1
 axes (`train.py --axes r1`) keep the four original descriptors, without the
-servo count, in a 500-cell archive.
+servo count, in a 500-cell archive; `train.py --axes c300` keeps the five
+default descriptors in a 300-cell archive.
 
 New bodies are mutated copies of elites drawn with probability proportional to
 their novelty (mean distance to the k nearest elites in descriptor space), or
-uniformly with parent_selection="uniform". The child starts its inner
+uniformly with parent_selection="uniform"; parent_selection="novelty-rank"
+weights that novelty by the elite's objective rank, so good robots are drawn
+more often. The child starts its inner
 optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
@@ -51,6 +54,7 @@ from ribs.archives import CVTArchive
 
 from darwinbot import ablate, body_options, fastloop, fitness, hardware, plugins, rules, trace
 from darwinbot import controller as ctrl
+from darwinbot.controller import CLIP_MODES, set_clip_mode
 from darwinbot import morphology as morpho
 from darwinbot.fitness import commands, task_names, task_score
 from darwinbot.inner import evaluate, optimise_controller
@@ -63,7 +67,7 @@ N_CELLS    = 800                    # CVT cells of the default and body archives
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
-PARENT_SELECTIONS = ("novelty", "uniform")
+PARENT_SELECTIONS = ("novelty", "novelty-rank", "uniform")
 INNER_STRATEGIES = (None, "diagonal", "focused", "diagonal+focused")   # inner.optimise_controller
 VARIANT_MODES = ("all", "first")
 
@@ -206,11 +210,12 @@ Cell = int                          # index of the CVT cell
 N_DESCRIPTORS = 5
 R1_DESCRIPTORS = 4              # r1: duty, height, legs, cot (no servo count)
 R1_CELLS = 500                  # r1 CVT grid, cached apart from the 800-cell grids
-AXES = ("default", "body", "r1")   # experiment options, stored in the Archive
+AXES = ("default", "body", "r1", "c300")   # experiment options, stored in the Archive
 AXES_SPEC = {                   # axes -> (descriptors, CVT cells)
     "default": (N_DESCRIPTORS, N_CELLS),
     "body": (N_DESCRIPTORS + 1, N_CELLS),
     "r1": (R1_DESCRIPTORS, R1_CELLS),
+    "c300": (N_DESCRIPTORS, 300),   # the default descriptors in a smaller grid
 }
 
 
@@ -218,6 +223,12 @@ def _descriptor_count(axes_or_n) -> int:
     """Axes name or descriptor count -> descriptor count (call sites that hold
     an Archive pass n_descriptors; scripts may pass the name instead)."""
     return AXES_SPEC[axes_or_n][0] if isinstance(axes_or_n, str) else int(axes_or_n)
+
+
+def _cell_count(n_descriptors: int) -> int:
+    """Cell count of a descriptor count, for callers that hold no axes name:
+    the r1 grid is smaller, every other axes option uses the default grid."""
+    return R1_CELLS if n_descriptors == R1_DESCRIPTORS else N_CELLS
 
 
 def normalise(behaviour, n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
@@ -239,21 +250,25 @@ def normalise(behaviour, n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
     return np.clip(point[:n], 0.0, 1.0)
 
 
-@lru_cache(maxsize=None)             # one centroid set per axis count
-def _centroids(n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
+@lru_cache(maxsize=None)             # one centroid set per (axis count, cell count)
+def _centroids(n_descriptors: int = N_DESCRIPTORS,
+               cells: Optional[int] = None) -> np.ndarray:
     n = _descriptor_count(n_descriptors)
+    if cells is None:
+        cells = _cell_count(n)
     probe = CVTArchive(solution_dim=1,
-                       centroids=R1_CELLS if n == R1_DESCRIPTORS else N_CELLS,
+                       centroids=int(cells),
                        ranges=[(0.0, 1.0)] * n,
                        seed=CVT_SEED, samples=20000)
     return np.array(probe.centroids)
 
 
-def cell_of(behaviour, n_descriptors: int = N_DESCRIPTORS) -> Cell:
-    """CVT cell of a Behaviour in the given archive axes."""
+def cell_of(behaviour, n_descriptors: int = N_DESCRIPTORS,
+            cells: Optional[int] = None) -> Cell:
+    """CVT cell of a Behaviour in the given archive axes (and cell count)."""
     n = _descriptor_count(n_descriptors)
     point = normalise(behaviour, n)
-    return int(np.argmin(((_centroids(n) - point) ** 2).sum(axis=1)))
+    return int(np.argmin(((_centroids(n, cells) - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
@@ -347,7 +362,7 @@ class Archive:
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
     score:    dict = field(default_factory=dict)   # non-default score settings, from train.py
     body:     str = ""         # body_options limits, as given to train.py --body
-    axes:     str = "default"  # AXES: default, body or r1 (new archives only)
+    axes:     str = "default"  # AXES: default, body, r1 or c300 (new archives only)
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
     plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
@@ -363,12 +378,17 @@ class Archive:
         """Archive axes: five by default, six with body_ground, four for r1."""
         return AXES_SPEC.get(self.axes, AXES_SPEC["default"])[0]
 
+    @property
+    def n_cells(self) -> int:
+        """CVT cells of the archive axes (300 for c300, 800 otherwise)."""
+        return AXES_SPEC.get(self.axes, AXES_SPEC["default"])[1]
+
     def _ensure(self, n_scores: int) -> CVTArchive:
         """Build the ribs archive on first insert, when score count is known."""
         if self._grid is None:
             self._grid = CVTArchive(
                 solution_dim=morpho.MORPH_LENGTH,
-                centroids=_centroids(self.n_descriptors),
+                centroids=_centroids(self.n_descriptors, self.n_cells),
                 ranges=[(0.0, 1.0)] * self.n_descriptors,
                 extra_fields={
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
@@ -402,13 +422,14 @@ class Archive:
                        next_uid=self.next_uid)
 
     def activate(self) -> None:
-        """Turn on the ablations, score rules, score settings and body limits
-        this archive was trained with; scripts that score, decode or build its
-        robots call this."""
+        """Turn on the ablations, score rules, score settings, body limits and
+        clip mode this archive was trained with; scripts that score, decode or
+        build its robots call this."""
         ablate.set_active(self.ablate)
         rules.set_active(self.rules)
         body_options.set_active(self.body)
         apply_score(self.score)
+        set_clip_mode(self.search.get("clip_mode", "command"))
 
     def assign_uids(self) -> None:
         """Number the cells that have no uid (archives saved before uids), in
@@ -451,7 +472,7 @@ class Archive:
         grid = self._ensure(len(elite.scores))
         # an archive written before body_ground stores a narrower record
         width = grid.data()["behaviour"].shape[1]
-        cell = cell_of(elite.behaviour, self.n_descriptors)
+        cell = cell_of(elite.behaviour, self.n_descriptors, self.n_cells)
         eps = self.search.get("tie_parts", 0.0)
         incumbent = self.cells.get(cell) if eps > 0 else None   # off: no extra work
         if (incumbent is not None and np.isfinite(elite.fitness)
@@ -507,10 +528,19 @@ class Archive:
     def sample_elites(self, n: int, rng: np.random.Generator,
                       selection: str = "novelty") -> dict:
         """Parents drawn with the run's rng: probability proportional to novelty
-        (falls back to uniform when every elite has zero novelty)."""
+        (novelty-rank: times the elite's objective rank, 1 = worst, n = best;
+        falls back to uniform when every weight is zero)."""
         data = self._grid.data()
         size = len(data["solution"])
-        weights = self.novelty() if selection == "novelty" else np.zeros(size)
+        if selection == "novelty":
+            weights = self.novelty()
+        elif selection == "novelty-rank":
+            objective = np.asarray(data["objective"], dtype=float)
+            rank = np.empty(size, dtype=float)
+            rank[np.argsort(objective, kind="stable")] = np.arange(1, size + 1)
+            weights = self.novelty() * rank / max(size, 1)
+        else:
+            weights = np.zeros(size)
         p = weights / weights.sum() if weights.sum() > 0 else None
         idx = rng.choice(size, size=n, p=p)
         return {k: v[idx] for k, v in data.items()}
@@ -649,14 +679,17 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=(), score=None):
+def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=(), score=None,
+                 clip_mode="command"):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations, optional score rules, body options and plugins.
-    A score dict is applied when given; callers with no archive keep their own."""
+    carry the run's ablations, optional score rules, body options, clip mode and
+    plugins. A score dict is applied when given; callers with no archive keep
+    their own."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
     rules.set_active(score_rules)
     body_options.set_active(body)
+    set_clip_mode(clip_mode)
     if score is not None:
         apply_score(score)
     plugins.load_all(plugin_paths)
@@ -668,9 +701,9 @@ def _cuda_devices() -> int:
 
 
 def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body="",
-                 plugin_paths=(), score=None):
+                 plugin_paths=(), score=None, clip_mode="command"):
     """Pool initializer for --device warp: bind this worker to the next GPU."""
-    _init_worker(ablations, score_rules, body, plugin_paths, score)
+    _init_worker(ablations, score_rules, body, plugin_paths, score, clip_mode)
     with counter.get_lock():
         i = counter.value
         counter.value += 1
@@ -713,7 +746,7 @@ SEARCH_FLAGS = {"parent_selection": "--parent-selection", "inner_strategy": "--i
                 "mirror_p": "--mirror-p", "mutation_bias": "--mutation-bias",
                 "tie_parts": "--tie-parts", "batch_size": "--batch-size",
                 "budget_init": "--budget-init", "budget_child": "--budget-child",
-                "deterministic": "--deterministic",
+                "deterministic": "--deterministic", "clip_mode": "--clip-mode",
                 "screen": "--screen"}           # Archive.search keys and their train.py flags
 
 
@@ -878,6 +911,7 @@ def run(
     tie_parts: float = 0.0,
     deterministic: bool = False,
     screen: float = 1.0,
+    clip_mode: str = "command",
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -904,6 +938,8 @@ def run(
         raise ValueError(f"--device {device} does not simulate coupled oscillators yet; use --device cpu")
     if axes not in AXES:
         raise ValueError(f"axes must be one of {AXES}")
+    if clip_mode not in CLIP_MODES:
+        raise ValueError(f"clip_mode must be one of {CLIP_MODES}")
     if task not in task_names():
         raise ValueError(f"task must be one of {task_names()}")
     if device == "gpu" and variants > 0 and not resume:
@@ -944,7 +980,7 @@ def run(
               "mirror_p": mirror_p, "mutation_bias": mutation_bias,
               "tie_parts": tie_parts, "batch_size": batch_size,
               "budget_init": budget_init, "budget_child": budget_child,
-              "deterministic": deterministic,
+              "deterministic": deterministic, "clip_mode": clip_mode,
               "screen": screen}
     if resume:                                  # the new values win, and are stored
         for key, value in search.items():
@@ -957,6 +993,7 @@ def run(
     rules.set_active(archive.rules)             # and its score rules
     body_options.set_active(archive.body)       # and its body limits
     apply_score(archive.score)                  # and its score settings
+    set_clip_mode(archive.search.get("clip_mode", "command"))
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
@@ -1041,6 +1078,7 @@ def run(
           + (f" mirror_p={mirror_p}" if mirror_p else "")
           + (f" mutation_bias={mutation_bias}" if mutation_bias != "default" else "")
           + (f" tie_parts={tie_parts}" if tie_parts else "")
+          + (f" clip_mode={clip_mode}" if clip_mode != "command" else "")
           + (f" screen={screen}" if screen != 1.0 else "")
           + (" deterministic" if deterministic else ""))
     if device == "gpu" or (device == "warp" and workers == 1):
@@ -1050,12 +1088,14 @@ def run(
         ctx = multiprocessing.get_context("spawn")
         pool = ctx.Pool(workers, _warp_worker,
                         (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules,
-                         archive.body, plugins.loaded(), archive.score))
+                         archive.body, plugins.loaded(), archive.score,
+                         archive.search.get("clip_mode", "command")))
     else:
         fastloop.warmup()        # compiled before the fork, so workers inherit it
         pool = multiprocessing.Pool(workers, _init_worker,
                                     (archive.ablate, archive.rules, archive.body,
-                                     plugins.loaded(), archive.score))
+                                     plugins.loaded(), archive.score,
+                                     archive.search.get("clip_mode", "command")))
     if tdir:
         os.makedirs(tdir, exist_ok=True)
     path = os.path.join(out_dir, "archive.pkl")
@@ -1101,7 +1141,8 @@ def run(
                     if tdir:
                         _trace_body(tdir, archive, batch_meta, res, None, None, False)
                     continue
-                cell = cell_of(behaviour, archive.n_descriptors) if tdir else None
+                cell = cell_of(behaviour, archive.n_descriptors,
+                               archive.n_cells) if tdir else None
                 before = None
                 if tdir:
                     inc = archive.cells.get(cell)

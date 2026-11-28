@@ -151,7 +151,7 @@ def main():
     base, ext = os.path.splitext(args.out)
     groups = [[a.like(), set(), args.out]]
     for cell, e in results:
-        c = cell_of(e.behaviour, a.n_descriptors)
+        c = cell_of(e.behaviour, a.n_descriptors, a.n_cells)
         group = next((g for g in groups if c not in g[1]), None)
         if group is None:
             n = len(groups) + 1

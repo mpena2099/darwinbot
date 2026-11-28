@@ -225,6 +225,17 @@ the current limits hold back.
   (best wheeled-legged 0.35 and 0.25 against 0.46 and 0.45), because a wheel
   rolling freely already carries load (the signal sat between 0.4 and 0.6) and
   evolution used the gene as a fixed leg weakener.
+- **Tuning the gait on the real robot** (release 4, once a robot is built):
+  controllers optimised only in simulation lose a large part of their
+  performance on a real modular legged robot, and learning on the robot itself
+  beat them in 11 of 18 tasks ([a 2024 study, PMC11269725](https://pmc.ncbi.nlm.nih.gov/articles/PMC11269725)).
+  The ESP32 starts from the exported control file and runs a short search
+  (a few dozen trials of one or two gait cycles) over a handful of genes
+  (frequency, amplitudes, offsets), scoring each trial by what the servos
+  report: the load feedback and the joint positions, plus distance from an
+  external mark or a phone camera until there is odometry. It needs a
+  firmware mode, a safe range for every gene and a way to write the tuned
+  genes back to the control file.
 - **A surrogate model**: a small model trained on the thousands of bodies the
   archive has already scored would predict a new body's score before it is
   simulated, so only promising ones are; it complements cheap evaluation

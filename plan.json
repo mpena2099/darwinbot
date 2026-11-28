@@ -1,52 +1,52 @@
 {
- "name": "relative-basal-terrain",
+ "name": "cand-tipcap-terrain",
  "train_limit": 28000,
  "summary": false,
  "commits": {
-  "rb": "3b8f0169e7d8f56fb0c5824c0501910a560dd5a0"
+  "tt": "81ef58385e924deda0329c08bf628ef811252767"
  },
  "islands": {
-  "rb-t-383": [
+  "cand2-t-383": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --rules basal --basal-mode relative",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360",
    false,
-   "rb"
+   "tt"
   ],
-  "none-t-383": [
+  "cand2-t-384": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360",
    false,
-   "rb"
+   "tt"
   ],
-  "cand-t-383": [
+  "cand2-t-385": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments --rules basal --basal-mode relative --turn-scale 2.0 --turn-in-place",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 385 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360",
    false,
-   "rb"
+   "tt"
   ],
-  "rb-t-384": [
+  "cand2tt-t-383": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules basal --basal-mode relative",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --turn-tight 1.0",
    false,
-   "rb"
+   "tt"
   ],
-  "none-t-384": [
+  "none-t-385": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 385",
    false,
-   "rb"
+   "tt"
   ],
-  "cand-t-384": [
+  "bg-t-384": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --body no-segments --rules basal --basal-mode relative --turn-scale 2.0 --turn-in-place",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules body_ground",
    false,
-   "rb"
+   "tt"
   ],
-  "bg-t-383": [
+  "rb-t-385": [
    16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --rules body_ground",
+   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 385 --rules basal --basal-mode relative",
    false,
-   "rb"
+   "tt"
   ]
  }
 }

@@ -17,9 +17,9 @@ def reset():
     rules.set_active(())
 
 
-def _m(dx=0.3, dy=0.0, yaw=0.0, **kw):
+def _m(dx=0.3, dy=0.0, yaw=0.0, mass=1.0, **kw):
     return Metrics(dx=dx, dy=dy, energy=0.0, fell=False, unstable=False,
-                   duration=8.0, mass=1.0, yaw=yaw, **kw)
+                   duration=8.0, mass=mass, yaw=yaw, **kw)
 
 
 def _steer(left, right, straight=None):
@@ -102,3 +102,34 @@ def test_episode_measures_new_metrics():
     assert 0.0 <= m.tilt < 0.5
     assert m.slip >= 0.0 and np.isfinite(m.slip)
     assert 0.0 <= m.servo_ground <= 1.0
+
+
+def test_basal_lowers_a_known_body_by_the_formula():
+    m = _m(n_servos=6, mass=1.5)
+    base = fitness.task_score([m], "forward")
+    rules.set_active(["basal"])
+    cost = rules.BASAL_PER_SERVO * 6 + rules.BASAL_PER_KG * 1.5
+    assert cost > 0.0
+    assert fitness.task_score([m], "forward") == pytest.approx(base - cost)
+
+
+def test_basal_is_charged_once_per_evaluation():
+    straight = _m(n_servos=8, mass=2.0)
+    ms = _steer(_turn(1.0), _turn(-1.0), straight=straight)
+    base = fitness.task_score(ms, "steer")
+    per_episode = fitness.score(straight, "forward")
+    rules.set_active(["basal"])
+    cost = rules.BASAL_PER_SERVO * 8 + rules.BASAL_PER_KG * 2.0
+    # one deduction for the whole evaluation, not one for each of its episodes
+    assert fitness.task_score(ms, "steer") == pytest.approx(base - cost)
+    # and an episode's own score is untouched (basal is a task-level cost)
+    assert fitness.score(straight, "forward") == pytest.approx(per_episode)
+
+
+def test_episode_reports_the_basal_terms():
+    morph = mo.decode(mo.encode(mo.template(2, wheels=False, yaw=True)))
+    ep = Episode(morph, te.TERRAINS["flat"](), seconds=0.2)
+    m = ep.run(np.full(co.CTRL_LENGTH, 0.5))
+    assert m.n_servos == morph.n_servos
+    assert m.mass == pytest.approx(ep.mass)
+    assert m.mass > 0.0

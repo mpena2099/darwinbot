@@ -46,7 +46,7 @@ def _load(path):
 def test_migration_path():
     assert evolve.migration_path(evolve.BODY_MODEL) == []
     assert evolve.migration_path(22) == list(range(22, evolve.BODY_MODEL))
-    assert evolve.migration_path(20) == [20, 21, 22]
+    assert evolve.migration_path(20) == list(range(20, evolve.BODY_MODEL))
     assert evolve.migration_path(1) is None
     assert evolve.migration_path(evolve.BODY_MODEL + 1) is None
     assert evolve.migration_path(None) is None
@@ -121,7 +121,7 @@ def test_unbuildable_elite_is_dropped(tiny, tmp_path, monkeypatch):
     monkeypatch.setattr(ma, "optimise_controller", fake)
     n = len(old.cells)
     if n < 2:
-        pytest.skip("tiny archive has one elite")
+        pytest.fail("the tiny archive has one elite; the test needs at least two")
     out, summary = ma.migrate(old, workers=1, budget=4)
     assert summary["dropped"] == 1 and summary["elites"] == n
 
@@ -176,7 +176,7 @@ def _wheeled_genes():
         genes = mo.random_morphology(rng)
         if any(n.kind == "wheel" for n in mo.decode(genes).nodes.values()):
             return genes
-    pytest.skip("no random wheeled body found")
+    pytest.fail("no wheeled body found in 200 draws of seed 3")
 
 
 def test_wheel_radius_survives_20_and_width_is_the_old_one():
@@ -202,19 +202,25 @@ def test_wheel_radius_survives_20_and_width_is_the_old_one():
 
 def test_controller_padding_is_neutral_and_keeps_the_old_genes():
     old = np.random.default_rng(1).uniform(size=1 + mo.MAX_NODES * 8)
-    _, new = evolve.MIGRATIONS[21](_wheeled_genes(), old)
+    genes, new = _wheeled_genes(), old
+    for step in evolve.migration_path(21):
+        genes, new = evolve.MIGRATIONS[step](genes, new)
     assert new.shape == (co.CTRL_LENGTH,) and new[0] == old[0]
     n_old = old[1:].reshape(mo.MAX_NODES, 8)
     n_new = new[1:].reshape(mo.MAX_NODES, co.CTRL_PER_NODE)
     assert np.array_equal(n_new[:, :8], n_old)
-    assert np.all(n_new[:, co.SPEED_GAIN:] == 0.5)
+    assert np.all(n_new[:, co.SPEED_GAIN:co.COUPLE_K] == 0.5)
+    assert np.all(n_new[:, co.COUPLE_K] == 0.0)
+    assert np.all(co._scale(n_new[:, co.COUPLE_LAG], *co.COUPLE_LAG_RANGE) == 0.0)
 
 
 def test_padded_controller_gives_the_same_targets_at_any_speed():
     genes = mo.random_morphology(np.random.default_rng(5))
-    layout = mo.decode(genes).layout()
     old = np.random.default_rng(2).uniform(size=1 + mo.MAX_NODES * 8)
-    _, new = evolve.MIGRATIONS[21](genes, old)
+    genes, new = genes, old
+    for step in evolve.migration_path(21):
+        genes, new = evolve.MIGRATIONS[step](genes, new)
+    layout = mo.decode(genes).layout()
     full = co.Params(new, layout, 0.0, 1.0)
     for speed in (0.0, 0.4):
         slow = co.Params(new, layout, 0.0, speed)
@@ -237,7 +243,8 @@ def _body_model_20_file(archive, tmp_path):
         old_ctrl = np.concatenate([e.ctrl[:1], slots.reshape(-1)])
         grid.add(solution=[e.morph], objective=[e.fitness],
                  measures=[evolve.normalise(e.behaviour)[[0, 1, 3, 4]]],
-                 ctrl=[old_ctrl], scores=[e.scores], born=[e.born], behaviour=[e.behaviour])
+                 ctrl=[old_ctrl], scores=[e.scores], born=[e.born],
+                 behaviour=[e.behaviour[:6]])
     old = pickle.loads(pickle.dumps(archive))
     old._grid = grid
     old.body_model = 20

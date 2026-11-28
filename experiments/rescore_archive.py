@@ -53,8 +53,9 @@ def rescore(archive: Archive, workers: int, seed: int = 0,
         results = pool.map(_score, jobs)
     out = pickle.loads(pickle.dumps(archive))
     out._grid = None
+    out.uids = {}           # the elites carry their uids back in
     for e, (fit, scores) in zip(cells, results):
-        out.insert(Elite(e.morph, e.ctrl, fit, scores, e.born, e.behaviour))
+        out.insert(Elite(e.morph, e.ctrl, fit, scores, e.born, e.behaviour, e.uid))
     out.lineage = dict(archive.lineage)
     s = out.stats()
     s.update(added=0, seconds=0.0, rescored=note)

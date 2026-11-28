@@ -25,8 +25,8 @@ from darwinbot.builder import build_mjcf
 from darwinbot.controller import (CTRL_LENGTH, RAMP_TIME, SERVO_TORQUE, Params)
 from darwinbot.morphology import Morphology, violations
 from darwinbot.sim import (EPISODE_SECONDS, UPRIGHT_MIN, Metrics, behaviour,
-                           control_hold, is_buildable, servo_geoms,
-                           terminal_geoms,
+                           body_geoms, control_hold, is_buildable,
+                           servo_geoms, terminal_geoms,
                            wrap_angle)
 from darwinbot.terrain import Terrain
 
@@ -45,6 +45,8 @@ class BatchEpisode:
         self.buildable = is_buildable(model, morph) and not violations(morph)
         self.mass = float(model.body_subtreemass[
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso")])
+        self.n_servos = morph.n_servos
+        self.n_parts = morph.n_nodes - 1
         if not self.buildable:
             return
         self.model = mjx.put_model(model)
@@ -56,6 +58,7 @@ class BatchEpisode:
         tgeoms, self.twheel = terminal_geoms(model, morph)
         self.tgeoms = jnp.asarray(tgeoms, dtype=int)
         self.sgeoms = jnp.asarray(servo_geoms(model), dtype=int)
+        self.bgeoms = jnp.asarray(body_geoms(model, morph), dtype=int)
         self.feet = jnp.asarray(~np.asarray(self.twheel))
         self.d0 = mjx.forward(self.model, mjx.make_data(self.model))
         self._run = jax.jit(jax.vmap(self._episode))
@@ -67,7 +70,7 @@ class BatchEpisode:
         yaw0 = jnp.arctan2(self.d0.xmat[torso, 1, 0], self.d0.xmat[torso, 0, 0])
 
         def body(carry, k):
-            d, theta, held, dx, dy, energy, duration, done, unstable, touch, zsum, upsum, ticks, yaw, prev, x_mid, reached, prev_pos, prev_touch, tiltsum, slipsum, sgsum = carry
+            d, theta, held, dx, dy, energy, duration, done, unstable, touch, zsum, upsum, ticks, yaw, prev, x_mid, reached, prev_pos, prev_touch, tiltsum, slipsum, sgsum, bgsum = carry
             t = d.time
             ramp = jnp.minimum(1.0, t / RAMP_TIME)
             new = ramp * (offset + amp1 * jnp.sin(theta + phase1)
@@ -78,7 +81,8 @@ class BatchEpisode:
             theta = theta + dt * (omega - sigma * load * jnp.cos(theta))
             work = jnp.abs(d.actuator_force * d._impl.actuator_velocity).sum() * dt
             blew_up = ~jnp.isfinite(d.qacc).all() | (jnp.abs(d.qvel).max() > 1e3)
-            ended = blew_up | (d.xmat[torso, 2, 2] < UPRIGHT_MIN)
+            falling = ~blew_up & (d.xmat[torso, 2, 2] < UPRIGHT_MIN)
+            ended = blew_up | falling
             first = ended & ~done
             dx = jnp.where(done, dx, d.xpos[torso, 0] - x0)
             dy = jnp.where(done, dy, d.xpos[torso, 1] - y0)
@@ -89,11 +93,15 @@ class BatchEpisode:
             duration = jnp.where(done, duration, d.time)
             unstable = jnp.where(first, blew_up, unstable)
             # Behaviour is sampled once per control tick, while the episode runs.
-            sample = ((k + 1) % self.hold == 0) & ~(done | ended)
+            # The tick a fall is seen on still counts, as in Episode.run; a blow
+            # up does not.
+            sample = ((k + 1) % self.hold == 0) & ~(done | (ended & ~falling))
             now_touch = self._hits(d, self.tgeoms)
             touch = touch + sample * now_touch
-            # As in Episode: servo housing contact, tilt angle and foot slip speed per tick.
+            # As in Episode: servo housing and body contact, tilt angle and foot
+            # slip speed per tick.
             sgsum = sgsum + sample * jnp.any(self._hits(d, self.sgeoms))
+            bgsum = bgsum + sample * jnp.any(self._hits(d, self.bgeoms))
             pos = d.geom_xpos[self.tgeoms, :2]
             on = now_touch & prev_touch & self.feet
             slipsum = slipsum + sample * jnp.sum(
@@ -110,14 +118,14 @@ class BatchEpisode:
             reached = reached | at_mid
             return (d, theta, held, dx, dy, energy, duration, done | ended, unstable,
                     touch, zsum, upsum, ticks, yaw, now, x_mid, reached,
-                    prev_pos, prev_touch, tiltsum, slipsum, sgsum), None
+                    prev_pos, prev_touch, tiltsum, slipsum, sgsum, bgsum), None
 
         carry = (self.d0, jnp.zeros_like(amp1), jnp.zeros_like(amp1), 0.0, 0.0, 0.0, 0.0,
                  False, False, jnp.zeros(len(self.tgeoms)), 0.0, 0.0, 0, 0.0, yaw0, 0.0, False,
                  jnp.zeros((len(self.tgeoms), 2)), jnp.zeros(len(self.tgeoms), dtype=bool),
-                 0.0, 0.0, 0.0)
+                 0.0, 0.0, 0.0, 0.0)
         (d, _, _, dx, dy, energy, duration, done, unstable, touch, zsum, upsum,
-         ticks, yaw, _, x_mid, reached, _, _, tiltsum, slipsum, sgsum), _ = (
+         ticks, yaw, _, x_mid, reached, _, _, tiltsum, slipsum, sgsum, bgsum), _ = (
             jax.lax.scan(body, carry, jnp.arange(self.n_steps)))
         # Same convention as Episode: a blow up reports no displacement.
         # A where, not a product: the blown-up values may already be NaN.
@@ -129,7 +137,7 @@ class BatchEpisode:
         progress = jnp.where(reached, 2.0 * (dx - x_mid), jnp.where(done, 0.0, dx))
         return (keep(dx), keep(dy), energy, done & ~unstable, unstable, duration,
                 touch, zsum, upsum, ticks, keep(yaw), keep(progress),
-                tiltsum, slipsum, sgsum)
+                tiltsum, slipsum, sgsum, bgsum)
 
     def _hits(self, d, geoms):
         """Per geom: any active contact with a non-robot geom."""
@@ -158,7 +166,7 @@ class BatchEpisode:
             *(stack(n) for n in ("amp1", "phase1", "offset", "amp2", "phase2",
                                  "sigma")),
         )
-        dx, dy, energy, fell, unstable, duration, touch, zsum, upsum, ticks, yaw, progress, tiltsum, slipsum, sgsum = (
+        dx, dy, energy, fell, unstable, duration, touch, zsum, upsum, ticks, yaw, progress, tiltsum, slipsum, sgsum, bgsum = (
             np.asarray(v) for v in out)
         beh = [behaviour(touch[i], self.twheel, float(zsum[i]), int(ticks[i]), self.reach)
                for i in range(n)]
@@ -166,11 +174,13 @@ class BatchEpisode:
             Metrics(dx=float(dx[i]), dy=float(dy[i]), energy=float(energy[i]),
                     fell=bool(fell[i]), unstable=bool(unstable[i]),
                     duration=float(duration[i]), mass=self.mass,
+                    n_servos=self.n_servos, n_parts=self.n_parts,
                     duty=beh[i][0], height=beh[i][1], wheel_share=beh[i][2],
                     yaw=float(yaw[i]), progress=float(progress[i]),
                     upright=float(upsum[i] / ticks[i]) if ticks[i] else 1.0,
                     tilt=float(tiltsum[i] / ticks[i]) if ticks[i] else 0.0,
                     slip=float(slipsum[i] / ticks[i]) if ticks[i] else 0.0,
-                    servo_ground=float(sgsum[i] / ticks[i]) if ticks[i] else 0.0)
+                    servo_ground=float(sgsum[i] / ticks[i]) if ticks[i] else 0.0,
+                    body_ground=float(bgsum[i] / ticks[i]) if ticks[i] else 0.0)
             for i in range(n)
         ]

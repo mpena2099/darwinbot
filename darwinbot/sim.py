@@ -21,10 +21,11 @@ import mujoco
 import numpy as np
 from numba import njit
 
-from darwinbot import ablate, fastloop
-from darwinbot.builder import AssemblyRules, build_mjcf
+from darwinbot import ablate, body_options, fastloop
+from darwinbot import morphology as morpho
+from darwinbot.builder import AssemblyRules, build_mjcf, joint_ranges
 from darwinbot.controller import (CONTROL_DT, RAMP_TIME, SERVO_TORQUE, Controller,
-                                  advance_phases)
+                                  advance_phases, couple_partners)
 from darwinbot.morphology import Morphology, violations
 from darwinbot.terrain import Terrain
 
@@ -50,6 +51,7 @@ class Metrics:
     unstable: bool    # physics blew up (NaN or runaway velocity)
     duration: float   # simulated seconds before the episode ended
     mass:     float   # total robot mass (kg)
+    n_servos: int = 0       # servos of the body (joints, segments and wheels)
     duty:     float = 0.0   # mean fraction of control ticks a terminal point touches the ground
     height:   float = 0.0   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     wheel_share: float = 0.0   # share of terminal contact time that belongs to wheels
@@ -59,6 +61,8 @@ class Metrics:
     tilt:     float = 0.0   # mean torso tilt over the control ticks (rad)
     slip:     float = 0.0   # mean over ticks of the summed horizontal speed (m/s) of non-wheel terminals that touched the ground on two consecutive ticks
     servo_ground: float = 0.0   # share of control ticks a servo housing touches the ground
+    body_ground: float = 0.0    # share of control ticks the body (not a terminal point) touches the ground
+    n_parts:      int = 0       # modules other than the core (n_nodes - 1)
 
     def __post_init__(self):
         # progress = 2 * (x_end - x_mid): only the second half of the episode
@@ -133,24 +137,40 @@ def servo_geoms(model: mujoco.MjModel) -> np.ndarray:
                      .startswith("servo")], dtype=int)
 
 
+def body_geoms(model: mujoco.MjModel, morph: Morphology) -> np.ndarray:
+    """MuJoCo geom ids of the robot's body: every collision geom of a robot
+    part or of the torso volume (never the terrain, which sits on the world
+    body) that is not a terminal point."""
+    tips, _ = terminal_geoms(model, morph)
+    terminal = np.zeros(model.ngeom, dtype=bool)
+    terminal[tips] = True
+    return np.array([g for g in range(model.ngeom)
+                     if model.geom_contype[g] and model.geom_bodyid[g] != 0
+                     and not terminal[g]], dtype=int)
+
+
 class Behaviour(NamedTuple):
     """What a body does on the nominal flat episode: the record stored in the
     archive and read by name everywhere. The field order is the order of the
-    `behaviour` array of old archives and checkpoints."""
+    `behaviour` array of old archives and checkpoints; body_ground was added
+    after it, so an old record of six values still loads."""
     duty:        float   # mean fraction of control ticks a terminal point touches the ground
     height:      float   # mean torso z / body reach, clipped to 0..HEIGHT_MAX
     servos:      float   # number of servos
     wheel_share: float   # share of terminal contact time that belongs to wheels
     cot:         float   # cost of transport
     legs:        float   # number of legs
+    body_ground: float = 0.0   # share of control ticks the body (not a terminal point) touches the ground
 
     @classmethod
     def of(cls, values) -> "Behaviour":
-        """A Behaviour from any sequence of six numbers (a tuple or array from an
-        old archive, a list); a Behaviour passes through."""
+        """A Behaviour from any sequence of six or seven numbers (a tuple or
+        array from an old archive, a list); six get body_ground 0.0. A
+        Behaviour passes through."""
         if isinstance(values, cls):
             return values
-        return cls(*(float(v) for v in values[:6]))
+        v = [float(x) for x in values[:7]]
+        return cls(*(v if len(v) == 7 else v + [0.0]))
 
 
 def behaviour(touch: np.ndarray, wheel: np.ndarray, zsum: float, ticks: int,
@@ -181,19 +201,40 @@ def is_buildable(model: mujoco.MjModel, morph: Morphology) -> bool:
     """True when the printed parts of the body assemble in the spawn pose: no
     two robot geoms overlap except where the design laps them (a servo in its
     cradle, a link in the U fork around its servo, an elbow on its link tip;
-    see builder.AssemblyRules). The parent filter of MuJoCo is switched off,
-    so a part that cuts into the one it is mounted on counts, and pairs of
-    parts that cannot move against each other are measured one by one."""
+    see builder.AssemblyRules), and every elbow strut or tongue reaches the
+    link it is bolted to (the fin under it bridges the gap). The parent filter
+    of MuJoCo is switched off, so a part that cuts into the one it is mounted
+    on counts, and pairs of parts that cannot move against each other are
+    measured one by one. With the body option live-servos, every servo joint
+    must also keep LIVE_SERVO_SPAN of usable range (builder.joint_ranges, which
+    the Episode that calls this has just measured, so it is cached)."""
     data = mujoco.MjData(model)
     flags = model.opt.disableflags
     model.opt.disableflags = flags | mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     try:
         mujoco.mj_forward(model, data)
         if ablate.active("assembly"):
-            return not _servo_clashes(morph, model, data)
-        return not AssemblyRules(morph, model).clashes(model, data, fixed=True, first=True)
+            fits = not _servo_clashes(morph, model, data)
+        else:
+            rules = AssemblyRules(morph, model)
+            fits = not rules.clashes(model, data, fixed=True, first=True) \
+                and not rules.floating(model, data)
     finally:
         model.opt.disableflags = flags
+    if not fits:
+        return False
+    return not body_options.active().live_servos or _servos_live(morph)
+
+
+LIVE_SERVO_SPAN = math.radians(8.0)   # least usable range of a servo, both ways summed
+
+
+def _servos_live(morph: Morphology) -> bool:
+    """True when every servo joint (joint or spine segment) has at least
+    LIVE_SERVO_SPAN of usable range in total, from builder.joint_ranges."""
+    ranges = joint_ranges(morph)
+    return all(ranges[i][1] - ranges[i][0] >= LIVE_SERVO_SPAN
+               for i, n in morph.nodes.items() if morpho.is_joint(n.kind))
 
 
 @njit(cache=True)
@@ -231,6 +272,7 @@ class Episode:
         self._tgeoms, self._twheel = terminal_geoms(self.model, morph)
         self._hit = np.zeros(self.model.ngeom, dtype=bool)
         self._sgeoms = servo_geoms(self.model)
+        self._bgeoms = body_geoms(self.model, morph)
         self._k = 0
         assert self.model.nu == len(self.layout)
 
@@ -242,7 +284,8 @@ class Episode:
         self._k = 0
         for w in BLOWUP_WARNINGS:
             self.data.warning[w].number = 0
-        return Controller(ctrl, self.layout, command, speed)
+        return Controller(ctrl, self.layout, command, speed,
+                          couple_partners(self.morph))
 
     def _blew_up(self, t_prev: float) -> bool:
         """True when the last mj_step diverged: a MuJoCo warning fired (it has
@@ -285,6 +328,8 @@ class Episode:
         hold = self.hold
         step = mujoco.mj_step
         theta, omega, sigma = controller.theta, controller.omega, controller.params.sigma
+        couple_k, couple_lag = controller.params.couple_k, controller.params.couple_lag
+        partner = controller.params.partner
         energy = 0.0
         mid, x_mid = self.n_steps // 2, None
         yaw, prev = 0.0, math.atan2(xmat[3], xmat[0])
@@ -293,6 +338,7 @@ class Episode:
         touch = np.zeros(len(self._tgeoms))
         zsum, upsum, ticks = 0.0, 0.0, 0
         tiltsum, slipsum, sgsum = 0.0, 0.0, 0
+        bgsum = 0
         prev_pos = np.zeros((len(self._tgeoms), 2))
         prev_touch = np.zeros(len(self._tgeoms), dtype=bool)
         tick_dt = hold * dt
@@ -307,7 +353,8 @@ class Episode:
                 d.ctrl[:] = target
             self._k += 1
             step(sim_model, d)
-            advance_phases(theta, omega, sigma, force, dt)
+            advance_phases(theta, omega, sigma, force, dt,
+                           couple_k, couple_lag, partner)
             energy += float(np.abs(force * velocity).sum()) * dt
             # Per-step wrapped differences: the sum is the unwrapped heading change.
             now = math.atan2(xmat[3], xmat[0])
@@ -318,15 +365,13 @@ class Episode:
                 unstable = True
                 break
             t_prev = d.time
-            if xmat[8] < UPRIGHT_MIN:
-                fell = True
-                break
             if n == mid:
                 x_mid = float(xpos[0])
             if n % hold == 0:          # behaviour sampled once per control tick
                 now_touch = self._touching()
                 touch += now_touch
                 sgsum += bool(self._hit[self._sgeoms].any())
+                bgsum += bool(self._hit[self._bgeoms].any())
                 pos = d.geom_xpos[self._tgeoms, :2]
                 on = now_touch & prev_touch & feet
                 if on.any():
@@ -336,9 +381,14 @@ class Episode:
                 upsum += float(xmat[8])
                 tiltsum += math.acos(min(1.0, max(-1.0, float(xmat[8]))))
                 ticks += 1
+            if xmat[8] < UPRIGHT_MIN:
+                # The tick a fall is seen on still counts in the behaviour
+                # sample (as the compiled loop and the GPU ones do).
+                fell = True
+                break
 
         return (energy, yaw, fell, unstable, x_mid, touch, zsum, upsum, ticks,
-                tiltsum, slipsum, sgsum)
+                tiltsum, slipsum, sgsum, bgsum)
 
     def run(self, ctrl: np.ndarray, variant=None, command: float = 0.0,
             speed: float = 1.0) -> Metrics:
@@ -367,11 +417,12 @@ class Episode:
             x_mid = None if math.isnan(out[4]) else float(out[4])
             zsum, upsum, ticks = float(out[5]), float(out[6]), int(out[7])
             tiltsum, slipsum, sgsum = float(out[8]), float(out[9]), int(out[10])
+            bgsum = int(out[12])
             self._k = int(out[11])
             touch = touch.copy()
         else:
             (energy, yaw, fell, unstable, x_mid, touch, zsum, upsum, ticks,
-             tiltsum, slipsum, sgsum) = self._loop_py(controller, sim_model, variant)
+             tiltsum, slipsum, sgsum, bgsum) = self._loop_py(controller, sim_model, variant)
 
         x, y = d.xpos[self.torso][:2]
         duty, height, share = behaviour(touch, self._twheel, zsum, ticks, self.reach)
@@ -382,10 +433,13 @@ class Episode:
                       float(x - x0) if x_mid is None else 2.0 * float(x - x_mid)),
             energy=energy, fell=fell, unstable=unstable,
             duration=float(d.time), mass=self.mass,
+            n_servos=self.morph.n_servos,
+            n_parts=self.morph.n_nodes - 1,
             duty=duty, height=height, wheel_share=share,
             yaw=yaw if not unstable else 0.0,
             upright=upsum / ticks if ticks else 1.0,
             tilt=tiltsum / ticks if ticks else 0.0,
             slip=slipsum / ticks if ticks else 0.0,
             servo_ground=sgsum / ticks if ticks else 0.0,
+            body_ground=bgsum / ticks if ticks else 0.0,
         )

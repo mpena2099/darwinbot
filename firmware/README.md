@@ -4,7 +4,8 @@ Portable control math for the real DarwinBot, in plain C++17 (no Arduino, no
 external libraries, float math), so it can be tested without the ESP32.
 
 `core/darwin_control.{h,cpp}` implements the controller of
-`docs/formato-controle.md` (format 4; formats 2 and 3 load with the missing gains at zero): one phase oscillator per position servo with
+`docs/formato-controle.md` (format 5; formats 2, 3 and 4 load with the missing
+gains and the coupling at zero): one phase oscillator per position servo with
 Tegotae load feedback (`dtheta = omega - sigma * N * cos(theta)`, five
 substeps per control tick), the start ramp, the speed clip
 `(amp1 + 2 * amp2) * (omega + |sigma|) <= servo_speed` (control.json, default 4.71 rad/s), joint clamping and the servo step
@@ -12,6 +13,17 @@ conversion (`zero + sign * target * 4096 / 2pi`, rounded). Wheels get only a
 ramped, signed speed and ignore phase and load. `set_command(c)` applies the
 steering command and `set_speed(s)` the speed command, both from the values the
 file carries before them.
+
+Each servo also carries the coupling of format 5: `couple_to` (layout index of
+its partner, -1 for none), `couple_k` (rad/s, 0 turns it off) and `couple_lag`
+(rad). A joint with a partner and a nonzero strength adds
+`couple_k * sin(theta_partner - theta - couple_lag)` to its own phase rate and
+`couple_k * sin(theta - theta_partner + couple_lag)` to the partner's, so two
+servos both naming each other feel it twice, as in `controller.py`. Every rate
+of a substep is taken from the phases at its start, then all phases advance.
+The rates live in a fixed array of `Controller::kMaxServos` (16, the most
+servos a body has), so `tick` allocates nothing. With every `couple_k` at zero
+the firmware runs the old load-coupled CPG unchanged.
 
 The core takes loads as bus load over the servo maximum torque and divides
 them by `load_full_scale` (control.json, default 0.7: the simulation treats
@@ -21,10 +33,12 @@ so float precision never stalls it.
 ## Parity test
 
 `tests/test_firmware_parity.py` builds a case with `numpy` from
-`darwinbot/controller.py` (random genes, open loop with `sigma = 0`, an
+`darwinbot/controller.py` (random genes, coupled controllers on the partner
+maps of real bodies, every `couple_k` at zero, open loop with `sigma = 0`, an
 active speed clip, and signed wheel speeds), writes it to a temporary file, compiles the core plus
 `test/parity_main.cpp` with the first of `g++`, `clang++`, `c++` found, and
-runs it. The test skips only when no compiler is installed.
+runs it. Each tick compares the targets, the signed wheel speeds and the
+phases (modulo 2pi). The test skips only when no compiler is installed.
 
 ```bash
 pytest tests/test_firmware_parity.py -q
@@ -35,9 +49,9 @@ pytest tests/test_firmware_parity.py -q
 `test/parity_main.cpp` reads a plain text case file. Its header comment
 documents the format: a line with `frequency ramp_time control_hz n_servos`,
 the optional `load_full_scale`, `command`, `speed` and `servo_speed` on the header line, one line per servo, then one
-line per tick with the loads, the expected targets and the expected signed
-wheel speeds. Expected targets are radians for position servos and
-rad/s for wheels.
+line per tick with the loads, the expected targets, the expected signed
+wheel speeds and the expected phases. Expected targets are radians for
+position servos and rad/s for wheels.
 
 ```bash
 g++ -std=c++17 -O2 firmware/test/parity_main.cpp \
@@ -50,7 +64,8 @@ that error exceeds `1e-3 rad`.
 
 ## ESP32 layer
 
-Not written yet, for any board. When the hardware arrives, a thin Arduino layer will read the
-control JSON, poll each STS3215 load register (`0x3C`/`0x3D`), apply the
-calibration (`zero`, `sign`) and write targets on the bus. All control math
+`esp32/` is the PlatformIO project that runs this core on the robot (web page,
+serial console, micro-ROS), untested on hardware: see `esp32/README.md`. It reads
+`control.json`, polls each STS3215 load register (`0x3C`/`0x3D`), applies the
+calibration (`zero`, `sign`) and writes targets on the bus. All control math
 stays in this portable core.

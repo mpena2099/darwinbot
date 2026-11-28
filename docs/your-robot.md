@@ -31,6 +31,7 @@ Pass one or more tokens separated by commas, in any order:
 | `no-wheels` | wheels allowed | No `wheel` modules. |
 | `no-passive` | passive modules allowed | No `spring`, `tail`, `skid`, `spike` or `caster`. |
 | `no-segments` | spine segments allowed | No `segment` plates (the spine), so every limb hangs on the core. |
+| `live-servos` | off | Every servo joint must keep at least 8 degrees of usable range (both directions summed), or the body is not buildable. |
 | `max-servos=N` | 16 | At most N servos, counting joints, wheels and spine segments. N must be at least 1. |
 | `legs=A..B` | any number of legs | Between A and B legs. `legs=N` means exactly N. |
 | `max-size=MM` | no limit | Largest side of the body's bounding box at the spawn, in mm. |

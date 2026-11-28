@@ -15,8 +15,17 @@
 // amplitudes are also scaled by clip(1 - d * speed_gain, 0, 2) and offsets
 // shifted by d * speed_shift; wheel speeds shift by d * speed_shift. The wheel
 // speed is clipped once, after both shifts.
-// Steering and speed are applied before the amplitude speed clip.
-// Amplitudes are clipped so (amp1 + 2 amp2) * omega <= 4.71 rad/s.
+// Steering and speed are applied before the amplitude speed clip. The default
+// "command" clip mode clips after the commands; "headroom" scales the base
+// amplitudes first by the headroom of the stronger steering side, so a steered
+// joint keeps both sides in proportion, and the usual clip stays as a safety
+// net. Amplitudes are clipped so (amp1 + 2 amp2) * omega <= 4.71 rad/s.
+// Coupling: a servo with couple_to = p >= 0 and couple_k != 0 feels its
+// partner, and pulls it back with the opposite term. Every rate is taken from
+// the phases at the start of the substep, then the phases advance:
+//   rate[j] += couple_k * sin(theta[p] - theta[j] - couple_lag)
+//   rate[p] += couple_k * sin(theta[j] - theta[p] + couple_lag)
+// With every couple_k = 0 this is the plain load-coupled CPG above.
 #pragma once
 
 #include <vector>
@@ -37,6 +46,9 @@ struct ServoParams {
     float steer_shift = 0.0f;  // rad, offset change at full command (wheel: rad/s)
     float speed_gain = 0.0f;   // amplitude change at speed command 0
     float speed_shift = 0.0f;  // rad, offset change at speed command 0 (wheel: rad/s)
+    int couple_to = -1;        // layout index of the partner servo (-1 = none)
+    float couple_k = 0.0f;     // rad/s, phase coupling strength (0 = off)
+    float couple_lag = 0.0f;   // rad, phase offset of the coupling
     float sign = 1.0f;      // +1 or -1, mounting direction
     float zero = 2048.0f;   // servo counts at target 0 rad
     float min = 0.0f;       // rad, joint limit
@@ -46,14 +58,17 @@ struct ServoParams {
 
 class Controller {
 public:
+    enum class ClipMode { Command, Headroom };
     static constexpr int kSubsteps = 5;       // 4 ms each at 50 Hz
     static constexpr float kServoSpeed = 4.71f;     // control.json default
     static constexpr float kLoadFullScale = 0.7f;   // control.json default
+    static constexpr int kMaxServos = 16;     // morphology.MAX_SERVOS; bounds the rates
 
     Controller(float frequency, float ramp_time, float control_hz,
                std::vector<ServoParams> servos,
                float load_full_scale = kLoadFullScale,
-               float servo_speed = kServoSpeed);
+               float servo_speed = kServoSpeed,
+               ClipMode clip_mode = ClipMode::Command);
 
     // One control period: targets from the current phases at t, then
     // kSubsteps explicit-Euler phase steps under the same loads.
@@ -71,7 +86,12 @@ public:
     // set_command: recomputes the parameters; does not advance time.
     void set_speed(float s);
 
-    std::vector<float> targets;       // position: rad (clamped); wheel: rad/s
+    // Back to the state right after construction: phases and elapsed time at
+    // their start values, outputs zeroed. The commands set above are kept.
+    // No heap use.
+    void reset();
+
+    std::vector<float> targets;      // position: rad (clamped); wheel: rad/s
     std::vector<int> steps;           // position: servo counts, 0 on wheels
     std::vector<float> wheel_speeds;  // wheel: signed rad/s, 0 on joints
     const std::vector<float>& phases() const { return theta_; }
@@ -82,6 +102,7 @@ private:
     float dt_;
     float load_full_scale_;
     float servo_speed_;
+    ClipMode clip_mode_;
     float time_ = 0.0f;
     float command_ = 0.0f;
     float speed_ = 1.0f;

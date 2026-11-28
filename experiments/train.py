@@ -4,6 +4,7 @@ experiments/train.py
 Run MAP-Elites over body plans, with CMA-ES learning each body's gait.
 
   python experiments/train.py                          # flat, defaults
+  python experiments/train.py --device auto            # benchmark, use the fastest
   python experiments/train.py --terrains terrain       # flat + rough + steps
   python experiments/train.py --batches 60 --workers 8
   python experiments/train.py --task turn --terrains step --payload 0.3
@@ -19,10 +20,13 @@ import argparse
 import os
 import sys
 
-from darwinbot import ablate, body_options, evolve, hardware, plugins, rules
+from darwinbot import ablate, body_options, controller, evolve, hardware, plugins, rules
 from darwinbot.evolve import load_archive
 from darwinbot.fitness import task_names
 from darwinbot.morphology import decode, summary
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import benchmark  # noqa: E402  (experiments/benchmark.py, the device measurement)
 
 PRESETS = {
     "steer":   dict(task="steer", terrains="terrain", payload=0.0),
@@ -31,6 +35,26 @@ PRESETS = {
     "step":    dict(task="steer", terrains="step", payload=0.0),
     "payload": dict(task="steer", terrains="terrain", payload=0.3),
 }
+
+
+def resolve_device(device, workers, cache_path=None):
+    """--device auto: the device measured on this machine (experiments/benchmark.py),
+    read from the cache, or measured and saved first when the cache is missing.
+    A given --workers wins over the cached one; any other device is returned as
+    it is, without touching the cache."""
+    if device != "auto":
+        return device, workers
+    result = benchmark.load(cache_path)
+    if result is None:
+        result = benchmark.measure()
+        benchmark.save(result, cache_path)
+    picked = result.get("device", "cpu")
+    if workers is None:
+        workers = result.get("workers")
+    print(f"[darwinbot] --device auto: {picked}"
+          f"{'' if workers is None else f' with {workers} workers'}, "
+          f"benchmarked {result.get('date', '?')} -> {benchmark.cache_path(cache_path)}")
+    return picked, workers
 
 
 def check_kit_profile(path):
@@ -74,18 +98,86 @@ def main():
                    help="random seed (default: a new one every run, printed so "
                         "the run can be repeated)")
     p.add_argument("--out", default="checkpoints")
-    p.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
-                   help="simulate on the CPU (default) or with MJX on the GPU")
+    p.add_argument("--device", choices=("cpu", "gpu", "warp", "auto"), default="cpu",
+                   help="simulate on the CPU (default), with MJX (gpu), with "
+                        "MuJoCo Warp (warp), or auto: benchmark this machine "
+                        "once and pick the fastest; with warp the GPU only "
+                        "searches, the archive is still scored on the CPU")
     p.add_argument("--popsize", type=int, default=None,
                    help="CMA-ES population (gpu default: 64)")
     p.add_argument("--seconds", type=float, default=8.0,
                    help="simulated seconds per episode, 8 by default (ignored on --resume)")
     p.add_argument("--variants", type=int, default=None,
                    help="randomised models per terrain for every evaluation "
-                        "(default: 2 on cpu, 0 on gpu; ignored on --resume)")
+                        "(default: 2 on cpu and warp, 0 on gpu; ignored on --resume)")
     p.add_argument("--parent-selection", choices=evolve.PARENT_SELECTIONS,
                    default="novelty",
-                   help="parents drawn by novelty (default) or uniformly")
+                   help="parents drawn by novelty (default), by novelty times "
+                        "the objective rank (novelty-rank) or uniformly")
+    p.add_argument("--inner-strategy", choices=("default", "diagonal", "focused",
+                                                "diagonal+focused"),
+                   default="default",
+                   help="inner-loop CMA-ES (default: plain CMA-ES; diagonal: "
+                        "diagonal covariance; focused: wider initial steps where the "
+                        "body changed; diagonal+focused: both); not stored in the archive")
+    p.add_argument("--variant-mode", choices=evolve.VARIANT_MODES, default="all",
+                   help="all (default): every candidate on the whole variant set; "
+                        "first: one variant in the loop, one full re-score at the end")
+    p.add_argument("--protect-new", type=float, default=1.0, metavar="FACTOR",
+                   help="multiply the inner-loop budget of a child whose body changed "
+                        "a lot (a graft, two genome slots or an added/removed node), "
+                        "so a new body is not judged on a poorly tuned controller; "
+                        "1.0 (default) turns it off; not stored in the archive")
+    p.add_argument("--deterministic", action="store_true",
+                   help="take each batch's results in submission order instead of "
+                        "completion order, so the same --seed and --workers repeat a "
+                        "run exactly; a little slower; not stored in the archive. "
+                        "--device gpu always runs in submission order, so it is "
+                        "deterministic with or without this flag")
+    p.add_argument("--mirror-p", type=float, default=0.0, metavar="P",
+                   help="share of mutations that copy the limb that changed onto its "
+                        "mirror slot, so symmetric bodies can arise and compete; "
+                        "0 (default) turns it off and changes nothing; not stored in "
+                        "the archive and never part of the score")
+    p.add_argument("--mutation-bias", choices=("default", "remove"), default="default",
+                   help="weigh the add/remove mutation operators towards smaller "
+                        "bodies (add 0.10, remove 0.25 instead of 0.20/0.10); "
+                        "default leaves all weights as they are; stored in the archive")
+    p.add_argument("--tie-parts", type=float, default=0.0, metavar="EPS",
+                   help="let a child with fewer body parts take an occupied cell when "
+                        "its objective is within EPS relative of the incumbent's; "
+                        "0 (default) turns it off; stored in the archive")
+    p.add_argument("--screen", type=float, default=1.0, metavar="SHARE",
+                   help="cheap evaluation first: every child whose body changed gets "
+                        "one quick score (its inherited controller, one flat episode), "
+                        "and only the best SHARE of them (0 to 1) go on to the "
+                        "inner loop; 1.0 (default) turns it off; CPU only")
+    p.add_argument("--clip-mode", choices=controller.CLIP_MODES, default="command",
+                   help="servo speed clip: command (default) clips after the steering "
+                        "and speed commands; headroom scales the base amplitudes first "
+                        "so the stronger steering side keeps its proportion; stored in "
+                        "the archive and written to the control file")
+    p.add_argument("--face-fix", action="store_true",
+                   help="mutations never leave a joint or a wheel on a core face slot "
+                        "(top and bottom, front and back), where the repair would turn "
+                        "it into a link or a foot; off by default; stored in the archive")
+    p.add_argument("--mirror-ctrl", action="store_true",
+                   help="when a mutation copies or mirrors a limb, its new slots start "
+                        "with the controller genes of the limb they copy, half a cycle "
+                        "later (antiphase) and with the steering sign swapped for a "
+                        "mirror; off by default; stored in the archive")
+    p.add_argument("--reeval", type=int, default=0, metavar="N",
+                   help="every N batches, score the best 20 elites again on fresh "
+                        "terrain seeds and keep as objective the mean of the stored "
+                        "value and all re-scores, so a lucky draw does not hold a cell; "
+                        "0 (default) turns it off; stored in the archive")
+    p.add_argument("--dns", type=int, default=0, metavar="K",
+                   help="hybrid Dominated Novelty Search: parents come from a separate "
+                        "population of at most K robots, kept by dominated novelty (distance "
+                        "to the nearest fitter robots) above a quality floor (objective > 0 "
+                        "and straight progress > 0.05 m); the normal archive still takes "
+                        "every robot and stays the saved museum; 0 (default) turns it off; "
+                        "stored in the archive")
     p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -106,21 +198,66 @@ def main():
                    choices=ablate.NAMES,
                    help="experiment: switch one realism rule off, repeatable ("
                         + ", ".join(ablate.NAMES) + "); stored in the archive, CPU only")
-    p.add_argument("--rules", default="", metavar="A,B",
+    p.add_argument("--rules", default=None, metavar="A,B",
                    help="experiment: optional score rules to switch on, comma list ("
-                        + ", ".join(rules.NAMES) + "); stored in the archive")
+                        + ", ".join(rules.NAMES) + "); stored in the archive, and a "
+                        "resume must repeat the archive's (or give none)")
+    p.add_argument("--basal-scale", type=float, default=None, metavar="SCALE",
+                   help="multiply the basal rule's per-servo and per-kg costs "
+                        "(default 1); stored in the archive")
+    p.add_argument("--basal-mode", choices=rules.BASAL_MODES, default=None,
+                   help="absolute (default): subtract the per-servo and per-kg "
+                        "costs; relative: keep (1 - f) of a positive score, "
+                        "f = servo share * servos + part share * passive parts, "
+                        "capped at 0.8; stored in the archive")
+    p.add_argument("--basal-servo-share", type=float, default=None, metavar="SHARE",
+                   help="score fraction charged per servo by --basal-mode "
+                        "relative (default 0.04); stored in the archive")
+    p.add_argument("--basal-part-share", type=float, default=None, metavar="SHARE",
+                   help="score fraction charged per passive part by "
+                        "--basal-mode relative (default 0.02); stored in the archive")
+    p.add_argument("--turn-scale", type=float, default=None, metavar="M/RAD",
+                   help="metres per radian of asked-for turn (default 0.2); "
+                        "stored in the archive")
+    p.add_argument("--turn-in-place", action="store_true", default=None,
+                   help="let a pivot earn turn credit, capped by the straight "
+                        "walk (default: off); stored in the archive")
+    p.add_argument("--turn-tight", type=float, default=None, metavar="W",
+                   help="tight-turn bonus: a turn's credit grows by up to W times as its "
+                        "radius falls below 0.5 m (default 0, off); stored in the archive")
+    p.add_argument("--turn-cap-deg", type=float, default=None, metavar="DEG",
+                   help="most turn credited in one episode (default 90 degrees); "
+                        "stored in the archive")
     p.add_argument("--body", default="", metavar="A,B",
                    help="limits on the bodies evolution may build, comma list of "
                         "no-wheels, no-passive, no-segments, max-servos=N, "
                         "legs=A..B, max-size=MM, bed=MM; stored in the archive")
+    p.add_argument("--axes", choices=evolve.AXES, default="default",
+                   help="archive descriptors: default (five), body (five plus the "
+                        "share of ticks the torso touches the ground), r1 (the four "
+                        "release-1 descriptors, no servo count, 500 cells) or c300 "
+                        "(the five default descriptors in 300 cells); stored in "
+                        "the archive, new archives only")
     a = p.parse_args()
-    a.rules = tuple(n for n in a.rules.split(",") if n)
+    rules_given = a.rules is not None          # None: keep the archive's rules on resume
+    a.rules = tuple(n for n in (a.rules or "").split(",") if n)
     try:
         rules.normalise(a.rules)
         body_options.parse(a.body)
     except ValueError as e:
         raise SystemExit(str(e))
+    if a.protect_new < 1.0:
+        raise SystemExit("--protect-new must be >= 1.0 (1.0 turns it off)")
+    if not 0.0 <= a.mirror_p <= 1.0:
+        raise SystemExit("--mirror-p must be in [0, 1] (0 turns it off)")
+    if a.tie_parts < 0.0:
+        raise SystemExit("--tie-parts must be >= 0 (0 turns it off)")
+    if not 0.0 < a.screen <= 1.0:
+        raise SystemExit("--screen must be in (0, 1] (1.0 turns it off)")
+    if a.reeval < 0 or a.dns < 0:
+        raise SystemExit("--reeval and --dns must be >= 0 (0 turns them off)")
 
+    a.device, a.workers = resolve_device(a.device, a.workers)
     wanted = None
     if a.profile:
         check_kit_profile(a.profile)
@@ -149,17 +286,34 @@ def main():
         except ImportError:
             raise SystemExit("--device gpu needs JAX and MJX: "
                              "pip install -e '.[gpu]'")
+    if a.device == "warp":
+        try:
+            import mujoco_warp  # noqa: F401
+        except ImportError:
+            raise SystemExit("--device warp needs MuJoCo Warp: "
+                             "pip install -e '.[warp]'")
 
     if a.seed is None:
         a.seed = int.from_bytes(os.urandom(4), "little") >> 1
     print(f"[darwinbot] seed={a.seed}")
-    variants = a.variants if a.variants is not None else (2 if a.device == "cpu" else 0)
+    variants = a.variants if a.variants is not None else (0 if a.device == "gpu" else 2)
+    score = evolve.score_options(a.basal_scale, a.turn_scale, a.turn_in_place,
+                                 a.turn_cap_deg, a.basal_mode, a.basal_servo_share,
+                                 a.basal_part_share, turn_tight=a.turn_tight)
     common = dict(n_init=a.init, n_batches=a.batches, batch_size=a.batch_size,
                   budget_init=a.budget_init, budget_child=a.budget_child,
                   workers=a.workers, seed=a.seed, episode_seconds=a.seconds,
                   device=a.device, popsize=a.popsize, variants=variants,
-                  parent_selection=a.parent_selection, ablations=tuple(a.ablate), score_rules=a.rules,
-                  body=a.body, plugin=record)
+                  parent_selection=a.parent_selection, ablations=tuple(a.ablate),
+                  score_rules=a.rules if rules_given else None, score=score,
+                  body=a.body, axes=a.axes, plugin=record,
+                  inner_strategy=None if a.inner_strategy == "default" else a.inner_strategy,
+                  variant_mode=a.variant_mode, protect_new=a.protect_new,
+                  mirror_p=a.mirror_p, mutation_bias=a.mutation_bias,
+                  tie_parts=a.tie_parts, deterministic=a.deterministic,
+                  screen=a.screen, clip_mode=a.clip_mode,
+                  face_fix=a.face_fix, mirror_ctrl=a.mirror_ctrl, reeval=a.reeval,
+                  dns=a.dns)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:

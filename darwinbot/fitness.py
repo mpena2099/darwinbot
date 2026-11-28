@@ -62,9 +62,19 @@ Optional rules (darwinbot/rules.py, off by default, switched on per run with
   tilt          every episode: - TILT_W * Metrics.tilt (mean tilt, rad)
   slip          every episode: - SLIP_W * Metrics.slip (m/s of sliding feet)
   servo_ground  every episode: - SERVO_GROUND_W * Metrics.servo_ground (share of ticks)
+  body_ground   every episode: - BODY_GROUND_W * Metrics.body_ground (share of ticks)
+  energy_abs    every episode: - ENERGY_ABS_W * energy / (M_REF g), M_REF = 1 kg
+  basal         once per evaluation: - BASAL_PER_SERVO * n_servos
+                - BASAL_PER_KG * mass (kg), the idle draw and the weight carried;
+                --basal-mode relative instead keeps (1 - f) of a positive score,
+                f = servo share * n_servos + part share * passive parts, capped
+                at BASAL_REL_CAP (a non-positive score is left alone)
+  fall_zero     an episode that fell: its progress credit (up(progress) or
+                up(|yaw|), and the half-speed credit) is 0; FALL_PENALTY stays
 """
 
 import math
+import os
 from typing import Sequence
 
 import numpy as np
@@ -74,6 +84,8 @@ from darwinbot.sim import Metrics
 
 LATERAL_W    = 0.5
 ENERGY_W     = 0.05
+ENERGY_ABS_W = 0.05   # rule `energy_abs`: m per (energy / (M_REF g))
+M_REF        = 1.0    # kg: reference mass of rule `energy_abs`
 FALL_PENALTY = 0.5
 TURN_DRIFT_W = 0.5
 BUILTIN_TASKS = ("forward", "turn", "steer")
@@ -81,12 +93,90 @@ TASKS        = BUILTIN_TASKS   # known task names; register_task() keeps it upda
 SPEED_ASKED  = 0.5     # speed command of the slow episode of the steer task
 COMMANDS     = {"steer": ((0.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (0.0, SPEED_ASKED))}
 STRAIGHT     = ((0.0, 1.0),)   # other tasks: one straight episode, full speed
-TURN_SCALE   = 0.2     # m per radian of heading turned the way asked
-HEADING_W    = TURN_SCALE   # m per radian of heading lost on a straight walk
-TURN_CAP     = math.pi / 2   # rad: no credit for turning more than 90 degrees
+# m per radian of heading turned the way asked (at 0.2 a full 90-degree turn
+# earns 0.31 m against 2.5-4 m of straight progress). train.py stores these
+# settings in the archive; the env variables win while set (the turn gates).
+DEFAULT_TURN_SCALE = 0.2
+DEFAULT_TURN_IN_PLACE = False
+DEFAULT_TURN_CAP_DEG = 90.0
+
+
+def _turn_scale(value=None) -> float:
+    if "DARWINBOT_TURN_SCALE" in os.environ:
+        return float(os.environ["DARWINBOT_TURN_SCALE"])
+    return DEFAULT_TURN_SCALE if value is None else float(value)
+
+
+def _turn_in_place(value=None) -> bool:
+    if "DARWINBOT_TURN_IN_PLACE" in os.environ:
+        return os.environ["DARWINBOT_TURN_IN_PLACE"] == "1"
+    if value is None:
+        return DEFAULT_TURN_IN_PLACE
+    return value == "1" if isinstance(value, str) else bool(value)
+
+
+def _turn_cap(value=None) -> float:
+    """Radians; `value` and the env variable are in degrees."""
+    if "DARWINBOT_TURN_CAP_DEG" in os.environ:
+        return math.radians(float(os.environ["DARWINBOT_TURN_CAP_DEG"]))
+    return math.radians(DEFAULT_TURN_CAP_DEG if value is None else float(value))
+
+
+TURN_SCALE   = _turn_scale()
+HEADING_W    = 0.2     # m per radian of heading lost on a straight walk
+TURN_IN_PLACE = _turn_in_place()
+TURN_CAP     = _turn_cap()
+# Tight-turn bonus (--turn-tight W): a turn's credit grows by up to W times when its
+# radius (distance walked / angle turned) is below TIGHT_R, so a pivot in place pays
+# most; 0 (default) is off. The straight-walk cap above still applies first.
+DEFAULT_TURN_TIGHT = 0.0
+TIGHT_R = 0.5          # m: no bonus at this radius or wider
+
+
+def _turn_tight(value=None) -> float:
+    if "DARWINBOT_TURN_TIGHT" in os.environ:
+        return float(os.environ["DARWINBOT_TURN_TIGHT"])
+    return DEFAULT_TURN_TIGHT if value is None else float(value)
+
+
+TURN_TIGHT = _turn_tight()
+
+
+def score_options(turn_scale=None, turn_in_place=None, turn_cap_deg=None,
+                  turn_tight=None) -> dict:
+    """Non-default turn settings for Archive.score (env wins while set)."""
+    out = {}
+    scale = _turn_scale(turn_scale)
+    if scale != DEFAULT_TURN_SCALE:
+        out["turn_scale"] = scale
+    in_place = _turn_in_place(turn_in_place)
+    if in_place != DEFAULT_TURN_IN_PLACE:
+        out["turn_in_place"] = in_place
+    if "DARWINBOT_TURN_CAP_DEG" in os.environ:
+        deg = float(os.environ["DARWINBOT_TURN_CAP_DEG"])
+    else:
+        deg = DEFAULT_TURN_CAP_DEG if turn_cap_deg is None else float(turn_cap_deg)
+    if deg != DEFAULT_TURN_CAP_DEG:
+        out["turn_cap_deg"] = deg
+    tight = _turn_tight(turn_tight)
+    if tight != DEFAULT_TURN_TIGHT:
+        out["turn_tight"] = tight
+    return out
+
+
+def apply_score(score: dict) -> None:
+    """Use an archive's stored settings; the environment overrides them when set."""
+    global TURN_SCALE, TURN_IN_PLACE, TURN_CAP, TURN_TIGHT
+    TURN_SCALE = _turn_scale(score.get("turn_scale"))
+    TURN_IN_PLACE = _turn_in_place(score.get("turn_in_place"))
+    TURN_CAP = _turn_cap(score.get("turn_cap_deg"))
+    TURN_TIGHT = _turn_tight(score.get("turn_tight"))
+
+
 TILT_W         = 0.2   # m per radian of mean tilt (rule `tilt`): 10 degrees costs 0.035 m
 SLIP_W         = 0.2   # m per m/s of summed foot sliding speed (rule `slip`)
 SERVO_GROUND_W = 0.1   # m per share of ticks a servo housing is on the ground (rule `servo_ground`)
+BODY_GROUND_W  = 0.2   # m per share of ticks the torso itself is on the ground (rule `body_ground`)
 UNSTABLE_SCORE = -5.0
 G = 9.81
 
@@ -122,6 +212,13 @@ def up(v: float, m: Metrics) -> float:
     return v * m.upright if v > 0 else v
 
 
+def credit(v: float, m: Metrics) -> float:
+    """up(v), or 0 for a fallen episode under rule `fall_zero`."""
+    if m.fell and rules.active("fall_zero"):
+        return 0.0
+    return up(v, m)
+
+
 def rule_cost(m: Metrics) -> float:
     """Penalty of the active optional rules (0 when none is on)."""
     c = 0.0
@@ -131,7 +228,41 @@ def rule_cost(m: Metrics) -> float:
         c += SLIP_W * m.slip
     if rules.active("servo_ground"):
         c += SERVO_GROUND_W * m.servo_ground
+    if rules.active("body_ground"):
+        c += BODY_GROUND_W * m.body_ground
+    if rules.active("energy_abs"):
+        # the energy term divides by the robot's own mass, so a heavy idle part
+        # lowers it; this charges the energy itself, against a fixed mass
+        c += ENERGY_ABS_W * m.energy / (M_REF * G)
     return c
+
+
+def basal_cost(ms: Sequence[Metrics]) -> float:
+    """Rule `basal`: what the body costs while it stands still, once per
+    evaluation (every episode of a task runs the same body)."""
+    if not rules.active("basal") or any(m.unstable for m in ms):
+        return 0.0
+    m = ms[0]
+    return rules.BASAL_PER_SERVO * m.n_servos + rules.BASAL_PER_KG * m.mass
+
+
+def basal_factor(ms: Sequence[Metrics]) -> float:
+    """Relative `basal`: the share of a positive score the body keeps."""
+    if (not rules.active("basal") or rules.BASAL_MODE != "relative"
+            or any(m.unstable for m in ms)):
+        return 1.0
+    m = ms[0]
+    other = max(m.n_parts - m.n_servos, 0)   # modules with no servo, not the core
+    f = min(rules.BASAL_SERVO_SHARE * m.n_servos
+            + rules.BASAL_PART_SHARE * other, rules.BASAL_REL_CAP)
+    return 1.0 - f
+
+
+def apply_basal(s: float, ms: Sequence[Metrics]) -> float:
+    """Rule `basal` on one evaluation's score: absolute cost or relative factor."""
+    if rules.BASAL_MODE == "relative" and rules.active("basal"):
+        return float(s * basal_factor(ms)) if s > 0 else float(s)
+    return float(s - basal_cost(ms))
 
 
 def score(m: Metrics, task: str = "forward") -> float:
@@ -143,9 +274,9 @@ def score(m: Metrics, task: str = "forward") -> float:
         return float(_TASK_SCORES[task](m))
     cost = ENERGY_W * m.energy / (m.mass * G) + rule_cost(m)
     if task == "turn":
-        s = up(abs(m.yaw), m) - TURN_DRIFT_W * math.hypot(m.dx, m.dy) - cost
+        s = credit(abs(m.yaw), m) - TURN_DRIFT_W * math.hypot(m.dx, m.dy) - cost
     else:
-        s = up(m.progress, m) - LATERAL_W * abs(m.dy) - HEADING_W * abs(m.yaw) - cost
+        s = credit(m.progress, m) - LATERAL_W * abs(m.dy) - HEADING_W * abs(m.yaw) - cost
     if m.fell:
         s -= FALL_PENALTY
     return float(s)
@@ -162,11 +293,12 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         raise ValueError(f"unknown task '{task}', expected one of {TASKS}")
     if task != "steer":
         if task in BUILTIN_TASKS:
-            return score(ms[0], task)
+            return apply_basal(score(ms[0], task), ms)
         if any(m.unstable for m in ms):
             return UNSTABLE_SCORE
         fn = _TASK_SCORES[task]
-        return float(fn(ms) if len(commands(task)) > 1 else fn(ms[0]))
+        s = fn(ms) if len(commands(task)) > 1 else fn(ms[0])
+        return apply_basal(s, ms)
     if any(m.unstable for m in ms):
         return UNSTABLE_SCORE
     turns = []
@@ -174,16 +306,24 @@ def task_score(ms: Sequence[Metrics], task: str = "forward") -> float:
         dist = math.hypot(m.dx, m.dy)
         if rules.active("turn_forward") and m.dx <= 0:
             dist = 0.0
-        turn = min(TURN_SCALE * min(-c * m.yaw, TURN_CAP), dist)
-        s = up(turn, m) - ENERGY_W * m.energy / (m.mass * G) - rule_cost(m)
+        turn = TURN_SCALE * min(-c * m.yaw, TURN_CAP)
+        # default: a turn earns at most the distance walked in it; with TURN_IN_PLACE a
+        # pivot earns too, but never more than the straight walk, so a robot that does
+        # not walk forward earns nothing for turning (turning is secondary)
+        turn = min(turn, max(ms[0].progress, 0.0) if TURN_IN_PLACE else dist)
+        if TURN_TIGHT > 0 and turn > 0:
+            angle = max(min(-c * m.yaw, TURN_CAP), 1e-3)
+            turn *= 1.0 + TURN_TIGHT * max(0.0, 1.0 - math.hypot(m.dx, m.dy) / angle / TIGHT_R)
+        s = credit(turn, m) - ENERGY_W * m.energy / (m.mass * G) - rule_cost(m)
         turns.append(s - FALL_PENALTY if m.fell else s)
     turn = min(turns) if rules.active("worse_turn") else np.mean(turns)
-    full, slow = max(up(ms[0].progress, ms[0]), 0.0), max(up(ms[3].progress, ms[3]), 0.0)
+    full = max(credit(ms[0].progress, ms[0]), 0.0)
+    slow = max(credit(ms[3].progress, ms[3]), 0.0)
     half = (SPEED_ASKED * full - abs(slow - SPEED_ASKED * full)
             - ENERGY_W * ms[3].energy / (ms[3].mass * G) - rule_cost(ms[3]))
     if ms[3].fell:
         half -= FALL_PENALTY
-    return float(0.4 * score(ms[0], "forward") + 0.4 * turn + 0.2 * half)
+    return apply_basal(0.4 * score(ms[0], "forward") + 0.4 * turn + 0.2 * half, ms)
 
 
 def aggregate(scores: Sequence[float]) -> float:

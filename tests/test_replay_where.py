@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "experiments"))
 import replay  # noqa: E402
 
 ROW = {"fitness": 0.4, "duty": 0.3, "height": 0.5, "servos": 8, "legs": 4,
-       "cot": 6.0, "wheels": 0, "feet": 2, "segments": 0, "passive": 1, "nodes": 12}
+       "cot": 6.0, "wheels": 0, "feet": 2, "segments": 0, "passive": 1, "nodes": 12,
+       "body": 20.0}
 
 
 @pytest.mark.parametrize("expr, op, value", [
@@ -66,3 +67,9 @@ def test_non_number_is_an_error():
         replay.parse_where("legs>=four")
     with pytest.raises(SystemExit, match="is not a number"):
         replay.parse_where("legs>=")
+
+
+def test_body_is_a_percent_column():
+    assert replay.parse_where("body>50") == [("body", ">", 50.0)]
+    assert replay.matches(ROW, replay.parse_where("body<50"))
+    assert not replay.matches(ROW, replay.parse_where("body>=50,legs=4"))

@@ -25,7 +25,7 @@ from darwinbot import builder, dims, hardware, power
 from darwinbot import morphology as morpho
 from darwinbot import urdf
 from darwinbot.control_file import make_control_file, write_control_file
-from darwinbot.controller import Controller
+from darwinbot.controller import Controller, couple_partners
 from darwinbot.fitness import UNSTABLE_SCORE
 from darwinbot.inner import cpu_evaluator
 from darwinbot.sim import Episode
@@ -805,7 +805,9 @@ def export_robot(elite, out_dir, name, stl=True, payload=0.0, organic=False,
         f.write(xml)
     urdf.write_urdf(morph, os.path.join(out_dir, "robot.urdf"), payload)
 
-    ctl = make_control_file(name, elite.fitness, layout, Controller(elite.ctrl, layout).params,
+    ctl = make_control_file(name, elite.fitness, layout,
+                            Controller(elite.ctrl, layout,
+                                       partner=couple_partners(morph)).params,
                             _layout_ranges(morph, layout), signs=servo_signs(morph, layout))
     write_control_file(ctl, os.path.join(out_dir, "control.json"))
 

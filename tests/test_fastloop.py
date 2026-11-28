@@ -40,7 +40,7 @@ def _faller():
             continue
         if ep.run(co.random_controller(np.random.default_rng(seed))).fell:
             return m, seed
-    pytest.skip("no falling body found")
+    pytest.fail("no falling body found in seeds 1..199")
 
 
 def _compare(a, b):

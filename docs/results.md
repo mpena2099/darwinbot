@@ -163,11 +163,7 @@ list, not in any single robot.
 ## Known limitations
 
 - Wheels win where they are allowed. Rolling robots fill 91 of 164 cells in the terrain preset, 78 of 193 on flat and 65 of 160 on flat and steps, and the best robot of each of those settings rolls. The no-wheels setting exists to keep legged gaits in the running. A robot is named `roll` when its wheels hold most of the ground contact, even if its torso drags too; release 3 measures the torso contact and names those robots `belly`.
-- The firmware is half done. `firmware/core/` runs the controller math,
-  including the speed command and the servo speed, in portable C++, and a
-  test proves it matches the Python controller tick by tick
-  (`tests/test_firmware_parity.py`). The ESP32 layer (servo bus, load
-  reading, calibration) waits for real hardware.
+- The firmware is written but not yet run: `firmware/core/` holds the controller math in portable C++ with a test that matches the Python controller tick by tick (`tests/test_firmware_parity.py`), and `firmware/esp32/` puts it on the robot (servo bus, load reading, web page, micro-ROS). No robot exists yet, so neither has touched hardware.
 - Nothing has been built yet. Every number on this page comes from
   simulation, and the servo measures come from a STEP model, not from a
   caliper.

@@ -25,7 +25,7 @@ import numpy as np   # noqa: E402
 
 from darwinbot import morphology as mo   # noqa: E402
 from darwinbot.controller import random_controller   # noqa: E402
-from darwinbot.sim import Episode   # noqa: E402
+from darwinbot.sim import EPISODE_SECONDS, Episode   # noqa: E402
 from darwinbot.terrain import get_terrains   # noqa: E402
 
 BODIES = {"quadruped": lambda: mo.template(2),
@@ -72,7 +72,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--body", choices=BODIES, default="quadruped")
     p.add_argument("--terrain", default="flat")
-    p.add_argument("--seconds", type=float, default=5.0)
+    p.add_argument("--seconds", type=float, default=EPISODE_SECONDS)
     p.add_argument("--sizes", default="16,64,256,1024")
     p.add_argument("--cpu-episodes", type=int, default=48)
     p.add_argument("--workers", type=int, default=os.cpu_count())

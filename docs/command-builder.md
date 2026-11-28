@@ -82,6 +82,9 @@ command, so the result stays short.
 <label><input id="cb-r-tilt" type="checkbox"> tilt</label>
 <label><input id="cb-r-slip" type="checkbox"> slip</label>
 <label><input id="cb-r-servo_ground" type="checkbox"> servo_ground</label>
+<label><input id="cb-r-body_ground" type="checkbox"> body_ground</label>
+<label><input id="cb-r-energy_abs" type="checkbox"> energy_abs</label>
+<label><input id="cb-r-fall_zero" type="checkbox"> fall_zero</label>
 </div>
 <p class="cb-note">A rule is a measurement before it is a default: run it in a short
 experiment and check what it does to the archive before using it for a real run.</p>
@@ -116,7 +119,8 @@ experiment and check what it does to the archive before using it for a real run.
   "use strict";
   var TERRAINS = ["flat", "rough", "steps", "step", "slope", "slippery",
                   "rubble", "ledges", "soft", "downhill", "steep"];
-  var RULES = ["worse_turn", "turn_forward", "tilt", "slip", "servo_ground"];
+  var RULES = ["worse_turn", "turn_forward", "tilt", "slip", "servo_ground",
+               "body_ground", "energy_abs", "fall_zero"];
 
   function $(id) { return document.getElementById(id); }
 

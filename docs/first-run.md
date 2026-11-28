@@ -14,7 +14,8 @@ python experiments/replay.py --type 8servos-mid-trot
 `--list --where` keeps only the robots that match every condition, separated by
 commas. The fields are `fitness`, `duty`, `height`, `servos`, `legs`, `cot`,
 `wheels`, `feet`, `segments`, `passive` (springs, tails, skids, spikes and
-casters) and `nodes`; the operators are `= != < <= > >=`. For example, robots
+casters), `nodes` and `body` (the share of time the body touches the ground, in
+percent, as the `body` column shows it); the operators are `= != < <= > >=`. For example, robots
 without wheels, with at least four legs and a fitness above 0.3:
 
 ```bash
@@ -89,9 +90,21 @@ CPU only, and is stored in the archive. `validate.py` runs the elite on
 `--n` fresh variants (`--seed`, `--workers`) and prints nominal, mean, 5th
 percentile, worst distance, fall rate and relative loss per terrain and
 command. It passes a robot only when the mean loss is under 30%, every row
-keeps its 5th-percentile loss under 60% and its fall rate at most 10%, and
-every terrain moves at all on the nominal model. `--unseen` checks the
+keeps its 5th-percentile loss under 60% and its fall rate at most 10%, every
+terrain moves at all on the nominal model, and the nominal model does what
+every command asks (0.1 m forward straight and at half speed, 0.3 rad turned
+the way asked left and right). `--unseen` checks the
 terrains the archive was not trained on as well, reported on their own.
+
+`strip_test.py` checks a change of grip mid-stride: it runs the robot straight
+ahead across a short low-friction strip (`--length` 0.3 m, `--mu` 0.2) placed
+at each of `--positions` (metres from the spawn) on the nominal model and
+`--n` variants. Per position it prints the share of episodes that stayed
+upright and the share that also ended a body length (twice the robot's reach)
+past the strip's far edge. A position the robot does not reach on flat ground
+is marked "not reached". PASS when that second share is at least `--min-pass`
+(0.8) at every reached position, otherwise exit code 1. It is an evaluation
+only and never enters the score.
 
 ## Viewing the different robot types
 
@@ -109,8 +122,10 @@ A type is a short name derived from the cell, `<servos>servos-<height>-<gait>`
 | `height` | `low`, `mid`, `high` | mean torso height over body reach: below 0.4, below 0.8, above |
 | `gait` | `crawl`, `walk`, `trot`, `belly`, `roll` | duty, the share of time the tips touch the ground: above 0.8, 0.5 to 0.8, 0.15 to 0.5, below 0.15 (sliding on the body); `roll` when wheels carry more than half of the contact time |
 
-Several cells can share a name; the later ones get the cell index appended
-(`12servos-low-walk-133`).
+Every robot name ends with the robot's id (`12servos-low-walk-133`). The id
+never changes, so a robot keeps its name across polish and prune, even when
+its type part changes (the body lost a servo). `--type` takes the full name,
+the bare id (`133`) or a bare type when only one robot has it.
 
 Step 1, see which types the run has found, best first:
 

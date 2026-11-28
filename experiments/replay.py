@@ -6,6 +6,7 @@ Replay an evolved body and gait from an archive checkpoint.
   python experiments/replay.py                              # best elite, flat, viewer
   python experiments/replay.py --list                       # robot types found
   python experiments/replay.py --list --where "wheels=0,legs>=4"   # only the matching ones
+  python experiments/replay.py --list --where "body<50"     # robots that do not slide on their body
   python experiments/replay.py --type 8servos-low-crawl --terrain rough
   python experiments/replay.py --record out.mp4 --seconds 8
   python experiments/replay.py --robot my_robot.yaml         # a hand-written body, standing
@@ -28,14 +29,14 @@ import numpy as np
 from darwinbot import hardware, plugins, robot_file
 from darwinbot.evolve import load_archive
 from darwinbot import controller as ctl
-from darwinbot.controller import Params
+from darwinbot.controller import Params, couple_partners
 from darwinbot import morphology as morpho
 from darwinbot.sim import Episode
 from darwinbot.terrain import get_terrains
 
 
 WHERE_FIELDS = ("fitness", "duty", "height", "servos", "legs", "cot",
-                "wheels", "feet", "segments", "passive", "nodes")
+                "wheels", "feet", "segments", "passive", "nodes", "body")
 WHERE_OPS = {"=": operator.eq, "!=": operator.ne, "<": operator.lt,
              "<=": operator.le, ">": operator.gt, ">=": operator.ge}
 PASSIVE_KINDS = ("spring", "tail", "skid", "spike", "caster")
@@ -139,6 +140,12 @@ def snapshot_robot(snap, name):
     if name is None:
         name = max(snap["robots"], key=lambda n: snap["robots"][n]["fitness"])
     elif name not in snap["robots"]:
+        # a bare uid ("411") or a renamed type part also finds the robot
+        uid = name.strip().rsplit("-", 1)[-1]
+        hits = [n for n in snap["robots"] if n.rsplit("-", 1)[-1] == uid]
+        if len(hits) == 1 and uid.isdigit():
+            name = hits[0]
+    if name not in snap["robots"]:
         raise SystemExit(f"no {name} robot in the snapshot; see the names with --list")
     robot = snap["robots"][name]
     model = mujoco.MjModel.from_xml_string(robot["xml"])
@@ -239,7 +246,8 @@ def watch(episode, ctrl, speed=1.0, command=0.0, speed_command=1.0, reload=None)
                         speed_command = min(1.0, max(0.0, speed_command + SPEED_KEYS[key]))
                     else:
                         continue
-                    cpg.params = Params(ctrl, episode.layout, command, speed_command)
+                    cpg.params = Params(ctrl, episode.layout, command, speed_command,
+                                        couple_partners(episode.morph))
                     print(f"steering {command:+.0f}, speed {speed_command:.1f}")
                 episode.step(cpg)
                 handle.sync()
@@ -375,7 +383,8 @@ def main():
                    help="print every archive cell with its fitness, behaviour and body parts, then exit")
     p.add_argument("--where", default=None, metavar="EXPR",
                    help="with --list, keep the robots that match, e.g. "
-                        "\"wheels=0,legs>=4,fitness>0.3\" (fields: " + ", ".join(WHERE_FIELDS) + ")")
+                        "\"wheels=0,legs>=4,fitness>0.3\" (fields: " + ", ".join(WHERE_FIELDS) +
+                        "; body is the share of time the body is on the ground, in percent)")
     a = p.parse_args()
     if a.watch and not a.robot:
         raise SystemExit("--watch needs --robot")
@@ -410,7 +419,7 @@ def main():
         if archive.task != "forward" or archive.payload:
             print(f"task: {archive.task}, payload {archive.payload:g} kg")
         print("type                       fitness  duty  height  servos  legs    cot"
-              "  wheels  feet  segments  passive  nodes")
+              "  wheels  feet  segments  passive  nodes   body")
         shown = 0
         for cell, e in sorted(archive.cells.items(), key=lambda kv: -kv[1].fitness):
             b = e.behaviour
@@ -419,14 +428,15 @@ def main():
             row = dict(fitness=e.fitness, duty=b.duty, height=b.height, servos=int(b.servos),
                        legs=int(b.legs), cot=b.cot, wheels=morph.n_wheels,
                        feet=kinds.count("foot"), segments=morph.n_segments,
-                       passive=sum(k in PASSIVE_KINDS for k in kinds), nodes=len(kinds))
+                       passive=sum(k in PASSIVE_KINDS for k in kinds), nodes=len(kinds),
+                       body=100 * b.body_ground)
             if not matches(row, conds):
                 continue
             shown += 1
             print(f"{names[cell]:26s} {e.fitness:7.2f}  {b.duty:4.2f}  {b.height:6.2f}  "
                   f"{row['servos']:6d}  {row['legs']:4d}  {b.cot:5.1f}  {row['wheels']:6d}  "
                   f"{row['feet']:4d}  {row['segments']:8d}  {row['passive']:7d}  "
-                  f"{row['nodes']:5d}")
+                  f"{row['nodes']:5d}  {row['body']:4.0f}%")
         print(f"{shown} of {len(archive.cells)} robots")
         return
 

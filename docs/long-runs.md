@@ -58,10 +58,12 @@ on Kaggle's free sessions instead:
   with 256, 18 to 20 times with 1024 and 22 to 27 times with 4096, for
   quadruped, hexapod and wheeled bodies on flat ground and on rubble, wheels on
   rocks included. A new body costs under 3 s; the first one compiles for about
-  a minute. Training with it (`--device warp`) lives on the `warp` branch: it
-  trained one of the showcase islands 2.3 times faster than a CPU island
-  (see Results). The GPU computes in float32, so a GPU-trained robot is still
-  validated on the CPU.
+  a minute. With the CPG on the GPU too (`darwinbot/sim_warp.py`,
+  `bench_warp.py --cpg`, whole 5 s training episodes), the T4 ran 6 to 7 times
+  the 4 CPU cores with 64 controllers at once, 18 to 21 times with 256 and 39 to
+  49 times with 1024. Training with it (`--device warp`) trained one of the
+  showcase islands 2.3 times faster than a CPU island (see Results). The GPU
+  computes in float32, so a GPU-trained robot is still validated on the CPU.
 
 Upload a notebook with *Create > New Notebook > File > Import Notebook*. While
 the repository is private, add a Kaggle secret `GITHUB_TOKEN` with read access.
@@ -160,6 +162,10 @@ python experiments/showcase.py --archive merged.pkl --types 13servos-mid-trot,6s
 
 `--skip polish,prune` leaves stages out (the next stage then reads the previous
 stage's archive), and `--budget` sets polish's CMA-ES evaluations.
+`--max-body SHARE` (default `evolve.BODY_SHARE`, 0.5) warns before the chain about
+each robot whose body is on the ground more than that share of the time, and
+`validate.py` fails it under the same limit; `--strict-body` drops those robots
+from the chain instead.
 
 - `polish.py` runs a longer CMA-ES (1200 evaluations, up to three times more
   for bodies with many joints) from each robot's own controller, on the same
@@ -168,12 +174,19 @@ stage's archive), and `--budget` sets polish's CMA-ES evaluations.
   generation is scored on all the workers, which gives the same result
   sooner. A 16-servo robot takes about 3.5 hours on one core.
 - `prune.py` removes, one at a time, each part whose removal does not lower
-  the score, with a short controller search after each cut. A pruned robot
-  can change its name (a 7-servo trotter became a 6-servo one).
+  the score, with a short controller search after each cut. The cuts of a round
+  are tried in parallel (`--workers`, default: all CPUs); the result does not
+  depend on the number of workers. A pruned robot can change its name (a
+  7-servo trotter became a 6-servo one).
 - `validate.py` passes a robot only when it is robust: mean loss under 30%,
   5th-percentile loss under 60% and fall rate at most 10% on every terrain and
-  command, and no terrain where it fails to move at all. `--unseen` also
-  checks the grounds the archive never trained on.
+  command, no terrain where it fails to move at all, and no row where the
+  nominal model does not do what the command asks (at least 0.1 m forward on a
+  straight or half speed row, at least 0.3 rad turned the way asked on a left
+  or right row). It also fails a robot whose body touches the ground more than
+  `--max-body` of the time on average over the trained terrains (`--max-body 1`
+  turns that off). `--unseen` also checks the grounds the archive never trained
+  on.
 - `check_assembly.py` builds the printed parts and reports clashes.
 
 Pruning reruns the score with fresh terrains and variants, so its number is

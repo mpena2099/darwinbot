@@ -32,7 +32,7 @@ def test_cell_of_is_deterministic_and_in_range():
 
 
 def test_insert_keeps_best_per_cell():
-    behaviour = [0.9, 0.3, 8, 0.0, 1.0, 2]
+    behaviour = [0.9, 0.3, 8, 0.0, 1.0, 2, 0.0]
     cell = evolve.cell_of(behaviour)
     archive = evolve.Archive(terrains="flat")
 
@@ -66,7 +66,7 @@ def test_run_writes_archive(tmp_path):
     path = tmp_path / "archive.pkl"
     assert path.exists()
     assert archive.cells
-    assert all(len(e.behaviour) == 6 for e in archive.cells.values())
+    assert all(len(e.behaviour) == 7 for e in archive.cells.values())
     assert len(archive.history) == 2
     with open(path, "rb") as f:
         loaded = pickle.load(f)
@@ -114,9 +114,7 @@ def test_names_round_trip_with_parse():
     assert len(set(names.values())) == len(names)          # unique
     for cell, name in names.items():
         assert archive.find(name) == cell
-    shared = [n for n in names.values() if n.rsplit("-", 1)[-1].isdigit()
-              and evolve._NAME.match(n).group(4)]
-    assert shared, "40 elites in few name bins should collide at least once"
+    assert all(evolve._NAME.match(n).group(4) for n in names.values())   # always suffixed
 
 
 def _at(i):
@@ -126,26 +124,115 @@ def _at(i):
             evolve.COT_MIN * (evolve.COT_MAX / evolve.COT_MIN) ** cot, legs * mo.MAX_LEGS]
 
 
-def test_name_collision_appends_cell_index():
+def _two_cells_of_one_type():
     by_name = {}
     for i in range(evolve.N_CELLS):
         by_name.setdefault(evolve.type_name(_at(i)), []).append(i)
-    name, (i, j) = next((n, c[:2]) for n, c in by_name.items() if len(c) > 1)
+    return next((n, c[:2]) for n, c in by_name.items() if len(c) > 1)
+
+
+def test_uids_are_assigned_in_insert_order_and_names_carry_them():
+    name, (i, j) = _two_cells_of_one_type()
     archive = evolve.Archive(terrains="flat")
     archive.insert(_elite(1.0, _at(i)))
     archive.insert(_elite(2.0, _at(j)))
     names = archive.names()
-    assert set(names.values()) == {f"{name}-{evolve.cell_of(_at(i))}",
-                                   f"{name}-{evolve.cell_of(_at(j))}"}
-    assert archive.find(names[evolve.cell_of(_at(j))]) == evolve.cell_of(_at(j))
+    assert names[evolve.cell_of(_at(i))] == f"{name}-0"
+    assert names[evolve.cell_of(_at(j))] == f"{name}-1"
+    assert sorted(e.uid for e in archive.cells.values()) == [0, 1]
+    assert archive.next_uid == 2
     with pytest.raises(ValueError, match="ambiguous"):
         archive.find(name)
+
+
+def test_names_do_not_change_when_a_same_type_robot_arrives():
+    name, (i, j) = _two_cells_of_one_type()
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, _at(i)))
+    before = archive.names()[evolve.cell_of(_at(i))]
+    archive.insert(_elite(2.0, _at(j)))
+    assert archive.names()[evolve.cell_of(_at(i))] == before == f"{name}-0"
+    assert archive.find(name + "-0") == evolve.cell_of(_at(i))
+
+
+def test_a_rejected_insert_does_not_use_a_uid():
+    archive = evolve.Archive(terrains="flat")
+    assert archive.insert(_elite(2.0, _at(5)))
+    assert not archive.insert(_elite(1.0, _at(5)))          # worse, same cell
+    assert archive.next_uid == 1
+    assert archive.insert(_elite(3.0, _at(5)))              # better: replaces, new uid
+    assert [e.uid for e in archive.cells.values()] == [1]
+
+
+def test_find_by_uid_and_by_renamed_type(capsys):
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, _at(3)))
+    cell = evolve.cell_of(_at(3))
+    uid = archive.cells[cell].uid
+    assert archive.find(str(uid)) == cell
+    current = evolve.type_name(_at(3))
+    assert archive.find(f"{current}-{uid}") == cell
+    assert capsys.readouterr().out == ""
+    # the body was pruned: the type part is stale, the uid still names the robot
+    assert archive.find(f"99servos-low-roll-{uid}".replace("99", "5")) == cell
+    assert f"now {current}-{uid}" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="uid 77"):
+        archive.find("77")
+
+
+def test_replaced_elites_keep_their_uid_in_another_archive():
+    import dataclasses
+    archive = evolve.Archive(terrains="flat")
+    archive.insert(_elite(1.0, _at(3)))
+    archive.insert(_elite(1.0, _at(9)))
+    elite = archive.cells[evolve.cell_of(_at(9))]
+    other = archive.like()
+    assert other.insert(dataclasses.replace(elite, fitness=5.0))
+    assert other.cells[evolve.cell_of(_at(9))].uid == elite.uid
+    assert other.next_uid == archive.next_uid
+
+
+def test_old_archive_without_uids_is_numbered_on_load(tmp_path):
+    import pickle
+    archive = evolve.Archive(terrains="flat")
+    for i in (30, 4, 17):
+        archive.insert(_elite(1.0, _at(i)))
+    archive.uids, archive.next_uid = {}, 0          # as pickled before uids
+    state = archive.__dict__.copy()
+    del state["uids"], state["next_uid"]
+    archive.__dict__.clear()
+    archive.__setstate__(state)
+    path = tmp_path / "old.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(archive, f)
+    loaded = evolve.load_archive(path)
+    cells = sorted(loaded.cells)
+    assert [loaded.cells[c].uid for c in cells] == [0, 1, 2]    # sorted cell order
+    assert loaded.next_uid == 3
+    again = evolve.load_archive(path)
+    assert [again.cells[c].uid for c in cells] == [0, 1, 2]     # deterministic
+
+
+def test_merge_gives_colliding_uids_new_numbers():
+    a, b = evolve.Archive(terrains="flat"), evolve.Archive(terrains="flat")
+    a.insert(_elite(1.0, _at(3)))
+    b.insert(_elite(1.0, _at(9)))                    # also uid 0
+    b.insert(_elite(1.0, _at(20)))                   # uid 1
+    out = evolve.merge([a, b])
+    by_cell = {c: e.uid for c, e in out.cells.items()}
+    assert by_cell[evolve.cell_of(_at(3))] == 0       # the first archive keeps its uids
+    assert sorted(by_cell.values()) == sorted(set(by_cell.values()))
+    assert len(by_cell) == 3
+    again = evolve.merge([a, b])
+    assert {c: e.uid for c, e in again.cells.items()} == by_cell
+    assert out.next_uid == 3
 
 
 def test_parse_rejects_bad_names():
     assert evolve.parse_cell_name("8servos-low-crawl") == ("8servos-low-crawl", None)
     assert evolve.parse_cell_name("8servos-low-crawl-17") == ("8servos-low-crawl", 17)
-    for bad in ("6legs-2wheels-14servos", "8servos-tiny-crawl", "x"):
+    assert evolve.parse_cell_name("17") == (None, 17)
+    for bad in ("6legs-2wheels-14servos", "8servos-tiny-crawl", "x", ""):
         with pytest.raises(ValueError):
             evolve.parse_cell_name(bad)
 
@@ -386,7 +473,7 @@ def test_a_batch_where_every_body_fails_stops_the_run(monkeypatch, tmp_path):
     monkeypatch.setattr(evolve, "optimise_controller", broken)
     with pytest.raises(RuntimeError, match="failed"):
         evolve.run(terrains="flat", n_init=2, n_batches=1, batch_size=2, workers=1,
-                   variants=0, episode_seconds=1.0, device="gpu", out_dir=str(tmp_path))
+                   variants=0, episode_seconds=1.0, out_dir=str(tmp_path))
 
 
 def test_budget_grows_with_joints_up_to_a_cap():
@@ -544,3 +631,114 @@ def test_longest_first_only_reorders_the_batch():
     costs = [evolve.job_cost(t) for t in ordered]
     assert costs == sorted(costs, reverse=True)
     assert evolve.longest_first([]) == []
+
+
+def _tiny_run(out, monkeypatch, trace_dir=None):
+    if trace_dir is None:
+        monkeypatch.delenv("DARWINBOT_TRACE", raising=False)
+    else:
+        monkeypatch.setenv("DARWINBOT_TRACE", str(trace_dir))
+    return evolve.run(n_init=2, n_batches=1, batch_size=2, budget_init=6,
+                      budget_child=5, workers=1, seed=3, out_dir=str(out),
+                      variants=1)
+
+
+def test_trace_leaves_the_archive_unchanged_and_files_agree(tmp_path, monkeypatch):
+    import json
+    plain = _tiny_run(tmp_path / "a", monkeypatch)
+    tdir = tmp_path / "trace"
+    traced = _tiny_run(tmp_path / "b", monkeypatch, tdir)
+    ca, cb = plain.cells, traced.cells
+    assert ca.keys() == cb.keys()
+    for k in ca:
+        assert ca[k].fitness == cb[k].fitness
+        assert np.array_equal(ca[k].morph, cb[k].morph)
+        assert np.array_equal(ca[k].ctrl, cb[k].ctrl)
+
+    lines = [json.loads(x) for x in (tdir / "bodies.jsonl").read_text().splitlines()]
+    assert len(lines) == 2 + 2
+    assert {x["origin"] for x in lines} <= {"random", "mutate", "graft", "same"}
+    for rec in lines:
+        if rec["file"] is None:
+            continue
+        z = np.load(tdir / rec["file"])
+        n = len(z["fitness"])
+        assert n == rec["evals"]
+        assert z["cand"].shape == (n, len(z["active"]))
+        assert z["metrics"].shape[:3] == (n, len(z["terrains"]), int(z["variants"]))
+        assert z["metrics"].shape[3] == len(z["commands"])
+        assert z["metrics"].shape[4] == len(z["fields"])
+        assert z["task_scores"].shape == z["metrics"].shape[:3]
+        assert z["scores"].shape == (n, len(z["terrains"]))
+        assert z["gen"][0] == -1 and z["fitness"].max() == rec["fitness"]
+    assert any(x["parent"] and x["changed_slots"] is not None for x in lines)
+
+
+def test_trace_off_writes_nothing(tmp_path, monkeypatch):
+    _tiny_run(tmp_path / "a", monkeypatch)
+    assert sorted(p.name for p in (tmp_path / "a").iterdir()) == ["archive.pkl"]
+
+
+def test_graft_that_fits_no_slot_is_a_mutation(monkeypatch):
+    rng = np.random.default_rng(0)
+    parent = mo.random_morphology(rng)
+    mutant = np.array(parent) + 1e-3
+    monkeypatch.setattr(mo, "mutate", lambda genes, rng, mirror_p=0.0: mutant)
+    monkeypatch.setattr(mo, "graft", lambda genes, donor, rng: np.array(genes))
+    child, origin = evolve.offspring(parent, parent, True, rng)
+    assert origin == "mutate" and child is mutant
+    grown = np.array(parent)
+    grown[0] += 0.1
+    monkeypatch.setattr(mo, "graft", lambda genes, donor, rng: grown)
+    child, origin = evolve.offspring(parent, parent, True, rng)
+    assert origin == "graft" and child is grown
+
+
+def test_stats_counts_the_symmetric_elites():
+    archive = evolve.Archive(terrains="flat")
+    rng = np.random.default_rng(4)
+    for i in range(3):
+        archive.insert(_elite(float(i), [rng.uniform(), rng.uniform(0, 1.5),
+                                         int(rng.integers(4, 17)), rng.choice([0.0, 1.0]),
+                                         rng.uniform(0.1, 100), int(rng.integers(0, 9))]))
+    expected = sum(1 for e in archive.cells.values()
+                   if mo.symmetry(mo.decode(e.morph)) == 1.0)
+    assert archive.stats()["symmetric"] == evolve.count_symmetric(archive) == expected
+
+
+def test_default_episode_length_is_the_simulator_one():
+    import inspect
+    from darwinbot import sim
+    assert inspect.signature(evolve.run).parameters["episode_seconds"].default == sim.EPISODE_SECONDS
+
+
+def test_resume_refuses_other_rules_and_reports_search_options(tmp_path, monkeypatch, capsys):
+    _tiny_run(tmp_path / "a", monkeypatch)
+    path = str(tmp_path / "a" / "archive.pkl")
+    with pytest.raises(ValueError, match="--rules"):
+        evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+                   out_dir=str(tmp_path / "b"), score_rules=("tilt",))
+    again = evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+                       out_dir=str(tmp_path / "c"), mirror_p=0.3)
+    assert "resume: --mirror-p 0.3 differs from the archive's 0.0" in capsys.readouterr().out
+    assert again.search["mirror_p"] == 0.3
+    again = evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+                       out_dir=str(tmp_path / "e"), batch_size=5, budget_child=7,
+                       deterministic=True)
+    out = capsys.readouterr().out
+    assert "resume: --batch-size 5 differs from the archive's" in out
+    assert "resume: --budget-child 7 differs from the archive's" in out
+    assert "resume: --deterministic" in out
+    assert again.search["batch_size"] == 5 and again.search["deterministic"] is True
+    # a resume that repeats the archive's rules is accepted (none given: kept)
+    evolve.run(resume=path, n_batches=0, workers=1, seed=3,
+               out_dir=str(tmp_path / "d"), score_rules=())
+
+
+def test_archive_without_search_field_still_loads(tmp_path):
+    old = evolve.Archive(terrains="flat")
+    old.__dict__.pop("search")
+    path = tmp_path / "old.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(old, f)
+    assert evolve.load_archive(str(path)).search == {}

@@ -17,9 +17,18 @@ controller CMA-ES learned for it. Instead of converging on one design, the run
 ends with a map of the fastest crawler, the fastest roller, the best tall
 trotter, and so on.
 
+An experiment may add body_ground (the share of ticks the torso itself touches
+the ground) as a sixth axis (`train.py --axes body`), which only applies to a
+new archive: `Archive.axes` says which descriptors a grid holds. The release 1
+axes (`train.py --axes r1`) keep the four original descriptors, without the
+servo count, in a 500-cell archive; `train.py --axes c300` keeps the five
+default descriptors in a 300-cell archive.
+
 New bodies are mutated copies of elites drawn with probability proportional to
 their novelty (mean distance to the k nearest elites in descriptor space), or
-uniformly with parent_selection="uniform". The child starts its inner
+uniformly with parent_selection="uniform"; parent_selection="novelty-rank"
+weights that novelty by the elite's objective rank, so good robots are drawn
+more often. The child starts its inner
 optimisation from the parent's controller (Lamarckian inheritance), which is
 much cheaper than learning a gait from scratch.
 """
@@ -27,6 +36,8 @@ much cheaper than learning a gait from scratch.
 import contextlib
 import copy
 import hashlib
+import json
+import math
 import multiprocessing
 import os
 import pickle
@@ -41,20 +52,24 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from ribs.archives import CVTArchive
 
-from darwinbot import ablate, body_options, fastloop, hardware, plugins, rules
+from darwinbot import ablate, body_options, fastloop, fitness, hardware, plugins, rules, trace
 from darwinbot import controller as ctrl
+from darwinbot.controller import CLIP_MODES, copy_node_genes, set_clip_mode
 from darwinbot import morphology as morpho
-from darwinbot.fitness import task_names
-from darwinbot.inner import optimise_controller
-from darwinbot.sim import COT_MAX, COT_MIN, HEIGHT_MAX, Behaviour
-from darwinbot.terrain import get_terrains
+from darwinbot.fitness import commands, task_names, task_score
+from darwinbot.inner import cpu_evaluator, evaluate, optimise_controller
+from darwinbot.sim import (COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behaviour,
+                           Episode)
+from darwinbot.terrain import flat, get_terrains
 
-BODY_MODEL = 23                     # bump when the genome meaning changes
-N_CELLS    = 800                    # CVT cells (five axes: 500 would be too coarse)
+BODY_MODEL = 26                     # bump when the genome meaning changes
+N_CELLS    = 800                    # CVT cells of the default and body archives
 CVT_SEED   = 0                      # fixed seed: same centroids in every run
 K_NOVELTY  = 10                     # neighbours in the novelty score
 MAX_SEED_TRIES = 20                 # random batches tried to fill an empty archive
-PARENT_SELECTIONS = ("novelty", "uniform")
+PARENT_SELECTIONS = ("novelty", "novelty-rank", "uniform")
+INNER_STRATEGIES = (None, "diagonal", "focused", "diagonal+focused")   # inner.optimise_controller
+VARIANT_MODES = ("all", "first")
 
 # from-version -> function translating one elite's (morph, ctrl) genes to the
 # next version. Identity when only the physics or the printed parts changed. A
@@ -66,8 +81,10 @@ PARENT_SELECTIONS = ("novelty", "uniform")
 _V20 = {"wheel_range": (0.03, 0.06),          # m, wheel radius gene range
         "ctrl_per_node": 8}                    # amp1 .. steer_shift
 _V21 = {"wheel_range": (0.03, 0.10),
-        "wheel_width": lambda rad: max(0.02, 0.5 * rad)}   # m: the wheel was
+        "wheel_width": lambda rad: max(0.02, 0.5 * rad),   # m: the wheel was
                                                # 2 * max(10 mm, rad / 4) wide, no gene
+        "ctrl_per_node": 10}                   # amp1 .. speed_shift
+_V23 = {"ctrl_per_node": 10}                   # amp1 .. speed_shift
 
 
 def _wheel_nodes(genes) -> List[int]:
@@ -101,13 +118,27 @@ def _migrate_21(genes, cvec):
     per = _V20["ctrl_per_node"]
     if len(cvec) == 1 + morpho.MAX_NODES * per:
         slots = cvec[1:].reshape(morpho.MAX_NODES, per)
-        neutral = np.full((morpho.MAX_NODES, ctrl.CTRL_PER_NODE - per), 0.5)
+        neutral = np.full((morpho.MAX_NODES, _V21["ctrl_per_node"] - per), 0.5)
         cvec = np.concatenate([cvec[:1], np.hstack([slots, neutral]).reshape(-1)])
     return genes, cvec
 
 
+def _migrate_23(genes, cvec):
+    """23 -> 24: every controller slot gained couple_k and couple_lag, set to
+    the neutral k = 0 and lag = 0 rad, so the old controller is unchanged."""
+    cvec = np.asarray(cvec, dtype=float)
+    per = _V23["ctrl_per_node"]
+    if len(cvec) == 1 + morpho.MAX_NODES * per:
+        slots = cvec[1:].reshape(morpho.MAX_NODES, per)
+        extra = np.tile([0.0, 0.5], (morpho.MAX_NODES, 1))
+        cvec = np.concatenate([cvec[:1], np.hstack([slots, extra]).reshape(-1)])
+    return genes, cvec
+
+
 MIGRATIONS = {20: _migrate_20, 21: _migrate_21,
-              22: lambda morph, cvec: (morph, cvec)}
+              22: lambda morph, cvec: (morph, cvec), 23: _migrate_23,
+              24: lambda morph, cvec: (morph, cvec),   # 24: the elbow fin, parts only
+              25: lambda morph, cvec: (morph, cvec)}   # 25: the fall tick counts, physics only
 _stale_ok = False                   # set by loading_stale()
 
 
@@ -140,8 +171,11 @@ def load_archive(path, stale: bool = False):
         with open(path, "rb") as f:
             if stale:
                 with loading_stale():
-                    return pickle.load(f)
-            return pickle.load(f)
+                    archive = pickle.load(f)
+            else:
+                archive = pickle.load(f)
+        archive.assign_uids()
+        return archive
     except FileNotFoundError:
         raise SystemExit(f"{path} not found: train first with experiments/train.py")
     except ValueError as e:
@@ -149,44 +183,102 @@ def load_archive(path, stale: bool = False):
                          f"(or pass --archive with a newer one).")
 
 
+def score_options(basal_scale=None, turn_scale=None, turn_in_place=None,
+                  turn_cap_deg=None, basal_mode=None, basal_servo_share=None,
+                  basal_part_share=None, turn_tight=None) -> dict:
+    """Non-default score settings from train.py flags and the environment."""
+    return {**rules.score_option(basal_scale, basal_mode, basal_servo_share,
+                                 basal_part_share),
+            **fitness.score_options(turn_scale, turn_in_place, turn_cap_deg, turn_tight)}
+
+
+def apply_score(score: dict) -> None:
+    """Apply an archive's score settings before scoring (env wins while set)."""
+    rules.apply_score(score)
+    fitness.apply_score(score)
+
+
 # Name bins. Height is torso z over body reach, duty is the contact fraction.
 HEIGHT_BINS = ((0.4, "low"), (0.8, "mid"), (float("inf"), "high"))
 ROLL_SHARE  = 0.5                   # wheel share of contact time above this: roll
+BODY_SHARE  = 0.5                   # body (not a terminal point) share of ticks above this: belly
 CRAWL_DUTY, WALK_DUTY, BELLY_DUTY = 0.8, 0.5, 0.15
 
 Cell = int                          # index of the CVT cell
 
 
 N_DESCRIPTORS = 5
+R1_DESCRIPTORS = 4              # r1: duty, height, legs, cot (no servo count)
+R1_CELLS = 500                  # r1 CVT grid, cached apart from the 800-cell grids
+AXES = ("default", "body", "r1", "c300")   # experiment options, stored in the Archive
+AXES_SPEC = {                   # axes -> (descriptors, CVT cells)
+    "default": (N_DESCRIPTORS, N_CELLS),
+    "body": (N_DESCRIPTORS + 1, N_CELLS),
+    "r1": (R1_DESCRIPTORS, R1_CELLS),
+    "c300": (N_DESCRIPTORS, 300),   # the default descriptors in a smaller grid
+}
 
 
-def normalise(behaviour) -> np.ndarray:
-    """Descriptor in [0, 1]^5 (duty, height, servos, legs, cot: the archive axes, not
-    the order of the Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost of transport spans decades, so it is taken in log."""
+def _descriptor_count(axes_or_n) -> int:
+    """Axes name or descriptor count -> descriptor count (call sites that hold
+    an Archive pass n_descriptors; scripts may pass the name instead)."""
+    return AXES_SPEC[axes_or_n][0] if isinstance(axes_or_n, str) else int(axes_or_n)
+
+
+def _cell_count(n_descriptors: int) -> int:
+    """Cell count of a descriptor count, for callers that hold no axes name:
+    the r1 grid is smaller, every other axes option uses the default grid."""
+    return R1_CELLS if n_descriptors == R1_DESCRIPTORS else N_CELLS
+
+
+def normalise(behaviour, n_descriptors: int = N_DESCRIPTORS) -> np.ndarray:
+    """Descriptor in [0, 1]^n_descriptors (duty, height, servos, legs, cot and,
+    for a body archive, body_ground: the archive axes, not the order of the
+    Behaviour fields) from a Behaviour, so that every axis weighs the same. Cost
+    of transport spans decades, so it is taken in log. The r1 archive drops the
+    servo-count axis."""
+    n = _descriptor_count(n_descriptors)
     b = Behaviour.of(behaviour)
     cot = np.log(np.clip(b.cot, COT_MIN, COT_MAX) / COT_MIN) / np.log(COT_MAX / COT_MIN)
-    return np.clip([b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
-                    b.legs / morpho.MAX_LEGS, cot], 0.0, 1.0)
+    if n == R1_DESCRIPTORS:
+        point = [b.duty, b.height / HEIGHT_MAX, b.legs / morpho.MAX_LEGS, cot]
+    else:
+        point = [b.duty, b.height / HEIGHT_MAX, b.servos / morpho.MAX_SERVOS,
+                 b.legs / morpho.MAX_LEGS, cot]
+        if n > N_DESCRIPTORS:
+            point.append(b.body_ground)     # already a share
+    return np.clip(point[:n], 0.0, 1.0)
 
 
-@lru_cache(maxsize=1)
-def _centroids() -> np.ndarray:
-    probe = CVTArchive(solution_dim=1, centroids=N_CELLS, ranges=[(0.0, 1.0)] * N_DESCRIPTORS,
+@lru_cache(maxsize=None)             # one centroid set per (axis count, cell count)
+def _centroids(n_descriptors: int = N_DESCRIPTORS,
+               cells: Optional[int] = None) -> np.ndarray:
+    n = _descriptor_count(n_descriptors)
+    if cells is None:
+        cells = _cell_count(n)
+    probe = CVTArchive(solution_dim=1,
+                       centroids=int(cells),
+                       ranges=[(0.0, 1.0)] * n,
                        seed=CVT_SEED, samples=20000)
     return np.array(probe.centroids)
 
 
-def cell_of(behaviour) -> Cell:
-    """CVT cell of a Behaviour."""
-    point = normalise(behaviour)
-    return int(np.argmin(((_centroids() - point) ** 2).sum(axis=1)))
+def cell_of(behaviour, n_descriptors: int = N_DESCRIPTORS,
+            cells: Optional[int] = None) -> Cell:
+    """CVT cell of a Behaviour in the given archive axes (and cell count)."""
+    n = _descriptor_count(n_descriptors)
+    point = normalise(behaviour, n)
+    return int(np.argmin(((_centroids(n, cells) - point) ** 2).sum(axis=1)))
 
 
 def type_name(behaviour) -> str:
     """Readable type from a Behaviour, e.g. '8servos-low-crawl'."""
     b = Behaviour.of(behaviour)
     band = next(name for top, name in HEIGHT_BINS if b.height < top)
-    if b.wheel_share > ROLL_SHARE:
+    if b.body_ground > BODY_SHARE:
+        # the body itself drags on the ground, wheels or not: it slides on its belly
+        gait = "belly"
+    elif b.wheel_share > ROLL_SHARE:
         gait = "roll"
     elif b.duty > CRAWL_DUTY:
         gait = "crawl"
@@ -200,15 +292,20 @@ def type_name(behaviour) -> str:
     return f"{int(round(b.servos))}servos-{band}-{gait}"
 
 
-_NAME = re.compile(r"^(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll)(?:-(\d+))?$")
+_NAME = re.compile(r"^(?:(\d+)servos-(low|mid|high)-(crawl|walk|trot|belly|roll))?"
+                   r"(?:-?(\d+))?$")
 
 
-def parse_cell_name(name: str) -> Tuple[str, Optional[int]]:
-    """(type name, cell index or None) of a name printed by Archive.names()."""
-    m = _NAME.match(name.strip().lower())
-    if not m:
-        raise ValueError(f"bad robot type '{name}', expected e.g. 8servos-low-crawl")
-    base = f"{m.group(1)}servos-{m.group(2)}-{m.group(3)}"
+def parse_cell_name(name: str) -> Tuple[Optional[str], Optional[int]]:
+    """(type name or None, uid or None) of a name printed by Archive.names():
+    '8servos-low-crawl-17', the bare uid '17' or the bare type '8servos-low-crawl'."""
+    text = name.strip().lower()
+    m = _NAME.match(text) if text else None
+    if not m or not (m.group(1) or m.group(4)):
+        raise ValueError(f"bad robot name '{name}', expected <type>-<uid> "
+                         "(e.g. 8servos-low-crawl-17), a uid (17) or a type "
+                         "(8servos-low-crawl)")
+    base = f"{m.group(1)}servos-{m.group(2)}-{m.group(3)}" if m.group(1) else None
     return base, int(m.group(4)) if m.group(4) else None
 
 
@@ -221,6 +318,9 @@ class Elite:
     born:    int          # batch index
     # None: a body never simulated
     behaviour: Optional[Behaviour] = None
+    # stable id of the robot inside its archive; -1 until an archive numbers it.
+    # Copies made with dataclasses.replace (polish, prune, migrate) keep it.
+    uid: int = -1
 
     def __post_init__(self):
         if self.behaviour is None:
@@ -232,6 +332,7 @@ class Elite:
     def __setstate__(self, state):
         # elites pickled before Behaviour carry a plain array or tuple
         self.__dict__.update(state)
+        self.__dict__.setdefault("uid", -1)
         if self.__dict__.get("behaviour") is not None:
             self.behaviour = Behaviour.of(self.behaviour)
 
@@ -259,25 +360,45 @@ class Archive:
     payload:  float = 0.0      # extra torso mass in kg
     ablate:   tuple = ()       # ablate.NAMES switched off in this run (experiments)
     rules:    tuple = ()       # rules.NAMES switched on in this run (experiments)
+    score:    dict = field(default_factory=dict)   # non-default score settings, from train.py
     body:     str = ""         # body_options limits, as given to train.py --body
+    axes:     str = "default"  # AXES: default, body, r1 or c300 (new archives only)
     profile:  dict = field(default_factory=lambda: copy.deepcopy(hardware.PROFILE))
     locked:   tuple = ()       # node ids mutation must keep (0: the torso), from seed.py
     plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
+    # search options of the run that wrote it (not the score): SEARCH_FLAGS keys
+    search:   dict = field(default_factory=dict)
+    # --reeval: elite id -> [first stored objective, [re-scores so far]]
+    reeval:   Dict[str, list] = field(default_factory=dict)
+    # --dns: the population parents are drawn from (dns_member dicts)
+    population: list = field(default_factory=list)
     body_model: int = BODY_MODEL
+    uids:     Dict[Cell, int] = field(default_factory=dict)   # cell -> uid of its elite
+    next_uid: int = 0          # the next uid to hand out; never reused
     _grid:    Optional[CVTArchive] = field(default=None, repr=False)
+
+    @property
+    def n_descriptors(self) -> int:
+        """Archive axes: five by default, six with body_ground, four for r1."""
+        return AXES_SPEC.get(self.axes, AXES_SPEC["default"])[0]
+
+    @property
+    def n_cells(self) -> int:
+        """CVT cells of the archive axes (300 for c300, 800 otherwise)."""
+        return AXES_SPEC.get(self.axes, AXES_SPEC["default"])[1]
 
     def _ensure(self, n_scores: int) -> CVTArchive:
         """Build the ribs archive on first insert, when score count is known."""
         if self._grid is None:
             self._grid = CVTArchive(
                 solution_dim=morpho.MORPH_LENGTH,
-                centroids=_centroids(),
-                ranges=[(0.0, 1.0)] * N_DESCRIPTORS,
+                centroids=_centroids(self.n_descriptors, self.n_cells),
+                ranges=[(0.0, 1.0)] * self.n_descriptors,
                 extra_fields={
                     "ctrl": ((ctrl.CTRL_LENGTH,), np.float64),
                     "scores": ((n_scores,), np.float64),
                     "born": ((), np.int64),
-                    "behaviour": ((6,), np.float64),
+                    "behaviour": ((len(Behaviour._fields),), np.float64),
                 },
             )
         return self._grid
@@ -291,7 +412,7 @@ class Archive:
         return {int(data["index"][i]): Elite(
                     data["solution"][i], data["ctrl"][i], float(data["objective"][i]),
                     data["scores"][i].tolist(), int(data["born"][i]),
-                    data["behaviour"][i])
+                    data["behaviour"][i], self.uids.get(int(data["index"][i]), -1))
                 for i in range(len(data["solution"]))}
 
     def like(self) -> "Archive":
@@ -299,52 +420,98 @@ class Archive:
         return Archive(terrains=self.terrains, batch=self.batch, evals=self.evals,
                        seconds=self.seconds, variants=self.variants, task=self.task,
                        payload=self.payload, ablate=self.ablate, rules=self.rules,
-                       body=self.body, profile=copy.deepcopy(self.profile),
-                       locked=self.locked, plugin=dict(self.plugin))
+                       score=dict(self.score),
+                       body=self.body, axes=self.axes, profile=copy.deepcopy(self.profile),
+                       locked=self.locked, plugin=dict(self.plugin),
+                       next_uid=self.next_uid)
 
     def activate(self) -> None:
-        """Turn on the ablations, score rules and body limits this archive was
-        trained with; scripts that score, decode or build its robots call this."""
+        """Turn on the ablations, score rules, score settings, body limits and
+        clip mode this archive was trained with; scripts that score, decode or
+        build its robots call this."""
         ablate.set_active(self.ablate)
         rules.set_active(self.rules)
         body_options.set_active(self.body)
+        apply_score(self.score)
+        set_clip_mode(self.search.get("clip_mode", "command"))
+        morpho.set_face_fix(self.search.get("face_fix", False))
+
+    def set_objective(self, cell: Cell, value: float) -> None:
+        """Replace the stored objective of a filled cell (--reeval). ribs has no
+        call for it, so the store's arrays are written the way tie_parts does:
+        the threshold follows the objective (learning rate 1, no minimum), which
+        keeps the next insert comparing against the new value."""
+        fields = self._grid._store._fields
+        old = float(fields["objective"][cell])
+        fields["objective"][cell] = value
+        fields["threshold"][cell] = value
+        if hasattr(self._grid, "_objective_sum"):
+            self._grid._objective_sum += value - old
+
+    def assign_uids(self) -> None:
+        """Number the cells that have no uid (archives saved before uids), in
+        cell order, and change nothing else."""
+        for c in sorted(self.cells):
+            if c not in self.uids:
+                self.uids[c] = self.next_uid
+                self.next_uid += 1
 
     def names(self) -> Dict[Cell, str]:
-        """Unique readable name of every filled cell. Cells that share a type
-        name get their cell index appended."""
-        cells = self.cells
-        base = {c: type_name(e.behaviour) for c, e in cells.items()}
-        count: Dict[str, int] = {}
-        for n in base.values():
-            count[n] = count.get(n, 0) + 1
-        return {c: n if count[n] == 1 else f"{n}-{c}" for c, n in base.items()}
+        """Name of every filled cell: '<type>-<uid>'. The uid never changes, so
+        a robot keeps its name while others come and go."""
+        return {c: f"{type_name(e.behaviour)}-{e.uid}" for c, e in self.cells.items()}
 
     def find(self, name: str) -> Cell:
-        """Cell of a name printed by names(); ValueError when absent or ambiguous."""
-        base, index = parse_cell_name(name)
-        names = self.names()
-        if index is not None:
-            stored = names.get(index, "")
-            # a unique name carries no cell suffix, so both spellings name the cell
-            if stored != base and stored.rsplit("-", 1)[0] != base:
-                raise ValueError(f"no {name} robot in the archive")
-            return index
-        hits = [c for c, n in names.items() if n == base]
-        if hits:
+        """Cell of a robot by full name ('8servos-low-crawl-17'), bare uid ('17')
+        or a bare type that only one robot has. A uid whose type part is stale
+        (the body was pruned) still finds the robot and prints its current name.
+        ValueError when absent or ambiguous."""
+        base, uid = parse_cell_name(name)
+        cells = self.cells
+        if uid is not None:
+            hits = [c for c, e in cells.items() if e.uid == uid]
+            if not hits:
+                raise ValueError(f"no robot with uid {uid} in the archive (names are "
+                                 "<type>-<uid>, e.g. 8servos-low-crawl-17)")
+            current = type_name(cells[hits[0]].behaviour)
+            if base is not None and base != current:
+                print(f"note: {name} is now {current}-{uid}", flush=True)
             return hits[0]
-        if any(n.startswith(base + "-") for n in names.values()):
+        hits = [c for c, e in cells.items() if type_name(e.behaviour) == base]
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
             raise ValueError(f"'{name}' is ambiguous, use one of: " + ", ".join(
-                sorted(n for n in names.values() if n.startswith(base + "-"))))
+                sorted(f"{base}-{cells[c].uid}" for c in hits)))
         raise ValueError(f"no {name} robot in the archive")
 
     def insert(self, elite: Elite, parent: Optional[str] = None) -> bool:
         grid = self._ensure(len(elite.scores))
+        # an archive written before body_ground stores a narrower record
+        width = grid.data()["behaviour"].shape[1]
+        cell = cell_of(elite.behaviour, self.n_descriptors, self.n_cells)
+        eps = self.search.get("tie_parts", 0.0)
+        incumbent = self.cells.get(cell) if eps > 0 else None   # off: no extra work
+        if (incumbent is not None and np.isfinite(elite.fitness)
+                and np.isfinite(incumbent.fitness)
+                and elite.fitness <= incumbent.fitness
+                and elite.fitness >= incumbent.fitness - eps * abs(incumbent.fitness)
+                and len(morpho.decode(elite.morph).nodes)
+                    < len(morpho.decode(incumbent.morph).nodes)):
+            # ribs only replaces a cell on a strictly better objective; lower the
+            # incumbent's threshold so this smaller body can take the cell instead
+            grid._store._fields["threshold"][cell] = -np.inf
         info = grid.add(solution=[elite.morph], objective=[elite.fitness],
-                        measures=[normalise(elite.behaviour)],
+                        measures=[normalise(elite.behaviour, self.n_descriptors)],
                         ctrl=[elite.ctrl], scores=[elite.scores], born=[elite.born],
-                        behaviour=[elite.behaviour])
+                        behaviour=[elite.behaviour[:width]])
         added = int(info["status"][0]) != 0
         if added:
+            number = elite.uid
+            if number < 0 or any(u == number for c, u in self.uids.items() if c != cell):
+                number = self.next_uid          # new robot, or a uid another cell holds
+            self.uids[cell] = number
+            self.next_uid = max(self.next_uid, number + 1)
             uid = elite_id(elite.morph, elite.ctrl)
             if parent == uid:       # no self-loops in the family tree
                 parent = None
@@ -378,10 +545,19 @@ class Archive:
     def sample_elites(self, n: int, rng: np.random.Generator,
                       selection: str = "novelty") -> dict:
         """Parents drawn with the run's rng: probability proportional to novelty
-        (falls back to uniform when every elite has zero novelty)."""
+        (novelty-rank: times the elite's objective rank, 1 = worst, n = best;
+        falls back to uniform when every weight is zero)."""
         data = self._grid.data()
         size = len(data["solution"])
-        weights = self.novelty() if selection == "novelty" else np.zeros(size)
+        if selection == "novelty":
+            weights = self.novelty()
+        elif selection == "novelty-rank":
+            objective = np.asarray(data["objective"], dtype=float)
+            rank = np.empty(size, dtype=float)
+            rank[np.argsort(objective, kind="stable")] = np.arange(1, size + 1)
+            weights = self.novelty() * rank / max(size, 1)
+        else:
+            weights = np.zeros(size)
         p = weights / weights.sum() if weights.sum() > 0 else None
         idx = rng.choice(size, size=n, p=p)
         return {k: v[idx] for k, v in data.items()}
@@ -397,22 +573,32 @@ class Archive:
                     f"archive from body model {old}, this code is {BODY_MODEL}: "
                     "run experiments/migrate_archive.py to bring it up to date")
             raise ValueError("archive from an older body model, retrain")
-        if grid is not None and grid.measure_dim != N_DESCRIPTORS and not _stale_ok:
-            raise ValueError(
-                f"archive with {grid.measure_dim} archive axes, this code uses "
-                f"{N_DESCRIPTORS} (the servo count is an axis again): retrain")
+        if grid is not None and not _stale_ok:
+            axes = state.get("axes", "default")
+            n_descriptors = AXES_SPEC.get(axes, AXES_SPEC["default"])[0]
+            if grid.measure_dim != n_descriptors:
+                raise ValueError(
+                    f"archive with {grid.measure_dim} archive axes, this archive "
+                    f"uses {n_descriptors} (--axes {axes}): retrain")
         self.__dict__.update(state)
         self.__dict__.setdefault("_grid", None)
         self.__dict__.setdefault("seconds", 8.0)   # old runs used 8 s episodes
         self.__dict__.setdefault("variants", 0)    # and no randomisation
         self.__dict__.setdefault("lineage", {})    # nor lineage records
+        self.__dict__.setdefault("uids", {})       # nor stable robot ids
+        self.__dict__.setdefault("next_uid", 0)
         self.__dict__.setdefault("task", "forward")   # nor tasks
         self.__dict__.setdefault("payload", 0.0)      # nor payload
         self.__dict__.setdefault("ablate", ())        # nor ablations
         self.__dict__.setdefault("rules", ())         # nor optional score rules
+        self.__dict__.setdefault("score", {})         # nor score settings
         self.__dict__.setdefault("body", "")          # nor body options
+        self.__dict__.setdefault("axes", "default")   # nor a different axes option
         self.__dict__.setdefault("locked", ())        # nor locked parts
         self.__dict__.setdefault("plugin", {})        # nor plugins
+        self.__dict__.setdefault("search", {})        # nor search options
+        self.__dict__.setdefault("reeval", {})        # nor re-scores
+        self.__dict__.setdefault("population", [])    # nor a DNS population
         if "profile" not in state:                    # nor hardware profiles
             self.__dict__["profile"] = hardware.default_profile()
 
@@ -426,11 +612,18 @@ class Archive:
                 "best": max(fits), "mean": float(np.mean(fits)),
                 "novelty": float(nov.mean()) if len(nov) else 0.0,
                 # QD-score: sum of fitness shifted to be positive per cell
-                "qd_score": float(sum(f + 5.0 for f in fits))}
+                "qd_score": float(sum(f + 5.0 for f in fits)),
+                "symmetric": count_symmetric(self)}
+
+
+def count_symmetric(archive: Archive) -> int:
+    """Elites whose body is fully mirrored (morphology.symmetry is 1.0)."""
+    return sum(1 for e in archive.cells.values()
+               if morpho.symmetry(morpho.decode(e.morph)) == 1.0)
 
 
 MERGE_KEYS = ("terrains", "seconds", "variants", "task", "payload", "ablate",
-              "rules", "body", "profile", "locked", "plugin")
+              "rules", "score", "body", "axes", "profile", "locked", "plugin")
 
 
 def merge(archives: List[Archive]) -> Archive:
@@ -445,6 +638,8 @@ def merge(archives: List[Archive]) -> Archive:
     if not archives:
         raise ValueError("nothing to merge")
     first = archives[0]
+    for a in archives:
+        a.assign_uids()
     for a in archives[1:]:
         for k in MERGE_KEYS:
             x, y = getattr(a, k), getattr(first, k)
@@ -460,6 +655,10 @@ def merge(archives: List[Archive]) -> Archive:
     base_evals = first.history[shared - 1]["evals"] if shared else 0
 
     out = pickle.loads(pickle.dumps(first))
+    out.assign_uids()
+    # the first archive keeps its uids; a uid another island already holds in a
+    # different cell gets a fresh one when its elite is inserted (Archive.insert)
+    out.next_uid = max(out.next_uid, *(a.next_uid for a in archives))
     lineage: Dict[str, tuple] = {}
     for a in archives:
         lineage.update(a.lineage)
@@ -499,28 +698,100 @@ def code_version() -> str:
         return "unknown"
 
 
-def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=()):
+def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=(), score=None,
+                 clip_mode="command", face_fix=False):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
-    carry the run's ablations, optional score rules, body options and plugins."""
+    carry the run's ablations, optional score rules, body options, clip mode and
+    plugins. A score dict is applied when given; callers with no archive keep
+    their own."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     ablate.set_active(ablations)
     rules.set_active(score_rules)
     body_options.set_active(body)
+    set_clip_mode(clip_mode)
+    morpho.set_face_fix(face_fix)
+    if score is not None:
+        apply_score(score)
     plugins.load_all(plugin_paths)
+
+
+def _cuda_devices() -> int:
+    import warp as wp
+    return max(1, wp.get_cuda_device_count())
+
+
+def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body="",
+                 plugin_paths=(), score=None, clip_mode="command", face_fix=False):
+    """Pool initializer for --device warp: bind this worker to the next GPU."""
+    _init_worker(ablations, score_rules, body, plugin_paths, score, clip_mode, face_fix)
+    with counter.get_lock():
+        i = counter.value
+        counter.value += 1
+    import warp as wp
+    if wp.get_cuda_device_count() > 0:
+        wp.set_device(f"cuda:{i % n_gpus}")
 
 
 GRAFT_P = 0.2           # share of children made by grafting a limb of a second elite
 LOCK_TRIES = 8          # offspring drawn until one keeps the archive's locked parts
 BUDGET_JOINTS = 4       # bodies with more joints get proportionally more evaluations
 BUDGET_SCALE_MAX = 3.0
+PROTECT_SLOTS = 2       # changed slots that make a child's body a new body
 
 
 def scaled_budget(budget: int, morph) -> int:
-    """CMA-ES evaluations for a body: every joint adds six controller genes, so
-    a body with many joints gets up to BUDGET_SCALE_MAX times the base budget
+    """CMA-ES evaluations for a body: every joint adds CTRL_PER_NODE controller
+    genes, so a body with many joints gets up to BUDGET_SCALE_MAX times the base budget
     to learn a coordinated gait instead of losing its cell to a simpler one."""
     scale = min(max(morph.n_joints / BUDGET_JOINTS, 1.0), BUDGET_SCALE_MAX)
     return int(round(budget * scale))
+
+
+def child_budget(m: dict, budget: int, protect_new: float = 1.0) -> int:
+    """CMA-ES evaluations of one child, before `scaled_budget`: a body that
+    changed a lot (a graft, PROTECT_SLOTS or more slots of the genome, or
+    another set of node slots) gets its budget times protect_new, so a new body
+    is not judged on a controller tuned for its parent (Cheney et al. 2018).
+    The child that is the parent's own body ("same") and random bodies keep
+    their budget; 1.0 turns the option off and returns the budget untouched."""
+    if protect_new == 1.0 or m["changed_slots"] is None or m["origin"] == "same":
+        return budget
+    big = (m["origin"] == "graft" or m["changed_slots"] >= PROTECT_SLOTS
+           or not m["same_slots"])
+    return int(round(budget * protect_new)) if big else budget
+
+
+SEARCH_FLAGS = {"parent_selection": "--parent-selection", "inner_strategy": "--inner-strategy",
+                "variant_mode": "--variant-mode", "protect_new": "--protect-new",
+                "mirror_p": "--mirror-p", "mutation_bias": "--mutation-bias",
+                "tie_parts": "--tie-parts", "batch_size": "--batch-size",
+                "budget_init": "--budget-init", "budget_child": "--budget-child",
+                "deterministic": "--deterministic", "clip_mode": "--clip-mode",
+                "screen": "--screen", "face_fix": "--face-fix",
+                "mirror_ctrl": "--mirror-ctrl", "reeval": "--reeval",
+                "dns": "--dns"}           # Archive.search keys and their train.py flags
+
+
+def _shown(value):
+    return "default" if value is None else value
+
+
+def offspring(parent, donor, grafted: bool, rng, mirror_p: float = 0.0,
+              mutation_bias: Optional[str] = None) -> tuple:
+    """(child, origin) of one offspring: a graft of a donor's limb, or a mutation
+    of the parent. A graft that fits no slot gives the parent's body back, so it
+    is a plain mutation."""
+    if grafted:
+        child = morpho.graft(parent, donor, rng)
+        if not np.array_equal(child, parent):
+            return child, "graft"
+    kwargs = {"mirror_p": mirror_p}
+    if mutation_bias is not None:       # callers without a bias keep the old call
+        kwargs["mutation_bias"] = mutation_bias
+    return morpho.mutate(parent, rng, **kwargs), "mutate"
+
+
+SCREENED_ORIGINS = ("mutate", "graft")
 
 
 def job_cost(job) -> float:
@@ -545,20 +816,261 @@ def _work(job):
     a long run: it is printed with a short id of the body and the result comes
     back with evals == 0 and the failed flag set, which the loop counts."""
     (morph_genes, x0, terrains, budget, sigma0, seed, seconds,
-     device, popsize, variants, parent, task, payload) = job
+     device, popsize, variants, parent, task, payload) = job[:13]
+    opts = job[13] if len(job) > 13 else {}     # inner-loop options of this job
+    morpho.set_mutation_bias(opts.get("mutation_bias", "default"))
+    tdir = trace.directory()      # tracing: a 15th job element is the batch index
+    t0 = time.time()
+    rec = trace.Recorder() if tdir else None
+    extra = None
     try:
         morph = morpho.decode(morph_genes)
-        res = optimise_controller(morph, get_terrains(terrains, seed=seed), x0=x0,
+        terr = get_terrains(terrains, seed=seed)
+        res = optimise_controller(morph, terr, x0=x0,
                                   budget=scaled_budget(budget, morph), sigma0=sigma0,
                                   seed=seed, seconds=seconds, device=device,
                                   popsize=popsize, variants=variants, task=task,
-                                  payload=payload)
+                                  payload=payload, recorder=rec,
+                                  strategy=opts.get("strategy"),
+                                  parent_genes=opts.get("parent_genes"),
+                                  variant_mode=opts.get("variant_mode", "all"))
+        if tdir:
+            extra = {"idx": job[14] if len(job) > 14 else None,
+                     "id": trace.body_id(morph_genes), "file": None,
+                     "budget": scaled_budget(budget, morph),
+                     "seconds": round(time.time() - t0, 3)}
+            try:
+                if res.evals > 0 and rec.runs:
+                    extra["file"] = rec.write(
+                        tdir, morph_genes, x0, ctrl.active_genes(morph),
+                        extra["budget"], sigma0, seed, seconds, variants, task,
+                        [t.name for t in terr], commands(task), task_score)
+            except Exception:
+                print(f"trace write failed:\n{traceback.format_exc()}", flush=True)
     except Exception:
         body = hashlib.sha1(np.asarray(morph_genes, float).tobytes()).hexdigest()[:8]
         print(f"body {body} failed:\n{traceback.format_exc()}", flush=True)
-        return (morph_genes, x0, -np.inf, [], 0, None, parent, True)
-    return (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
-            res.behaviour, parent, False)
+        out = (morph_genes, x0, -np.inf, [], 0, None, parent, True)
+        out = out + (None,) if tdir else out
+        return out + (None,) if opts.get("progress") else out
+    out = (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
+           res.behaviour, parent, False)
+    out = out + (extra,) if tdir else out
+    if opts.get("progress"):        # --dns: the straight progress, for the quality floor
+        out += (float(res.metrics[0].progress) if res.metrics else None,)
+    return out
+
+
+def _screen_work(job):
+    """Pool worker: quick score of one changed body, the controller it inherits
+    on one nominal flat episode of the "forward" task. -inf if unbuildable or if
+    the episode fails."""
+    i, genes, ctrl_, seconds, payload = job
+    try:
+        ep = Episode(morpho.decode(genes), flat(), seconds, payload)
+        if not ep.buildable:
+            return i, -np.inf
+        return i, float(evaluate([ep], ctrl_, None, "forward")[0])
+    except Exception:
+        body = hashlib.sha1(np.asarray(genes, float).tobytes()).hexdigest()[:8]
+        print(f"screen of body {body} failed:\n{traceback.format_exc()}", flush=True)
+        return i, -np.inf
+
+
+def screen_keep(origins: list, scores: dict, keep: float) -> set:
+    """Indices that survive the screen: every body that was not screened (origin
+    not mutate or graft) and the best ceil(keep * n) of the n screened ones by
+    quick score (ties: batch order)."""
+    screened = [i for i, o in enumerate(origins) if o in SCREENED_ORIGINS]
+    best = sorted(screened, key=lambda i: (-scores[i], i))[:math.ceil(keep * len(screened))]
+    return (set(range(len(origins))) - set(screened)) | set(best)
+
+
+# ---- --reeval: scores of the best elites on fresh terrain seeds ----
+
+REEVAL_TOP = 20         # elites re-scored each time, by objective
+
+
+def reeval_mean(first: float, rescores) -> float:
+    """Objective of a re-scored elite: the mean of its first stored value and
+    every re-score so far."""
+    return float((first + sum(rescores)) / (1 + len(rescores)))
+
+
+def _reeval_work(job):
+    """Pool worker: score a stored controller again on fresh terrains and
+    physics variants (the same evaluation path as the inner loop, one
+    controller, no search). (fitness, straight progress) or None."""
+    genes, ctrl_, terrains, seed, seconds, variants, task, payload = job
+    try:
+        morph = morpho.decode(genes)
+        episodes, run_cpu = cpu_evaluator(morph, get_terrains(terrains, seed=seed),
+                                          seconds, payload, variants, seed, task)
+        if not episodes[0].buildable:
+            return None
+        fit, _, metrics = run_cpu(np.asarray(ctrl_, float))
+        return float(fit), float(metrics[0].progress)
+    except Exception:
+        print(f"re-score failed:\n{traceback.format_exc()}", flush=True)
+        return None
+
+
+def apply_reeval(archive: "Archive", results: dict) -> Tuple[float, float]:
+    """Fold re-scores into the archive. `results` maps elite_id to (fitness,
+    progress). Each elite's objective becomes the mean of its first stored value
+    and all its re-scores (kept in archive.reeval); a DNS population member of
+    the same robot gets the same objective. Returns (mean drop of the stored
+    objective, mean drop of the re-scores against it), both over the elites."""
+    drops, gaps = [], []
+    for cell, e in archive.cells.items():
+        eid = elite_id(e.morph, e.ctrl)
+        res = results.get(eid)
+        if res is None or not np.isfinite(res[0]):
+            continue
+        rec = archive.reeval.setdefault(eid, [float(e.fitness), []])
+        rec[1].append(float(res[0]))
+        new = reeval_mean(rec[0], rec[1])
+        drops.append(float(e.fitness) - new)
+        gaps.append(float(e.fitness) - float(res[0]))
+        archive.set_objective(cell, new)
+        for m in archive.population:
+            if m["id"] == eid:
+                m["objective"] = new
+                if res[1] is not None:
+                    m["progress"] = res[1] if m["progress"] is None else \
+                        0.5 * (m["progress"] + res[1])
+    if not drops:
+        return 0.0, 0.0
+    return float(np.mean(drops)), float(np.mean(gaps))
+
+
+# ---- --dns: hybrid Dominated Novelty Search (arXiv 2502.00593) ----
+
+DNS_K = 3                   # fitter neighbours a member's dominated novelty averages
+DNS_MIN_PROGRESS = 0.05     # quality floor: straight progress in metres ...
+                            # ... and an objective above 0
+DNS_RESEED_EVERY = 10       # batches between looks at which grid elites lost cover
+DNS_RESEED_N = 5            # grid elites added at most each time
+DNS_NEAR = 0.25             # normalised-descriptor distance that counts as nearby
+
+
+def dns_member(genes, ctrl_, objective, behaviour, born, progress,
+               n_descriptors: int = N_DESCRIPTORS) -> dict:
+    """One member of the DNS population. progress is None when unknown (a
+    member seeded from the grid), and the floor then uses the objective alone."""
+    return {"genes": np.array(genes), "ctrl": np.array(ctrl_),
+            "objective": float(objective), "behaviour": np.array(behaviour, float),
+            "measures": normalise(behaviour, n_descriptors), "born": int(born),
+            "progress": None if progress is None else float(progress),
+            "id": elite_id(genes, ctrl_)}
+
+
+def passes_floor(member: dict) -> bool:
+    p = member["progress"]
+    return member["objective"] > 0.0 and (p is None or p > DNS_MIN_PROGRESS)
+
+
+def dns_scores(objective, measures, floor, k: int = DNS_K) -> np.ndarray:
+    """Dominated novelty of every member: the mean distance (normalised
+    descriptors) to its k nearest members with a strictly higher objective. A
+    member with none higher gets +inf, and a member below the quality floor
+    gets 0 whatever its neighbours."""
+    objective = np.asarray(objective, float)
+    pts = np.asarray(measures, float)
+    n = len(objective)
+    out = np.zeros(n)
+    if n == 0:
+        return out
+    dist = np.linalg.norm(pts[:, None] - pts[None], axis=-1)
+    for i in range(n):
+        if not floor[i]:
+            continue
+        fitter = objective > objective[i]
+        out[i] = (np.sort(dist[i][fitter])[:k].mean() if fitter.any() else np.inf)
+    return out
+
+
+def dns_trim(population: list, size: int) -> list:
+    """The population cut to `size` members: the lowest dominated novelty goes
+    first, a lower objective first among equals. One scoring pass removes all
+    the excess, instead of one member at a time."""
+    n = len(population)
+    if n <= size:
+        return population
+    obj = np.array([m["objective"] for m in population])
+    scores = dns_scores(obj, [m["measures"] for m in population],
+                        [passes_floor(m) for m in population])
+    order = np.lexsort((np.arange(n), obj, scores))     # scores first, then objective
+    keep = sorted(order[n - size:])
+    return [population[i] for i in keep]
+
+
+def sample_population(population: list, n: int, rng: np.random.Generator,
+                      selection: str = "novelty") -> dict:
+    """Parents from the DNS population, with the same selection rules and the
+    keys of Archive.sample_elites that the batch uses (solution and ctrl)."""
+    size = len(population)
+    if selection == "uniform":
+        weights = np.zeros(size)
+    else:
+        pts = np.array([m["measures"] for m in population])
+        if size < 2:
+            nov = np.zeros(size)
+        else:
+            dist = np.linalg.norm(pts[:, None] - pts[None], axis=-1)
+            np.fill_diagonal(dist, np.inf)
+            nov = np.sort(dist, axis=1)[:, :min(K_NOVELTY, size - 1)].mean(axis=1)
+        weights = nov
+        if selection == "novelty-rank":
+            objective = np.array([m["objective"] for m in population])
+            rank = np.empty(size, dtype=float)
+            rank[np.argsort(objective, kind="stable")] = np.arange(1, size + 1)
+            weights = nov * rank / max(size, 1)
+    p = weights / weights.sum() if weights.sum() > 0 else None
+    idx = rng.choice(size, size=n, p=p)
+    return {"solution": np.array([population[i]["genes"] for i in idx]),
+            "ctrl": np.array([population[i]["ctrl"] for i in idx])}
+
+
+def dns_reseed(archive: "Archive", rng: np.random.Generator) -> int:
+    """Add up to DNS_RESEED_N random grid elites that have no population member
+    within DNS_NEAR (normalised descriptors), so the museum keeps feeding the
+    search. Returns how many were added."""
+    have = {m["id"] for m in archive.population}
+    pts = [m["measures"] for m in archive.population]
+    lost = []
+    for e in archive.cells.values():
+        if elite_id(e.morph, e.ctrl) in have:
+            continue
+        x = normalise(e.behaviour, archive.n_descriptors)
+        if not pts or min(float(np.linalg.norm(x - q)) for q in pts) > DNS_NEAR:
+            lost.append(e)
+    if not lost:
+        return 0
+    pick = rng.choice(len(lost), size=min(DNS_RESEED_N, len(lost)), replace=False)
+    for i in pick:
+        e = lost[int(i)]
+        archive.population.append(dns_member(
+            e.morph, e.ctrl, e.fitness, e.behaviour, e.born, None, archive.n_descriptors))
+    return len(pick)
+
+
+def _trace_body(tdir, archive, batch_meta, res, cell, before, accepted):
+    """Tracing: one line of bodies.jsonl for a finished body (main process)."""
+    genes, ctrl_, fit, scores, evals, behaviour, parent, bad = res[:8]
+    extra = res[8] if len(res) > 8 and res[8] else {}
+    idx = extra.get("idx")
+    m = batch_meta[idx] if idx is not None and idx < len(batch_meta) else {}
+    rec = {"batch": archive.batch, "id": trace.body_id(genes),
+           "file": extra.get("file"), "parent": parent,
+           "origin": m.get("origin"), "changed_slots": m.get("changed_slots"),
+           "l2": m.get("l2"), "budget": extra.get("budget"), "evals": int(evals),
+           "seconds": extra.get("seconds"),
+           "fitness": None if not np.isfinite(fit) else float(fit),
+           "behaviour": None if behaviour is None else [float(v) for v in behaviour],
+           "cell": cell, "before": before, "accepted": accepted, "failed": bool(bad)}
+    with open(os.path.join(tdir, "bodies.jsonl"), "a") as f:
+        f.write(json.dumps(rec) + "\n")
 
 
 def run(
@@ -568,7 +1080,7 @@ def run(
     batch_size: int = 16,
     budget_init: int = 400,
     budget_child: int = 120,
-    episode_seconds: float = 5.0,
+    episode_seconds: float = EPISODE_SECONDS,
     random_frac: float = 0.1,
     workers: Optional[int] = None,
     seed: int = 0,
@@ -581,12 +1093,56 @@ def run(
     task: str = "forward",
     payload: float = 0.0,
     ablations: tuple = (),
-    score_rules: tuple = (),
+    score_rules: Optional[tuple] = None,   # None: not given, so a resume keeps the archive's
+    score: Optional[dict] = None,          # new archives only; a resume keeps its own
     body: str = "",
+    axes: str = "default",
     plugin: Optional[dict] = None,
+    inner_strategy: Optional[str] = None,
+    variant_mode: str = "all",
+    protect_new: float = 1.0,
+    mirror_p: float = 0.0,
+    mutation_bias: str = "default",
+    tie_parts: float = 0.0,
+    deterministic: bool = False,
+    screen: float = 1.0,
+    clip_mode: str = "command",
+    face_fix: bool = False,
+    mirror_ctrl: bool = False,
+    reeval: int = 0,
+    dns: int = 0,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
+    if inner_strategy not in INNER_STRATEGIES:
+        raise ValueError(f"inner_strategy must be one of {INNER_STRATEGIES}")
+    if variant_mode not in VARIANT_MODES:
+        raise ValueError(f"variant_mode must be one of {VARIANT_MODES}")
+    if variant_mode == "first" and device == "warp":
+        raise ValueError("--variant-mode first is CPU only; use all with --device warp")
+    if protect_new < 1.0:
+        raise ValueError("protect_new must be >= 1.0 (1.0 turns it off)")
+    if not 0.0 <= mirror_p <= 1.0:
+        raise ValueError("mirror_p must be in [0, 1] (0 turns it off)")
+    morpho.set_mutation_bias(mutation_bias)     # also validates the name
+    if tie_parts < 0.0:
+        raise ValueError("tie_parts must be >= 0 (0 turns it off)")
+    if not 0.0 < screen <= 1.0:
+        raise ValueError("screen must be in (0, 1] (1.0 turns it off)")
+    if screen < 1.0 and device in ("gpu", "warp"):
+        raise ValueError(f"--screen is CPU only; use --screen 1 with --device {device}")
+    if device in ("gpu", "warp"):
+        # sim_gpu and sim_warp do not simulate the oscillator coupling yet
+        # (BODY_MODEL 24); every controller drawn here carries it.
+        raise ValueError(f"--device {device} does not simulate coupled oscillators yet; use --device cpu")
+    if axes not in AXES:
+        raise ValueError(f"axes must be one of {AXES}")
+    if clip_mode not in CLIP_MODES:
+        raise ValueError(f"clip_mode must be one of {CLIP_MODES}")
+    if reeval < 0:
+        raise ValueError("reeval must be >= 0 (0 turns it off)")
+    if dns < 0:
+        raise ValueError("dns must be >= 0 (0 turns it off)")
     if task not in task_names():
         raise ValueError(f"task must be one of {task_names()}")
     if device == "gpu" and variants > 0 and not resume:
@@ -597,11 +1153,21 @@ def run(
         print("[darwinbot] gpu: workers ignored, tasks run one at a time")
         workers = 1
         popsize = 64 if popsize is None else popsize
+    elif device == "warp":
+        # One process per worker, spread over the GPUs; by default one per GPU.
+        workers = workers or _cuda_devices()
     else:
         workers = workers or max(1, multiprocessing.cpu_count() - 1)
 
     if resume:
         archive: Archive = load_archive(resume)
+        if axes != "default" and axes != archive.axes:
+            raise ValueError(f"{resume} uses --axes {archive.axes}; --axes {axes} "
+                             "applies to a new archive only")
+        if score_rules is not None and rules.normalise(score_rules) != archive.rules:
+            raise ValueError(f"{resume} uses --rules {','.join(archive.rules) or 'none'}, "
+                             f"not {','.join(rules.normalise(score_rules)) or 'none'}; "
+                             "--rules applies to a new archive only")
         terrains = archive.terrains     # task and payload also come from the archive
         rng = np.random.default_rng(seed + archive.batch)
     else:
@@ -609,24 +1175,76 @@ def run(
                           variants=variants, task=task, payload=payload,
                           ablate=ablate.normalise(ablations),
                           rules=rules.normalise(score_rules),
+                          score=dict(score or {}),
                           body=body_options.parse(body).to_string(),
-                          plugin=plugin or {})
+                          axes=axes, plugin=plugin or {})
+    search = {"parent_selection": parent_selection, "inner_strategy": inner_strategy,
+              "variant_mode": variant_mode, "protect_new": protect_new,
+              "mirror_p": mirror_p, "mutation_bias": mutation_bias,
+              "tie_parts": tie_parts, "batch_size": batch_size,
+              "budget_init": budget_init, "budget_child": budget_child,
+              "deterministic": deterministic, "clip_mode": clip_mode,
+              "screen": screen, "face_fix": face_fix, "mirror_ctrl": mirror_ctrl,
+              "reeval": reeval, "dns": dns}
+    if resume:                                  # the new values win, and are stored
+        for key, value in search.items():
+            old = archive.search.get(key, value)
+            if old != value:
+                print(f"resume: {SEARCH_FLAGS[key]} {_shown(value)} differs from the "
+                      f"archive's {_shown(old)}")
+    archive.search = search
     ablate.set_active(archive.ablate)           # a resume keeps the run's ablations
     rules.set_active(archive.rules)             # and its score rules
     body_options.set_active(archive.body)       # and its body limits
+    apply_score(archive.score)                  # and its score settings
+    set_clip_mode(archive.search.get("clip_mode", "command"))
+    morpho.set_face_fix(archive.search.get("face_fix", False))   # mutations run here
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
     def new_seed():
         return int(rng.integers(0, 2**31 - 1))
 
+    tdir = trace.directory()
+    batch_meta: list = []      # tracing: origin and distance to the parent of each job
+
+    def meta(child, parent=None, origin="random"):
+        if parent is None:
+            return {"origin": origin, "changed_slots": None, "l2": None}
+        d = (np.asarray(child, float) - np.asarray(parent, float)).reshape(
+            morpho.MAX_NODES, morpho.BLOCK_GENES)
+        return {"origin": origin, "changed_slots": int((np.abs(d).max(axis=1) > 0).sum()),
+                "l2": float(np.sqrt((d ** 2).sum())),
+                "same_slots": set(morpho.decode(child).nodes)
+                == set(morpho.decode(parent).nodes)}
+
+    def inner_opts(parent_genes=None) -> dict:
+        """Inner-loop options of one job; focused needs the parent's body genes."""
+        return {"strategy": inner_strategy, "variant_mode": variant_mode,
+                "mutation_bias": mutation_bias, "progress": bool(dns),
+                "parent_genes": None if parent_genes is None else np.array(parent_genes)}
+
     def make_batch() -> list:
+        batch_meta.clear()
+        tasks = _make_batch()
+        if tdir:
+            tasks = [t + (i,) for i, t in enumerate(tasks)]
+        return tasks
+
+    def _make_batch() -> list:
         if not archive.cells:
-            return [(morpho.random_morphology(rng), None, terrains,
-                     budget_init, 0.25, new_seed(), archive.seconds,
-                     device, popsize, archive.variants, None,
-                     archive.task, archive.payload) for _ in range(n_init)]
-        parents = archive.sample_elites(batch_size, rng, parent_selection)
+            tasks = [(morpho.random_morphology(rng), None, terrains,
+                      budget_init, 0.25, new_seed(), archive.seconds,
+                      device, popsize, archive.variants, None,
+                      archive.task, archive.payload, inner_opts(None))
+                     for _ in range(n_init)]
+            batch_meta.extend(meta(t[0]) for t in tasks)
+            return tasks
+        if dns and archive.population:
+            parents = sample_population(archive.population, batch_size, rng,
+                                        parent_selection)
+        else:
+            parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
             # A random body would not carry the locked parts.
@@ -634,24 +1252,29 @@ def run(
                 tasks.append((morpho.random_morphology(rng), None, terrains,
                               budget_init, 0.25, new_seed(), archive.seconds,
                               device, popsize, archive.variants, None,
-                              archive.task, archive.payload))
+                              archive.task, archive.payload, inner_opts(None)))
+                batch_meta.append(meta(tasks[-1][0]))
             else:
                 parent = parents["solution"][i]
+                donor = parents["solution"][(i + 1) % batch_size]
                 for _ in range(LOCK_TRIES):
-                    if rng.random() < GRAFT_P:        # crossover with another elite
-                        donor = parents["solution"][(i + 1) % batch_size]
-                        child = morpho.graft(parent, donor, rng)
-                    else:
-                        child = morpho.mutate(parent, rng)
+                    child, origin = offspring(parent, donor, rng.random() < GRAFT_P,
+                                              rng, mirror_p, mutation_bias)
                     if morpho.keeps_locked(child, parent, archive.locked):
                         break
                 else:                    # same body, its controller searched again
-                    child = np.array(parent)
-                tasks.append((child, parents["ctrl"][i], terrains,
-                              budget_child, 0.12, new_seed(), archive.seconds,
+                    child, origin = np.array(parent), "same"
+                batch_meta.append(meta(child, parent, origin))
+                child_ctrl = parents["ctrl"][i]
+                if mirror_ctrl and origin == "mutate" and morpho.copy_log:
+                    # the limbs the mutation copied start with their source's gait
+                    child_ctrl = copy_node_genes(child_ctrl, morpho.copy_log)
+                tasks.append((child, child_ctrl, terrains,
+                              child_budget(batch_meta[-1], budget_child, protect_new),
+                              0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,
                               elite_id(parents["solution"][i], parents["ctrl"][i]),
-                              archive.task, archive.payload))
+                              archive.task, archive.payload, inner_opts(parent)))
         return tasks
 
     print(f"[darwinbot] terrains={terrains} workers={workers} device={device} "
@@ -659,12 +1282,41 @@ def run(
           f"task={archive.task} payload={archive.payload} kg"
           + (f" ablate={list(archive.ablate)}" if archive.ablate else "")
           + (f" rules={list(archive.rules)}" if archive.rules else "")
-          + (f" body={archive.body}" if archive.body else ""))
-    if device != "gpu":
+          + (f" score={archive.score}" if archive.score else "")
+          + (f" body={archive.body}" if archive.body else "")
+          + (f" axes={archive.axes}" if archive.axes != "default" else "")
+          + (f" inner_strategy={inner_strategy}" if inner_strategy else "")
+          + (f" variant_mode={variant_mode}" if variant_mode != "all" else "")
+          + (f" protect_new={protect_new}" if protect_new != 1.0 else "")
+          + (f" mirror_p={mirror_p}" if mirror_p else "")
+          + (f" mutation_bias={mutation_bias}" if mutation_bias != "default" else "")
+          + (f" tie_parts={tie_parts}" if tie_parts else "")
+          + (f" clip_mode={clip_mode}" if clip_mode != "command" else "")
+          + (f" screen={screen}" if screen != 1.0 else "")
+          + (" face_fix" if face_fix else "")
+          + (" mirror_ctrl" if mirror_ctrl else "")
+          + (f" reeval={reeval}" if reeval else "")
+          + (f" dns={dns}" if dns else "")
+          + (" deterministic" if deterministic else ""))
+    if device == "gpu" or (device == "warp" and workers == 1):
+        pool = None
+    elif device == "warp":
+        # CUDA does not survive fork: spawned workers, each bound to one GPU.
+        ctx = multiprocessing.get_context("spawn")
+        pool = ctx.Pool(workers, _warp_worker,
+                        (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules,
+                         archive.body, plugins.loaded(), archive.score,
+                         archive.search.get("clip_mode", "command"),
+                         archive.search.get("face_fix", False)))
+    else:
         fastloop.warmup()        # compiled before the fork, so workers inherit it
-    pool = None if device == "gpu" else multiprocessing.Pool(
-        workers, _init_worker,
-        (archive.ablate, archive.rules, archive.body, plugins.loaded()))
+        pool = multiprocessing.Pool(workers, _init_worker,
+                                    (archive.ablate, archive.rules, archive.body,
+                                     plugins.loaded(), archive.score,
+                                     archive.search.get("clip_mode", "command"),
+                                     archive.search.get("face_fix", False)))
+    if tdir:
+        os.makedirs(tdir, exist_ok=True)
     path = os.path.join(out_dir, "archive.pkl")
     code = code_version()
     print(f"[darwinbot] code {code}")
@@ -681,16 +1333,70 @@ def run(
                 seeding_tries += 1
             t0 = time.time()
             added = failed = 0
+            if dns and not archive.population and archive.cells:
+                # first DNS batch on a resumed or older archive: start from the grid
+                archive.population = dns_trim([dns_member(
+                    e.morph, e.ctrl, e.fitness, e.behaviour, e.born, None,
+                    archive.n_descriptors) for e in archive.cells.values()], dns)
             tasks = make_batch()
+            n_screened = 0
+            if screen < 1.0 and any(m["origin"] in SCREENED_ORIGINS for m in batch_meta):
+                # quick score of the changed bodies on the same pool; the
+                # results are matched by index, so the order does not matter
+                jobs = [(i, t[0], t[1], t[6], t[12]) for i, t in enumerate(tasks)
+                        if batch_meta[i]["origin"] in SCREENED_ORIGINS]
+                quick = (map(_screen_work, jobs) if pool is None else
+                         (pool.imap if deterministic else pool.imap_unordered)(
+                             _screen_work, jobs))
+                kept = screen_keep([m["origin"] for m in batch_meta],
+                                   dict(quick), screen)
+                n_screened = len(tasks) - len(kept)
+                tasks = [t for i, t in enumerate(tasks) if i in kept]
+            # deterministic: results in submission order, so the same seed and
+            # worker count give the same run; otherwise in completion order
             results = ([_work(t) for t in tasks] if pool is None
-                       else pool.imap_unordered(_work, longest_first(tasks)))
-            for genes, ctrl, fit, scores, evals, behaviour, parent, bad in results:
+                       else (pool.imap if deterministic else pool.imap_unordered)(
+                           _work, longest_first(tasks)))
+            for res in results:
+                genes, ctrl, fit, scores, evals, behaviour, parent, bad = res[:8]
                 archive.evals += evals
                 failed += bad
                 if evals == 0:      # unbuildable: it would only occupy a cell
+                    if tdir:
+                        _trace_body(tdir, archive, batch_meta, res, None, None, False)
                     continue
-                added += archive.insert(Elite(genes, ctrl, fit, scores,
-                                              archive.batch, behaviour), parent)
+                cell = cell_of(behaviour, archive.n_descriptors,
+                               archive.n_cells) if tdir else None
+                before = None
+                if tdir:
+                    inc = archive.cells.get(cell)
+                    before = None if inc is None else float(inc.fitness)
+                ok = archive.insert(Elite(genes, ctrl, fit, scores,
+                                          archive.batch, behaviour), parent)
+                if dns and np.isfinite(fit):
+                    archive.population.append(dns_member(
+                        genes, ctrl, fit, behaviour, archive.batch, res[-1],
+                        archive.n_descriptors))
+                added += ok
+                if tdir:
+                    _trace_body(tdir, archive, batch_meta, res, cell, before, bool(ok))
+            if dns:
+                archive.population = dns_trim(archive.population, dns)
+                if archive.cells and (archive.batch + 1) % DNS_RESEED_EVERY == 0:
+                    dns_reseed(archive, rng)
+                    archive.population = dns_trim(archive.population, dns)
+            if reeval and archive.cells and (archive.batch + 1) % reeval == 0:
+                top = sorted(archive.cells.values(), key=lambda e: -e.fitness)[:REEVAL_TOP]
+                jobs = [(e.morph, e.ctrl, terrains, new_seed(), archive.seconds,
+                         archive.variants, archive.task, archive.payload) for e in top]
+                # ordered results (imap), so each score pairs with its elite
+                scored = (list(map(_reeval_work, jobs)) if pool is None
+                          else list(pool.imap(_reeval_work, jobs)))
+                results = {elite_id(e.morph, e.ctrl): r
+                           for e, r in zip(top, scored) if r is not None}
+                drop, gap = apply_reeval(archive, results)
+                print(f"reeval: {len(results)} elites re-scored, mean objective drop "
+                      f"{drop:.3f} (mean stored minus re-score {gap:.3f})", flush=True)
             if tasks and failed == len(tasks):     # a systematic bug, not one odd body
                 raise RuntimeError(f"all {failed} bodies of the batch failed")
             if not archive.cells:
@@ -703,6 +1409,8 @@ def run(
             print(f"batch {s['batch']:3d}  cells {s['cells']:3d}  +{added:2d}  "
                   f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "
                   f"nov {s['novelty']:.3f}  evals {s['evals']}  {s['seconds']}s"
+                  + (f"  screened={n_screened}" if screen < 1.0 else "")
+                  + (f"  pop {len(archive.population)}" if dns else "")
                   + (f"  failed {failed}" if failed else ""), flush=True)
             archive.batch += 1
             with open(path + ".tmp", "wb") as f:

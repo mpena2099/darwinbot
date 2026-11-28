@@ -7,17 +7,47 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
 
-from validate import Row, verdict  # noqa: E402
+from validate import Row, mean_body, verdict  # noqa: E402
 
 
 def row(terrain="flat", command="straight", nominal=1.0, mean=1.0, p5=1.0,
-        worst=1.0, fall=0.0):
-    return Row(terrain, command, nominal, mean, p5, worst, fall)
+        worst=1.0, fall=0.0, body=0.0):
+    return Row(terrain, command, nominal, mean, p5, worst, fall, body)
 
 
 def test_all_criteria_pass():
     rows = [row(), row("rough", "left", 1.0, 0.95, 0.85, 0.7, 0.02)]
     assert verdict(rows) == (True, [])
+
+
+def test_straight_row_below_min_dx_fails():
+    ok, reasons = verdict([row(nominal=0.05, mean=0.05, p5=0.05, worst=0.05)])
+    assert not ok
+    assert reasons == ["no nominal progress: flat/straight"]
+
+
+def test_straight_row_at_min_dx_passes():
+    assert verdict([row(nominal=0.1, mean=0.1, p5=0.1, worst=0.1)]) == (True, [])
+
+
+def test_left_row_at_min_yaw_passes():
+    assert verdict([row(command="left", nominal=0.3, mean=0.3, p5=0.3,
+                        worst=0.3)]) == (True, [])
+
+
+def test_right_row_turning_the_wrong_way_fails():
+    rows = [row(), row("flat", "right", -0.4, -0.4, -0.4, -0.4)]
+    ok, reasons = verdict(rows)
+    assert not ok
+    assert reasons == ["no nominal progress: flat/right"]
+
+
+def test_reason_names_every_row_below_its_minimum():
+    rows = [row("rubble", "right", -0.2, -0.2, -0.2, -0.2),
+            row("flat", "right", -0.3, -0.3, -0.3, -0.3)]
+    ok, reasons = verdict(rows)
+    assert not ok
+    assert "no nominal progress: rubble/right, flat/right" in reasons
 
 
 def test_mean_loss_alone_fails():
@@ -42,7 +72,7 @@ def test_terrain_with_zero_nominal_progress_fails():
     rows = [row(), row("steps", "straight", nominal=0.0, mean=0.0, p5=0.0, worst=0.0)]
     ok, reasons = verdict(rows)
     assert not ok
-    assert reasons == ["no progress on steps"]
+    assert reasons == ["no nominal progress: steps/straight", "no progress on steps"]
 
 
 def test_zero_nominal_rows_still_count_for_falls():
@@ -53,10 +83,42 @@ def test_zero_nominal_rows_still_count_for_falls():
     assert "fall rate > 10%: steps/straight" in reasons
 
 
-def test_one_dead_command_on_a_moving_terrain_passes():
+def test_a_dead_command_on_a_moving_terrain_fails():
     rows = [row(), row(command="left", nominal=0.0, mean=0.0, p5=0.0, worst=0.0)]
-    assert verdict(rows) == (True, [])
+    ok, reasons = verdict(rows)
+    assert not ok
+    assert reasons == ["no nominal progress: flat/left"]
 
 
 def test_empty_rows_fail():
     assert verdict([]) == (False, ["no rows"])
+
+
+def test_body_check_is_off_by_default():
+    assert verdict([row(body=0.9)]) == (True, [])
+
+
+def test_sliding_on_the_body_alone_fails():
+    ok, reasons = verdict([row(body=0.9)], max_body=0.5)
+    assert not ok
+    assert reasons == ["slides on its body: 90% of the time"]
+
+
+def test_body_limit_is_on_the_mean_over_the_rows():
+    assert verdict([row(body=0.2), row("rough", body=0.8)], max_body=0.5) == (True, [])
+    assert not verdict([row(body=0.4), row("rough", body=0.9)], max_body=0.5)[0]
+
+
+def test_max_body_one_turns_the_check_off():
+    assert verdict([row(body=1.0)], max_body=1.0) == (True, [])
+
+
+def test_mean_body_of_no_rows_is_zero():
+    assert mean_body([]) == 0.0
+
+
+def test_all_zero_nominal_has_a_plain_reason_and_fails():
+    ok, reasons = verdict([row(nominal=0.0, mean=0.0, p5=0.0, worst=0.0)])
+    assert not ok
+    assert "no mean loss: the robot makes no nominal progress on any row" in reasons
+    assert not any("nan" in r for r in reasons)

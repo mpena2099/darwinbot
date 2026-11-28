@@ -74,6 +74,7 @@ clash on a slot or break a limit are dropped. Mutation works on the tree
 Frames: X forward, Y left, Z up in the torso frame.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
@@ -155,6 +156,8 @@ FORK_BRIDGE_X  = dims.BRIDGE_X      # parts.BRIDGE_X: where the U link crosses t
 FORK_BRIDGE_T  = dims.BRIDGE_T      # parts.BRIDGE_T
 STRUT_HALF_W   = dims.STRUT_HALF_W  # parts.STRUT_HW: half width of an elbow strut along the link
 TONGUE_HALF_H  = dims.TONGUE_HALF_H # parts.TONGUE_Z
+TONGUE_HALF_W  = dims.TONGUE_HALF_W # parts.TONGUE_W: elbow tongue half width along the link
+FIN_HALF_W     = dims.FIN_HALF_W    # parts.FIN_W: the link tip fin a tongue is bolted to
 TONGUE_T       = 0.001              # parts.TONGUE_T (0.45 mm) and the 0.1 mm it stands out, thick enough to collide
 TAB_SIZE       = (0.0512, 0.0306)   # m, torso tab under a servo (parts torso_plate)
 PLATE_THICK    = dims.PLATE_THICK   # parts.PLATE_T
@@ -1280,7 +1283,7 @@ def fit_clashes(morph: Morphology, tries: int = 12) -> Morphology:
     for _ in range(tries):
         try:
             pairs = builder.spawn_clashes(morph)
-        except Exception:
+        except Exception:       # a body MuJoCo cannot compile; a long run must not die here
             return morph
         if not pairs:
             break
@@ -1480,6 +1483,12 @@ def mirror_slot(kind: str, slot: int) -> int:
     return {1: 2, 2: 1}.get(slot, slot)
 
 
+# (source id, new id, mirrored) of every node copy_subtree made since the last
+# mutate() began, in order. evolve reads it right after a mutation to carry the
+# controller genes of a copied limb to its twin (--mirror-ctrl).
+copy_log: list = []
+
+
 def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
                  mirror: bool = False,
                  source: Optional[Morphology] = None) -> Optional[int]:
@@ -1533,6 +1542,8 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
                     and node.axis != "yaw":
                 new.flip = not node.flip
         morph.nodes[i] = new
+        if source is morph:
+            copy_log.append((src, i, bool(mirror)))
         new_root = i if new_root is None else new_root
         for s, c in sorted(cm.get(src, {}).items()):
             queue.append((c, i, mirror_slot(node.kind, s) if mirror else s))
@@ -1648,7 +1659,8 @@ def _add_random(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     probs = [0.45, 0.14, 0.10, 0.18, 0.05, 0.03, 0.02, 0.02, 0.01]
     opts = _body_options()
     allowed = [(k, w) for k, w in zip(kinds, probs)
-               if k not in DISABLED_KINDS and opts.allows(k)]
+               if k not in DISABLED_KINDS and opts.allows(k)
+               and not _face_blocked(p, s, k)]
     if not allowed:
         return None
     weights = np.array([w for _, w in allowed])
@@ -1674,7 +1686,9 @@ def _add_segment(morph: Morphology, rng, p: int, s: int) -> Optional[int]:
     return i
 
 
-WHEEL_LIMB_P = 0.15   # share of limbs that are a single wheel bolted to the torso
+# share of limbs that are a single wheel bolted to the torso; DARWINBOT_WHEEL_LIMB_P
+# overrides it for the single-change gate (the draw is made either way, so 0.15 is unchanged)
+WHEEL_LIMB_P = float(os.environ.get("DARWINBOT_WHEEL_LIMB_P", "0.15"))
 
 
 def _grow_limb(morph: Morphology, rng, slot: int) -> Optional[int]:
@@ -1844,6 +1858,7 @@ def _op_type(morph, rng):
     kinds = [k for k in kinds if k not in DISABLED_KINDS]
     if not opts.is_default():
         kinds = [k for k in kinds if opts.allows(k)]
+    kinds = [k for k in kinds if not _face_blocked(n.parent, n.slot, k)]
     kinds = [k for k in kinds if k != n.kind]
     if not kinds:
         return
@@ -1929,6 +1944,9 @@ def _op_copy(morph, rng):
     if not cand or not free:
         return
     i = int(rng.choice(cand))
+    free = [fs for fs in free if not _face_blocked(fs[0], fs[1], morph.nodes[i].kind)]
+    if not free:
+        return
     p, s = free[int(rng.integers(len(free)))]
     q = p
     while q >= 0 and q != i:          # a subtree cannot grow inside itself
@@ -1960,18 +1978,162 @@ def _op_scale(morph, rng):
 MUTATIONS = ((_op_param, 0.30), (_op_type, 0.15), (_op_add, 0.2),
              (_op_remove, 0.1), (_op_mirror, 0.15), (_op_copy, 0.05),
              (_op_scale, 0.05))
+# Optional biases on the add/remove pair; "default" keeps MUTATIONS as is.
+MUTATION_BIASES = {"remove": {_op_add: 0.10, _op_remove: 0.25}}
+_mutation_bias = "default"
+
+
+def set_mutation_bias(bias: str = "default") -> None:
+    """Operator weights of later mutations; workers get the run's value too."""
+    global _mutation_bias
+    if bias != "default" and bias not in MUTATION_BIASES:
+        raise ValueError(f"mutation_bias must be one of {('default', *MUTATION_BIASES)}")
+    _mutation_bias = bias
+
+
+# Opt-in: with face_fix on, add, type and copy never leave a joint or wheel on a
+# core face slot (FACE_SLOTS), where fit_rules would turn it into a link or foot.
+_face_fix = False
+
+
+def set_face_fix(on: bool) -> None:
+    """Forbid joints and wheels on the core face slots in later mutations."""
+    global _face_fix
+    _face_fix = bool(on)
+
+
+def _face_blocked(parent: int, slot: int, kind: str) -> bool:
+    """True when face_fix forbids a module of this kind in this slot."""
+    return (_face_fix and parent == 0 and slot in FACE_SLOTS
+            and kind in ("joint", "wheel"))
+
+
+def mutation_weights(bias: Optional[str] = None) -> np.ndarray:
+    """Probabilities of the mutation operators; None uses the current bias."""
+    override = MUTATION_BIASES.get(_mutation_bias if bias is None else bias, {})
+    return np.array([override.get(op, p) for op, p in MUTATIONS])
 
 
 def mutate(genes: np.ndarray, rng: np.random.Generator,
-           n_ops: Optional[int] = None) -> np.ndarray:
-    """Apply 1 to 3 tree operators to the decoded body, then repair."""
+           n_ops: Optional[int] = None, mirror_p: float = 0.0,
+           mutation_bias: Optional[str] = None) -> np.ndarray:
+    """Apply 1 to 3 tree operators to the decoded body, then repair. With
+    mirror_p > 0, that share of mutations copies the limb that changed onto its
+    mirror slot afterwards, so a symmetric body can stay symmetric (and a
+    mutation can build one); no extra random number is drawn at 0."""
     morph = decode(genes)
-    probs = np.array([p for _, p in MUTATIONS])
+    copy_log.clear()
+    before = morph.copy() if mirror_p > 0 else None
+    probs = mutation_weights(mutation_bias)
     for _ in range(n_ops or int(rng.integers(1, 4))):
         op, _ = MUTATIONS[int(rng.choice(len(MUTATIONS), p=probs / probs.sum()))]
         op(morph, rng)
         prune(morph)
+    if mirror_p > 0 and rng.random() < mirror_p:
+        _mirror_changed(morph, before, rng)
     return encode(fit_clashes(fit_rules(morph)))
+
+
+_NODE_GENES = ("kind", "axis", "rot", "length", "width", "thick", "wheel_rad",
+               "wheel_width", "flip", "foot_rad", "foot_shape", "tail_mass",
+               "offset", "angle", "profile", "bend")
+
+
+def _subtree_ids(morph: Morphology, root: int) -> List[int]:
+    """Every node id of the subtree under `root`, the root included."""
+    cm, out, stack = morph.child_map(), [], [root]
+    while stack:
+        i = stack.pop()
+        out.append(i)
+        stack.extend(cm.get(i, {}).values())
+    return out
+
+
+def _subtree_key(morph: Morphology, root: int, cm) -> tuple:
+    """Signature of a subtree that does not depend on node ids, for comparing
+    a body with itself before and after a mutation."""
+    return (tuple(getattr(morph.nodes[root], f) for f in _NODE_GENES),
+            tuple((s,) + _subtree_key(morph, c, cm)
+                  for s, c in sorted(cm.get(root, {}).items())))
+
+
+def _mirror_changed(morph: Morphology, before: Morphology, rng) -> None:
+    """Copy one limb on the torso (core, or a segment plate) that changed since
+    `before` onto its mirror slot, replacing the subtree there or filling the
+    free slot. Slots that are their own mirror are left alone and a copy that
+    would not fit is skipped, as in _op_mirror / copy_subtree."""
+    cm, bcm = morph.child_map(), before.child_map()
+    cand = []
+    for p, kids in cm.items():
+        kind = morph.nodes[p].kind
+        if kind not in ("core", "segment"):
+            continue
+        for s, c in kids.items():
+            if mirror_slot(kind, s) == s:
+                continue
+            old = bcm.get(p, {}).get(s)
+            if old is None or _subtree_key(before, old, bcm) != _subtree_key(morph, c, cm):
+                cand.append((p, s, c))
+    if not cand:
+        return
+    p, s, c = cand[int(rng.integers(len(cand)))]
+    ms = mirror_slot(morph.nodes[p].kind, s)
+    twin = cm.get(p, {}).get(ms)
+    src, gone = _subtree_ids(morph, c), _subtree_ids(morph, twin) if twin is not None else []
+    servos = sum(is_joint(morph.nodes[k].kind) or morph.nodes[k].kind == "wheel"
+                 for k in src)
+    lost = sum(is_joint(morph.nodes[k].kind) or morph.nodes[k].kind == "wheel"
+               for k in gone)
+    if (morph.n_nodes - len(gone) + len(src) > MAX_NODES
+            or morph.n_servos - lost + servos > _max_servos()):
+        return
+    if twin is not None:
+        _drop_subtree(morph, twin)
+    copy_subtree(morph, c, p, ms, mirror=True)
+
+
+def _mirrored(morph: Morphology, i: int, j: int, cm) -> bool:
+    """True when the subtree at `i` is the mirror image of the one at `j`
+    across the XZ plane, with the values copy_subtree(mirror=True) writes."""
+    a, b = morph.nodes[i], morph.nodes[j]
+    if a.kind != b.kind or a.axis != b.axis or a.foot_shape != b.foot_shape:
+        return False
+    d = (a.rot + b.rot) % (2 * np.pi)
+    if min(d, 2 * np.pi - d) > 1e-6:
+        return False
+    flush = morph.nodes[a.parent].kind in ("core", "segment")
+    pairs = [(a.length, b.length), (a.width, b.width), (a.thick, b.thick),
+             (a.wheel_rad, b.wheel_rad), (a.wheel_width, b.wheel_width),
+             (a.foot_rad, b.foot_rad), (a.tail_mass, b.tail_mass),
+             (a.offset, 1.0 - b.offset if flush else b.offset),
+             (a.angle, 1.0 - b.angle if flush else b.angle),
+             (a.bend, -b.bend)]
+    if any(abs(x - y) > 1e-6 for x, y in pairs):
+        return False
+    if a.flip != (b.flip != (a.kind in ("joint", "spring", "segment")
+                             and a.axis != "yaw")):
+        return False
+    ka, kb = cm.get(i, {}), cm.get(j, {})
+    return (len(ka) == len(kb) and all(
+        mirror_slot(b.kind, s) in ka
+        and _mirrored(morph, ka[mirror_slot(b.kind, s)], c, cm)
+        for s, c in kb.items()))
+
+
+def symmetry(morph: Morphology) -> float:
+    """Share of the core's top-level limbs that have a mirrored twin on their
+    mirror slot: same kinds in the same tree shape and every continuous
+    parameter at its mirrored value (within 1e-6). A limb on a slot that is its
+    own mirror counts when it matches its own mirror image, and a body with no
+    limbs gives 1.0. Pure function, for counting the symmetric robots in an
+    archive; the score never reads it."""
+    cm = morph.child_map()
+    kids = cm.get(0, {})
+    if not kids:
+        return 1.0
+    ok = sum(1 for s, c in kids.items() if mirror_slot("core", s) in kids
+             and _mirrored(morph, c, kids[mirror_slot("core", s)], cm))
+    return ok / len(kids)
 
 
 def graft(genes: np.ndarray, donor: np.ndarray,

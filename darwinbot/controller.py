@@ -16,6 +16,16 @@ on the real robot (in simulation, the actuator force). With sigma = 0 this is
 an open-loop two-harmonic CPG. Wheels ignore everything but the offset gene,
 which is their signed speed: target = ramp(t) * speed.
 
+Coupling: a joint also feels its partner, the nearest joint ancestor (the limb
+root when it has none), and the joints that name it as partner:
+
+    + k_i * sin(theta_p(i) - theta_i - lag_i)
+    + sum over j with p(j) = i of k_j * sin(theta_j - theta_i + lag_j)
+
+The limb roots (joints without a joint ancestor) form a ring in layout order,
+so a body whose limbs are all roots couples them in a cycle. Wheels never
+couple. With every k = 0 the phases are exactly the load-coupled CPG above.
+
 Steering: a command c in [-1, 1] (0 straight, -1 left, +1 right) comes from
 outside (a remote, later a sensor). Each joint scales both amplitudes by
 (1 + c * gain) and shifts its offset by c * shift; each wheel adds c * shift
@@ -39,10 +49,14 @@ Layout (all genes in [0, 1])
   [0] frequency
   slot s (s = 0..MAX_NODES-1), CTRL_PER_NODE genes from 1 + s * CTRL_PER_NODE:
     amp1, phase1, offset, amp2, phase2, sigma, steer_gain, steer_shift,
-    speed_gain, speed_shift
+    speed_gain, speed_shift, couple_k, couple_lag
 
 Amplitudes are clipped so no servo is asked to move faster than SERVO_SPEED:
 (amp1 + 2 * amp2) * (omega + |sigma|) <= SERVO_SPEED, scaling both down proportionally.
+In the default "command" clip mode this happens after the commands, so the
+stronger steering side is clipped back to the servo speed. The "headroom" mode
+scales the base amplitudes first by the headroom of the stronger side (see
+CLIP_MODE), so both sides keep their proportion after the commands.
 """
 
 import math
@@ -70,12 +84,27 @@ WHEEL_STEER_RANGE = WHEEL_RANGE     # rad/s, wheel speed change at full command
 SPEED_GAIN_RANGE  = (-1.0, 1.0)     # amplitude factor 1 - d * gain, kept in [0, 2]
 SPEED_SHIFT_RANGE = (-0.4, 0.4)     # rad, offset shift at speed command 0
 WHEEL_SPEED_RANGE = WHEEL_RANGE     # rad/s, wheel speed change at speed command 0
+COUPLE_RANGE      = (0.0, 4.0)      # rad/s, phase coupling strength
+COUPLE_LAG_RANGE  = (-np.pi, np.pi)  # rad, phase offset of the coupling
 CONTROL_DT   = 0.02           # s, the ESP32 updates servo targets at 50 Hz
 RAMP_TIME    = 0.5            # s to fade the gait in from rest
 
+CLIP_MODES = ("command", "headroom")
+CLIP_MODE  = "command"        # command: clip after the commands (default);
+                              # headroom: scale the base amplitudes first so the
+                              # stronger steering side keeps its proportion
+
+
+def set_clip_mode(mode: str) -> None:
+    """Select the servo speed clip mode (see CLIP_MODES)."""
+    global CLIP_MODE
+    if mode not in CLIP_MODES:
+        raise ValueError(f"clip mode must be one of {CLIP_MODES}, got {mode!r}")
+    CLIP_MODE = mode
+
 (AMP1, PHASE1, OFFSET, AMP2, PHASE2, SIGMA, STEER_GAIN, STEER_SHIFT,
- SPEED_GAIN, SPEED_SHIFT) = range(10)
-CTRL_PER_NODE = 10
+ SPEED_GAIN, SPEED_SHIFT, COUPLE_K, COUPLE_LAG) = range(12)
+CTRL_PER_NODE = 12
 CTRL_LENGTH   = 1 + MAX_NODES * CTRL_PER_NODE
 
 
@@ -86,6 +115,54 @@ def _scale(u, lo, hi):
 def node_base(slot: int) -> int:
     """Index of the first gene of a slot's block."""
     return 1 + slot * CTRL_PER_NODE
+
+
+def copy_node_genes(ctrl: np.ndarray, copies) -> np.ndarray:
+    """Controller of a child whose body copied limbs: for every (source slot,
+    new slot, mirrored) of `copies`, in order, the new slot's gene block becomes
+    the source's, so the twin starts with the gait of the limb it copies instead
+    of unrelated genes. The twin walks in antiphase: PHASE1 moves half a cycle
+    (the oscillator runs half a period later). PHASE2 is left alone, because
+    half a period of the fundamental is a whole one of the second harmonic. A
+    mirrored copy also swaps the steering sign, so the twin on the other side
+    turns the other way: STEER_GAIN_RANGE and STEER_SHIFT_RANGE are symmetric
+    about 0, so a gene g and 1 - g are opposite values. Returns a new vector."""
+    out = np.array(ctrl, dtype=float)
+    for src, new, mirrored in copies:
+        a, b = node_base(src), node_base(new)
+        block = out[a:a + CTRL_PER_NODE].copy()
+        block[PHASE1] = (block[PHASE1] + 0.5) % 1.0
+        if mirrored:
+            block[STEER_GAIN] = 1.0 - block[STEER_GAIN]
+            block[STEER_SHIFT] = 1.0 - block[STEER_SHIFT]
+        out[b:b + CTRL_PER_NODE] = block
+    return out
+
+
+def couple_partners(morph: Morphology) -> np.ndarray:
+    """Partner of every actuator in layout order (-1 for none): a joint's
+    nearest joint ancestor, or for a limb root (no joint ancestor) the previous
+    root in a ring over the roots; wheels have none."""
+    layout = morph.layout()
+    index = {act.slot: i for i, act in enumerate(layout)}
+    partner = np.full(len(layout), -1, dtype=int)
+    roots = []
+    for i, act in enumerate(layout):
+        if act.kind != "joint":
+            continue
+        p = morph.nodes[act.slot].parent
+        while p >= 0:
+            j = index.get(p)
+            if j is not None and layout[j].kind == "joint":
+                partner[i] = j
+                break
+            p = morph.nodes[p].parent
+        if partner[i] < 0:
+            roots.append(i)
+    if len(roots) > 1:
+        for r, i in enumerate(roots):
+            partner[i] = roots[r - 1]
+    return partner
 
 
 def active_genes(morph: Morphology) -> np.ndarray:
@@ -101,7 +178,13 @@ def active_genes(morph: Morphology) -> np.ndarray:
 
 
 def random_controller(rng: np.random.Generator) -> np.ndarray:
-    return rng.uniform(0.0, 1.0, CTRL_LENGTH)
+    """Uniform genes, except the coupling strength, which starts at 0 so a new
+    body begins with independent oscillators and evolution adds coupling only
+    where it helps (random coupling scrambled young gaits: the first gate lost
+    40% of the body types)."""
+    ctrl = rng.uniform(0.0, 1.0, CTRL_LENGTH)
+    ctrl[1 + COUPLE_K::CTRL_PER_NODE] = 0.0
+    return ctrl
 
 
 # ---- the update rule, one place, so the firmware math can be documented ----
@@ -116,23 +199,47 @@ def normalised_load(force):
     return np.clip(force / SERVO_TORQUE, -1.0, 1.0)
 
 
-def phase_rate(theta, omega, sigma, force):
-    """dtheta/dt of one joint (or an array of them)."""
-    return omega - sigma * normalised_load(force) * np.cos(theta)
+def phase_rate(theta, omega, sigma, force, couple_k=None, couple_lag=None,
+               partner=None):
+    """dtheta/dt of one joint (or an array of them), coupling terms evaluated
+    on the phases given."""
+    rate = omega - sigma * normalised_load(force) * np.cos(theta)
+    if couple_k is not None and partner is not None:
+        for j in range(len(theta)):
+            k = couple_k[j]
+            p = partner[j]
+            if k != 0.0 and p >= 0:
+                rate[j] += k * np.sin(theta[p] - theta[j] - couple_lag[j])
+                rate[p] += k * np.sin(theta[j] - theta[p] + couple_lag[j])
+    return rate
 
 
 @njit(cache=True)
-def advance_phases(theta, omega, sigma, force, dt):
-    """theta += dt * phase_rate(theta, omega, sigma, force), in place, compiled:
-    the physics loop calls it every step. Same operations in the same order as
-    phase_rate, so the phases match the NumPy version bit for bit."""
-    for i in range(theta.shape[0]):
-        n = force[i] / SERVO_TORQUE
-        if n > 1.0:
-            n = 1.0
-        elif n < -1.0:
-            n = -1.0
-        theta[i] += dt * (omega - sigma[i] * n * math.cos(theta[i]))
+def advance_phases(theta, omega, sigma, force, dt, couple_k, couple_lag,
+                   partner):
+    """theta += dt * phase_rate(theta, omega, sigma, force, couple_k,
+    couple_lag, partner), in place, compiled: the physics loop calls it every
+    step. Every term reads the phases from the start of the step. Same
+    operations in the same order as phase_rate, so the phases match the NumPy
+    version bit for bit, and with every k = 0 exactly the old load-coupled
+    update."""
+    n = theta.shape[0]
+    rate = np.empty(n)
+    for i in range(n):
+        load = force[i] / SERVO_TORQUE
+        if load > 1.0:
+            load = 1.0
+        elif load < -1.0:
+            load = -1.0
+        rate[i] = omega - sigma[i] * load * math.cos(theta[i])
+    for j in range(n):
+        k = couple_k[j]
+        p = partner[j]
+        if k != 0.0 and p >= 0:
+            rate[j] += k * math.sin(theta[p] - theta[j] - couple_lag[j])
+            rate[p] += k * math.sin(theta[j] - theta[p] + couple_lag[j])
+    for i in range(n):
+        theta[i] += dt * rate[i]
 
 
 def servo_targets(theta, t, p: "Params"):
@@ -146,7 +253,8 @@ class Params:
     steering command (0 = straight) and a speed command (1 = full)."""
 
     def __init__(self, ctrl: np.ndarray, layout: ActuatorLayout,
-                 command: float = 0.0, speed: float = 1.0):
+                 command: float = 0.0, speed: float = 1.0,
+                 partner=None):
         ctrl = np.asarray(ctrl, dtype=float)
         assert ctrl.shape == (CTRL_LENGTH,), ctrl.shape
         self.omega = 2 * np.pi * _scale(ctrl[0], *FREQ_RANGE)
@@ -162,6 +270,8 @@ class Params:
         self.steer_shift = np.zeros(n)
         self.speed_gain  = np.zeros(n)
         self.speed_shift = np.zeros(n)
+        self.couple_k    = np.zeros(n)
+        self.couple_lag  = np.zeros(n)
         self.wheel  = np.zeros(n, dtype=bool)
         for a, act in enumerate(layout):
             g = ctrl[node_base(act.slot):node_base(act.slot) + CTRL_PER_NODE]
@@ -181,11 +291,25 @@ class Params:
             self.steer_shift[a] = _scale(g[STEER_SHIFT], *STEER_SHIFT_RANGE)
             self.speed_gain[a]  = _scale(g[SPEED_GAIN], *SPEED_GAIN_RANGE)
             self.speed_shift[a] = _scale(g[SPEED_SHIFT], *SPEED_SHIFT_RANGE)
+            self.couple_k[a]    = _scale(g[COUPLE_K], *COUPLE_RANGE)
+            self.couple_lag[a]  = _scale(g[COUPLE_LAG], *COUPLE_LAG_RANGE)
+        self.partner = (np.full(n, -1, dtype=int) if partner is None
+                        else np.asarray(partner, dtype=int))
         # as decoded, before the commands and the speed clip: what the firmware
         # receives, so it can steer and clip on the robot the same way
         self.amp1_base, self.amp2_base = self.amp1.copy(), self.amp2.copy()
         self.offset_base = self.offset.copy()
-        apply_commands(self, command, speed)
+        scale = None
+        if CLIP_MODE == "headroom":
+            # Scale the base amplitudes by the headroom of the stronger steering
+            # side before the commands, so a steered joint keeps both sides in
+            # proportion instead of clipping only the stronger one. The usual
+            # clip below stays as a safety net (it can still bite for speed_gain).
+            peak_base = (self.amp1_base + 2.0 * self.amp2_base) * (
+                self.omega + np.abs(self.sigma))
+            g = np.clip(1.0 + np.abs(self.steer_gain), 0.0, 2.0)
+            scale = np.minimum(1.0, SERVO_SPEED / np.maximum(peak_base * g, 1e-12))
+        apply_commands(self, command, speed, scale)
         # A servo cannot follow a signal whose peak speed exceeds its own; with
         # load feedback the phase advances at up to omega + |sigma|.
         peak = (self.amp1 + 2.0 * self.amp2) * (self.omega + np.abs(self.sigma))
@@ -194,18 +318,21 @@ class Params:
         self.amp2 = self.amp2 * k
 
 
-def apply_commands(p: "Params", command: float, speed: float = 1.0) -> None:
+def apply_commands(p: "Params", command: float, speed: float = 1.0,
+                   scale=None) -> None:
     """Apply the steering and speed commands to the decoded params, in place,
     always from the *_base values (before the speed clip, so a stronger side
     still respects the servo). The firmware does the same in set_command and
-    set_speed."""
+    set_speed. scale, when given, multiplies the base amplitudes first."""
     c = float(np.clip(command, -1.0, 1.0))
     d = 1.0 - float(np.clip(speed, 0.0, 1.0))
     gain = (np.clip(1.0 + c * p.steer_gain, 0.0, 2.0)
             * np.clip(1.0 - d * p.speed_gain, 0.0, 2.0))
     shift = c * p.steer_shift + d * p.speed_shift
-    p.amp1 = np.where(p.wheel, p.amp1_base, p.amp1_base * gain)
-    p.amp2 = np.where(p.wheel, p.amp2_base, p.amp2_base * gain)
+    amp1_base = p.amp1_base if scale is None else p.amp1_base * scale
+    amp2_base = p.amp2_base if scale is None else p.amp2_base * scale
+    p.amp1 = np.where(p.wheel, p.amp1_base, amp1_base * gain)
+    p.amp2 = np.where(p.wheel, p.amp2_base, amp2_base * gain)
     p.offset = np.where(p.wheel, np.clip(p.offset_base + shift, *WHEEL_RANGE),
                         p.offset_base + shift)
 
@@ -214,8 +341,8 @@ class Controller:
     """Stateful controller: owns the phases, advanced every physics step."""
 
     def __init__(self, ctrl: np.ndarray, layout: ActuatorLayout,
-                 command: float = 0.0, speed: float = 1.0):
-        self.params = Params(ctrl, layout, command, speed)
+                 command: float = 0.0, speed: float = 1.0, partner=None):
+        self.params = Params(ctrl, layout, command, speed, partner)
         self.omega = self.params.omega
         self.theta = np.zeros(len(layout))
 
@@ -228,7 +355,9 @@ class Controller:
 
     def advance(self, dt: float, load: np.ndarray) -> None:
         """Integrate the phases over one physics step (explicit Euler)."""
-        advance_phases(self.theta, self.omega, self.params.sigma, load, dt)
+        p = self.params
+        advance_phases(self.theta, self.omega, p.sigma, load, dt,
+                       p.couple_k, p.couple_lag, p.partner)
 
     def step(self, t: float, dt: float, load: np.ndarray) -> np.ndarray:
         """Targets at time t, then the phases advanced by dt under this load."""

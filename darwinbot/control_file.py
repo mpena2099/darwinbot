@@ -1,13 +1,16 @@
 """
 control_file.py
 ---------------
-Writes and reads the JSON control file of docs/formato-controle.md (format 4),
+Writes and reads the JSON control file of docs/formato-controle.md (format 5),
 the hand-off from the evolved Tegotae CPG to the ESP32 firmware.
 
-Format 3 adds the two steering genes to format 2, format 4 the two speed genes.
-Files still carry the amplitudes and offsets without either command; the
-firmware applies the steering and speed commands and only then the servo speed
-clip.
+Format 3 adds the two steering genes to format 2, format 4 the two speed genes,
+format 5 the coupling of each joint to its partner (couple_to, couple_k,
+couple_lag). Files still carry the amplitudes and offsets without either
+command; the firmware applies the steering and speed commands and only then the
+servo speed clip. The optional top-level clip_mode says whether the clip runs
+after the commands ("command", the default) or on the base amplitudes first
+("headroom").
 
 No dependency on morphology or builder: it takes the actuator layout, the
 controller parameters and the joint limits as plain data.
@@ -16,25 +19,30 @@ controller parameters and the joint limits as plain data.
 import json
 import math
 
+from darwinbot import controller
 from darwinbot.controller import CONTROL_DT, LOAD_FULL_SCALE, RAMP_TIME, SERVO_SPEED
 
-FORMAT = 4
+FORMAT = 5
 CONTROL_HZ = round(1 / CONTROL_DT)   # same as the simulation
 ZERO = 2048
 
 _STEER_KEYS = ("steer_gain", "steer_shift")
 _SPEED_KEYS = ("speed_gain", "speed_shift")
+_COUPLE_KEYS = ("couple_to", "couple_k", "couple_lag")
 _SERVO_KEYS = {
     "position": ("id", "name", "mode", "amp1", "phase1", "offset", "amp2", "phase2",
-                 "sigma", "sign", "zero", "min", "max") + _STEER_KEYS + _SPEED_KEYS,
-    "wheel": ("id", "name", "mode", "speed", "sign") + _STEER_KEYS + _SPEED_KEYS,
+                 "sigma", "sign", "zero", "min", "max") + _STEER_KEYS + _SPEED_KEYS
+                + _COUPLE_KEYS,
+    "wheel": ("id", "name", "mode", "speed", "sign") + _STEER_KEYS + _SPEED_KEYS
+             + _COUPLE_KEYS,
 }
 _TOP_KEYS = ("format", "robot", "fitness", "control_hz", "ramp_time", "frequency", "servos")
 
 
 def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=None,
                       control_hz=CONTROL_HZ, ramp_time=RAMP_TIME,
-                      load_full_scale=LOAD_FULL_SCALE, servo_speed=SERVO_SPEED) -> dict:
+                      load_full_scale=LOAD_FULL_SCALE, servo_speed=SERVO_SPEED,
+                      clip_mode=None) -> dict:
     """
     Build the control dict. layout items are (slot, kind, axis) in servo order
     (morphology.Actuator), params is controller.Params and signs the mounting
@@ -42,9 +50,21 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
     per axis or one (lo, hi) per servo in layout order (None for a wheel).
     load_full_scale is the fraction of the
     servo maximum torque that the simulation treats as N = 1, servo_speed the
-    no-load speed (rad/s) the amplitude and wheel clips use.
+    no-load speed (rad/s) the amplitude and wheel clips use, clip_mode the
+    controller's clip mode (default: the one currently set).
     """
+    clip_mode = controller.CLIP_MODE if clip_mode is None else clip_mode
+    if clip_mode not in controller.CLIP_MODES:
+        raise ValueError(f"clip_mode must be one of {controller.CLIP_MODES}, "
+                         f"got {clip_mode!r}")
     servos = []
+    n = len(layout)
+    partner = getattr(params, "partner", None)
+    partner = [-1] * n if partner is None else partner
+    couple_k = getattr(params, "couple_k", None)
+    couple_k = [0.0] * n if couple_k is None else couple_k
+    couple_lag = getattr(params, "couple_lag", None)
+    couple_lag = [0.0] * n if couple_lag is None else couple_lag
     for i, (slot, kind, axis) in enumerate(layout):
         name = f"s{slot}_{axis}"
         sign = 1 if signs is None else int(signs[i])
@@ -54,7 +74,10 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
                            "steer_gain": float(params.steer_gain[i]),
                            "steer_shift": float(params.steer_shift[i]),
                            "speed_gain": float(params.speed_gain[i]),
-                           "speed_shift": float(params.speed_shift[i])})
+                           "speed_shift": float(params.speed_shift[i]),
+                           "couple_to": int(partner[i]),
+                           "couple_k": float(couple_k[i]),
+                           "couple_lag": float(couple_lag[i])})
         else:
             if isinstance(joint_ranges, dict):      # one symmetric limit per axis
                 lo, hi = -float(joint_ranges[axis]), float(joint_ranges[axis])
@@ -71,12 +94,18 @@ def make_control_file(robot_name, fitness, layout, params, joint_ranges, signs=N
                            "steer_shift": float(params.steer_shift[i]),
                            "speed_gain": float(params.speed_gain[i]),
                            "speed_shift": float(params.speed_shift[i]),
+                           "couple_to": int(partner[i]),
+                           "couple_k": float(couple_k[i]),
+                           "couple_lag": float(couple_lag[i]),
                            "sign": sign, "zero": ZERO, "min": lo, "max": hi})
-    return {"format": FORMAT, "robot": robot_name, "fitness": float(fitness),
-            "control_hz": control_hz, "ramp_time": ramp_time,
-            "load_full_scale": float(load_full_scale),
-            "servo_speed": float(servo_speed),
-            "frequency": float(params.omega) / (2 * math.pi), "servos": servos}
+    d = {"format": FORMAT, "robot": robot_name, "fitness": float(fitness),
+         "control_hz": control_hz, "ramp_time": ramp_time,
+         "load_full_scale": float(load_full_scale),
+         "servo_speed": float(servo_speed),
+         "frequency": float(params.omega) / (2 * math.pi), "servos": servos}
+    if clip_mode == "headroom":
+        d["clip_mode"] = "headroom"
+    return d
 
 
 def write_control_file(d: dict, path) -> None:
@@ -88,7 +117,7 @@ def write_control_file(d: dict, path) -> None:
 
 
 def read_control_file(path) -> dict:
-    """Load and validate a control file (format 2, 3 or 4); ValueError if malformed."""
+    """Load and validate a control file (format 2 to 5); ValueError if malformed."""
     with open(path) as f:
         d = json.load(f)
     _validate(d)
@@ -97,6 +126,9 @@ def read_control_file(path) -> dict:
     for s in d["servos"]:                               # older formats lack the genes
         for k in _STEER_KEYS + _SPEED_KEYS:
             s.setdefault(k, 0.0)
+        s.setdefault("couple_to", -1)
+        s.setdefault("couple_k", 0.0)
+        s.setdefault("couple_lag", 0.0)
     return d
 
 
@@ -104,7 +136,7 @@ def _validate(d) -> None:
     if not isinstance(d, dict):
         raise ValueError("control file must be a JSON object")
     version = d.get("format")
-    if version not in (2, 3, FORMAT):
+    if version not in (2, 3, 4, FORMAT):
         raise ValueError(f"unsupported control file format {version!r}, "
                          f"only formats 2 to {FORMAT} are supported")
     for k in _TOP_KEYS:
@@ -116,12 +148,18 @@ def _validate(d) -> None:
     speed = d.get("servo_speed", SERVO_SPEED)
     if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not speed > 0:
         raise ValueError(f"servo_speed must be a positive number, got {speed!r}")
+    clip = d.get("clip_mode", "command")
+    if clip not in controller.CLIP_MODES:
+        raise ValueError(f"clip_mode must be one of {controller.CLIP_MODES}, "
+                         f"got {clip!r}")
     ids = set()
     for s in d["servos"]:
         mode = s.get("mode")
         if mode not in _SERVO_KEYS:
             raise ValueError(f"servo {s.get('id')!r}: unknown mode {mode!r}")
         keys = _SERVO_KEYS[mode]
+        if version < 5:                                 # older files lack coupling
+            keys = tuple(k for k in keys if k not in _COUPLE_KEYS)
         if version < 4:                                 # older files lack speed
             keys = tuple(k for k in keys if k not in _SPEED_KEYS)
         if version < 3:                                 # and format 2 steering

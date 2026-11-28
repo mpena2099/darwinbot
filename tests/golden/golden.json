@@ -1,53 +1,54 @@
 {
  "seed0": {
   "export": {
-   "assembly.md": "9820887e5badef69ae5a13dab99a9c590e95f39c9c16d87e90b1cfed22ae587d",
+   "assembly.md": "5b4ed77d1faac11a09b07733cd38807a0cc74d48c9b060a6669b67db9dbdcf3b",
    "bom.csv": "ca32b294434bf804d7618096117f4a11c2e9949b9679b3c1c2789d16c31f007a",
-   "bom.md": "ab91ddc49de1f8e7395c6a90e3d7da02c16e3fa001b29c1e8ae5d30a756ec28d",
-   "control.json": "e5038dc3d020b186ae277e6e260c76a24ed80f499759bbafa91ec969ba66415f",
+   "bom.md": "95e41013e1dffdc77f59e45aa17da2ea8e56e3df3aad51307b6d3762d787d920",
+   "control.json": "d5f4c0a74d56367d32061fb5f7c32cf91edb0cc6887d95ab08f1a54ed99d3c0b",
    "parts/elbow_62mm_90deg_20x6_cpr-146.stl": "stl volume 1.45e+04 bbox -23 23 -24 23 75 24",
    "parts/elbow_62mm_90deg_20x6_cpr-34.stl": "stl volume 1.45e+04 bbox -23 23 -24 23 75 24",
    "parts/foot_10.stl": "stl volume 2.57e+03 bbox -10 -10 -0 10 10 11",
    "parts/link_150x20x6_L-34_cpr171.stl": "stl volume 3.09e+04 bbox -15 -63 -20 157 15 20",
    "parts/link_150x20x6_L34_cpr-171.stl": "stl volume 3.09e+04 bbox -15 -15 -20 157 63 20",
-   "parts/link_182x20x6_arc-26_up_e23x-24x24_0.stl": "stl volume 2.99e+04 bbox -13 -56 -22 190 15 22",
-   "parts/link_182x20x6_arc26_up_e0_-23x-24x24.stl": "stl volume 2.99e+04 bbox -13 -15 -22 190 56 22",
+   "parts/link_182x20x6_arc-26_up_e23x-24x24_0.stl": "stl volume 3.16e+04 bbox -13 -56 -22 198 15 22",
+   "parts/link_182x20x6_arc26_up_e0_-23x-24x24.stl": "stl volume 3.16e+04 bbox -13 -15 -22 198 56 22",
    "parts/link_182x20x6_up_foot10.stl": "stl volume 2.76e+04 bbox -13 -15 -22 197 15 22",
    "parts/link_88x20x6_foot10.stl": "stl volume 1.52e+04 bbox -15 -15 -6 103 15 6",
    "parts/splice_plate_170.stl": "stl volume 2.43e+04 bbox -12 -85 0 12 85 6",
    "parts/torso_tile_1.stl": "stl volume 9.13e+04 bbox -164 -90 0 -9 79 6",
    "parts/torso_tile_2.stl": "stl volume 8.36e+04 bbox -9 -65 0 145 70 6",
-   "robot.urdf": "dddba55889ec92fc94eff28b358017ac3ec9bca420601b19210c1fbbad1eef1e",
-   "robot.xml": "a35f63e57170fd95c8a64e8fac22f0b20dba12ad0b100fdfb7665dae4acd142f"
+   "robot.urdf": "5ee4c27863a37d8f79cded213f2ec91a867e587a09b15f83e9f937de1f69084d",
+   "robot.xml": "c19788f47bc06cbe0dc21874f046726d199ab4e4923a14a95eecc6c64e095c00"
   },
   "sim": {
    "behaviour": [
-    0.009166667,
-    0.122961437,
+    0.0075,
+    0.142868332,
     4.0,
     0.0,
-    89.165407017,
-    2.0
+    100.0,
+    2.0,
+    0.9925
    ],
    "buildable": true,
    "metrics": {
-    "duty": 0.009166667,
-    "dx": -0.016149727,
-    "energy": 51.009385597,
+    "duty": 0.0075,
+    "dx": -0.014300796,
+    "energy": 71.77758812,
     "fell": 0.0,
-    "height": 0.122961437,
-    "progress": -0.021592172
+    "height": 0.142868332,
+    "progress": -0.035984678
    },
    "type": "4servos-low-belly",
-   "xml": "a35f63e57170fd95c8a64e8fac22f0b20dba12ad0b100fdfb7665dae4acd142f"
+   "xml": "c19788f47bc06cbe0dc21874f046726d199ab4e4923a14a95eecc6c64e095c00"
   }
  },
  "seed1": {
   "export": {
-   "assembly.md": "eb63fc6a4aae07054063f5999603184509e3788e747792f8da9009b1a2f03155",
+   "assembly.md": "4de905faed629967f36a5820dbec6a7abc9504f6a1ff1eb07bb5612bd70682d2",
    "bom.csv": "fee55cf4740d84c87a2e5088acea04f27818dd5738becacae3f0a022968c196e",
-   "bom.md": "d551824258937d8149f6a345599ed4903c6a1609e1d545956a4b20c922e2b0e8",
-   "control.json": "3a980951645aa510fe38f3dbe86a3526e4a67a539567bea9e9a1afa18b6e349d",
+   "bom.md": "ce5cbf6145ef1648b0a64bd437d9f003bf8766378f8142421acfaf011f6eb079",
+   "control.json": "23cb834e7f73dbcf10a53c8de2e9b797ebfe06d8f34971d1bdbff52edaad53ed",
    "parts/cradle_pitch_w-15.stl": "stl volume 1.48e+04 bbox -38 -16 -18 16 15 18",
    "parts/cradle_pitch_w15.stl": "stl volume 1.48e+04 bbox -38 -16 -18 16 15 18",
    "parts/cradle_yaw_back.stl": "stl volume 1.49e+04 bbox -42 -22 -15 13 18 15",
@@ -68,20 +69,21 @@
   "sim": {
    "behaviour": [
     0.0,
-    0.107646654,
+    0.114262189,
     6.0,
     0.0,
-    92.412833791,
-    3.0
+    45.531613097,
+    3.0,
+    0.995
    ],
    "buildable": true,
    "metrics": {
     "duty": 0.0,
-    "dx": -0.024369667,
-    "energy": 73.704872589,
+    "dx": -0.012670822,
+    "energy": 36.314239099,
     "fell": 0.0,
-    "height": 0.107646654,
-    "progress": -0.020731629
+    "height": 0.114262189,
+    "progress": -0.013383878
    },
    "type": "6servos-low-belly",
    "xml": "aec904ec16e640e24f3b48c83d7bfdf4db80ee2be75248eb5f42e26a588046d9"
@@ -89,10 +91,10 @@
  },
  "seed2": {
   "export": {
-   "assembly.md": "6829829638c92c0ebeea3db3460d390c0c031de46c283f63d67c4eb5d1dbeb23",
+   "assembly.md": "4d6a610605b4fec2bcaf06d2b4728a86f31e329475ca07cb9815c011400170eb",
    "bom.csv": "67647bed9751e8fc8d0c553842bcd60a580afbcd7bbe7db603b78c4606d27fc7",
-   "bom.md": "212f539df972eeb16924b923274b45ed4d6fd0898170c7169d737c684321c1a1",
-   "control.json": "5d8c98f27959e878f09dbd99152f59c74730ac124e87b129bd3017364ca51065",
+   "bom.md": "648c0345ad7eb051b048269c23f00c4400b7f6a5420736e9dd6b10913fbfe5bb",
+   "control.json": "ecbde95372131be38e5d8ae48958e04793bbe53f470472e28cf66bd702e809cd",
    "parts/cradle_yaw_back.stl": "stl volume 1.49e+04 bbox -42 -22 -15 13 18 15",
    "parts/elbow_50mm_90deg_20x6_cy.stl": "stl volume 1.43e+04 bbox -18 11 -15 18 63 15",
    "parts/elbow_50mm_90deg_20x6_cyr-180.stl": "stl volume 1.43e+04 bbox -18 11 -15 18 63 15",
@@ -108,37 +110,38 @@
    "parts/torso_tile_5.stl": "stl volume 7.46e+04 bbox -95 -0 0 60 86 6",
    "parts/torso_tile_6.stl": "stl volume 6.61e+04 bbox 60 -0 0 214 118 6",
    "parts/wheel_35x20.stl": "stl volume 7.35e+04 bbox -35 -35 -10 35 35 10",
-   "robot.urdf": "3083d54a5452f7bcb22c9465616a38c45dd0e16b1cd21f9d583ca34b0242289e",
-   "robot.xml": "492d2d41864a68455eb034b8b1a2cfc0bd262e076ccf5d965a5eb53beb45188e"
+   "robot.urdf": "fa8e08513ee694fc9f810e63f5e8ea1d7f7c0f33481e1bdd44362485c7859cfa",
+   "robot.xml": "2be8f92b698a8017403511b4df0f5b38ca41f308c8e6ac5e5b8dbc0adc9a6348"
   },
   "sim": {
    "behaviour": [
-    0.550625,
-    0.391665155,
+    0.555625,
+    0.393147347,
     12.0,
     1.0,
-    100.0,
+    67.741717214,
+    0.0,
     0.0
    ],
    "buildable": true,
    "metrics": {
-    "duty": 0.550625,
-    "dx": -0.120103115,
-    "energy": 198.745400376,
+    "duty": 0.555625,
+    "dx": 0.078157947,
+    "energy": 128.151529948,
     "fell": 0.0,
-    "height": 0.391665155,
-    "progress": -0.148420819
+    "height": 0.393147347,
+    "progress": -0.025250288
    },
    "type": "12servos-low-roll",
-   "xml": "492d2d41864a68455eb034b8b1a2cfc0bd262e076ccf5d965a5eb53beb45188e"
+   "xml": "2be8f92b698a8017403511b4df0f5b38ca41f308c8e6ac5e5b8dbc0adc9a6348"
   }
  },
  "seed3": {
   "export": {
-   "assembly.md": "5848f8e647ff03bbe09536b2a372381bcd53b2409a5234835740241ce62d380c",
+   "assembly.md": "39e1853bbc8102d4f137aa979169454eace51ea9dba614feef34ce246624b671",
    "bom.csv": "28367f2f89c5d0898fbba4017bcab565d825b38a098e58f1838208bdbb51dd6a",
-   "bom.md": "3d895ffab8612f6a20758ec3fba8f3f1cbaac305c601a719ab64468bbb5dfa9a",
-   "control.json": "46b95e87c57139be13b7301092081cc4bc000da5d7915d97d9dfe7f288b7fdb9",
+   "bom.md": "99b3392f0786ff10d0ebd51bc886903ef8ec1a9686e96c2b7d844036d5f4433c",
+   "control.json": "f3418335a635947c3647e9bb78e008520c6cfac1d55567650e1560acd002bf6b",
    "parts/cradle_pitch.stl": "stl volume 1.83e+04 bbox -38 -22 -18 16 15 18",
    "parts/elbow_50mm_90deg_20x6_cp.stl": "stl volume 1.43e+04 bbox -15 11 -18 15 63 18",
    "parts/elbow_50mm_90deg_20x6_cpr-180.stl": "stl volume 1.43e+04 bbox -15 11 -18 15 63 18",
@@ -149,43 +152,44 @@
    "parts/torso_tile_1.stl": "stl volume 1.57e+05 bbox -174 -99 0 1 99 6",
    "parts/torso_tile_2.stl": "stl volume 1.55e+05 bbox 1 -99 0 174 99 6",
    "parts/wheel_45x20.stl": "stl volume 1.14e+05 bbox -45 -45 -10 45 45 10",
-   "robot.urdf": "9d815f10846940a702a6d8ae740e8e1dc2a57149db33e71658a36287675e82b5",
-   "robot.xml": "8b4ea903f9e390d78d8887d85c1acbcd9e54f9e2c45a11bcc736297cf3061488"
+   "robot.urdf": "3377ee10ac4d20628cd55a96eca898191772c4267e5af0acda66efc8adda90b1",
+   "robot.xml": "0ea521ec569a4fde589f5b7dc4ebe695d396f76b315be90b34911ef9f8a4170d"
   },
   "sim": {
    "behaviour": [
-    0.480625,
-    0.436622073,
+    0.41,
+    0.406578211,
     12.0,
     1.0,
     100.0,
-    0.0
+    0.0,
+    0.175
    ],
    "buildable": true,
    "metrics": {
-    "duty": 0.480625,
-    "dx": -0.01136219,
-    "energy": 193.563197586,
+    "duty": 0.41,
+    "dx": -0.173271819,
+    "energy": 265.176042126,
     "fell": 0.0,
-    "height": 0.436622073,
-    "progress": -0.013912425
+    "height": 0.406578211,
+    "progress": -0.12023697
    },
    "type": "12servos-mid-roll",
-   "xml": "8b4ea903f9e390d78d8887d85c1acbcd9e54f9e2c45a11bcc736297cf3061488"
+   "xml": "0ea521ec569a4fde589f5b7dc4ebe695d396f76b315be90b34911ef9f8a4170d"
   }
  },
  "seed4": {
   "export": {
-   "assembly.md": "74005ebb92cb233da2588955a383b818551cd092f77bf25894ea4526390625e6",
+   "assembly.md": "587ffc869dfcf45b0477ec95fdadb1fa2476901f21c7c9b159c6a4a027f8a304",
    "bom.csv": "91c90cd7f764352117a726acd9bbacb60229bd93faf4ad0669a98962abeb0c7b",
-   "bom.md": "7e1a79918078b75cf251c280cb90f2a234a6f81f57e3b1ab637bfbc697a510b8",
-   "control.json": "6fc81d691cf5a3ff6aa7b0182fc74d82da12cb3d88e7a2a11eb355524e63d7b2",
+   "bom.md": "34442b31772084b94c954b768e0a7add3f496f42582cafb15f7788c026d89b6b",
+   "control.json": "af8be8b7d8836102ffd8a716180c885cd4c96d4d5530962a237ff667a8fabdec",
    "parts/elbow_62mm_90deg_20x6_cpr-22.stl": "stl volume 1.44e+04 bbox -21 23 -23 21 75 23",
    "parts/elbow_62mm_90deg_20x6_cpr178.stl": "stl volume 1.44e+04 bbox -16 23 -19 16 75 19",
    "parts/elbow_62mm_90deg_20x6_cyr-83.stl": "stl volume 1.44e+04 bbox -17 23 -20 17 75 20",
-   "parts/link_189x20x6_up_e23x-19x19_0.stl": "stl volume 2.87e+04 bbox -13 -15 -22 204 15 22",
-   "parts/link_68x20x6_L37_e23x-17x17_0.stl": "stl volume 1.4e+04 bbox -15 -15 -3 77 36 3",
-   "parts/link_96x20x6_up_e23x-23x23_0.stl": "stl volume 1.75e+04 bbox -13 -15 -22 111 15 22",
+   "parts/link_189x20x6_up_e23x-19x19_0.stl": "stl volume 3.03e+04 bbox -13 -15 -22 204 23 22",
+   "parts/link_68x20x6_L37_e23x-17x17_0.stl": "stl volume 1.57e+04 bbox -15 -15 -3 77 48 3",
+   "parts/link_96x20x6_up_e23x-23x23_0.stl": "stl volume 1.91e+04 bbox -13 -15 -22 111 23 22",
    "parts/splice_plate_155.stl": "stl volume 2.21e+04 bbox -12 -78 0 12 78 6",
    "parts/splice_plate_165.stl": "stl volume 2.36e+04 bbox -12 -82 0 12 82 6",
    "parts/torso_tile_1.stl": "stl volume 9.71e+04 bbox -190 -152 0 -25 -5 6",
@@ -193,37 +197,38 @@
    "parts/torso_tile_3.stl": "stl volume 5.95e+04 bbox -190 -5 0 -25 124 6",
    "parts/torso_tile_4.stl": "stl volume 1.13e+05 bbox -25 -5 0 140 148 6",
    "parts/wheel_43x33.stl": "stl volume 1.71e+05 bbox -43 -43 -16 43 43 16",
-   "robot.urdf": "5442b3f537bbc5f98536af48d7aabf6a9135cafec5d934646ecb9fc1d10176e2",
-   "robot.xml": "1dcb8515e47f50e3b22a7a84dd96ca5c744d660acf2c784cc66b26e2b499986b"
+   "robot.urdf": "f9b4263bf725758431c396cb6f9321328e1ab5e7254634c8514e45dda4b664f7",
+   "robot.xml": "4088d19e70300920ac13b6996035cfb782e52fe2059ce15c67bf172f6921a762"
   },
   "sim": {
    "behaviour": [
     0.0,
-    0.121818879,
+    0.122778845,
     3.0,
     0.0,
-    20.805385381,
-    0.0
+    35.399083026,
+    0.0,
+    0.9875
    ],
    "buildable": true,
    "metrics": {
     "duty": 0.0,
-    "dx": 0.119292253,
-    "energy": 42.272829417,
+    "dx": 0.004059068,
+    "energy": 30.300576795,
     "fell": 0.0,
-    "height": 0.121818879,
-    "progress": 0.151801435
+    "height": 0.122778845,
+    "progress": 0.021347151
    },
    "type": "3servos-low-belly",
-   "xml": "1dcb8515e47f50e3b22a7a84dd96ca5c744d660acf2c784cc66b26e2b499986b"
+   "xml": "4088d19e70300920ac13b6996035cfb782e52fe2059ce15c67bf172f6921a762"
   }
  },
  "small-walker": {
   "export": {
-   "assembly.md": "bb3f2016f33618d69b13e56a7d8e8f1d2a40253d63aa7e474489f47b3fc2e73b",
+   "assembly.md": "96669e9487aebca723e58a242620a8f26d12abf536be1433d1e60b9236e42bb5",
    "bom.csv": "a07485e1882cb6cbe55901143dc8117411c9aa19997eb2cc8826ac3d1e6cbbfd",
-   "bom.md": "ef573e1780ea160d0eb6236cf616789215dc37ec445494148c9528338404a58e",
-   "control.json": "cf4b1288382f318c24986372b0ecf146163555357474c7adc058617c59027fc2",
+   "bom.md": "a435e7c1c8a4006c6cdb245a436a596ddbc3c169585a235c60a4b195077b75c6",
+   "control.json": "66184207c8b31ad1344cf96f6ca0a3dd559ae7c1ff826875f801cc033a19f4f2",
    "parts/cradle_pitch.stl": "stl volume 1.83e+04 bbox -38 -22 -18 16 15 18",
    "parts/foot_15.stl": "stl volume 1.02e+04 bbox -15 -15 -0 15 15 17",
    "parts/link_80x20x6_up_foot15.stl": "stl volume 1.47e+04 bbox -13 -15 -22 95 15 22",
@@ -235,23 +240,24 @@
   },
   "sim": {
    "behaviour": [
-    0.313125,
-    0.155760205,
+    0.16375,
+    0.144816691,
     4.0,
     0.0,
     100.0,
-    4.0
+    4.0,
+    0.9675
    ],
    "buildable": true,
    "metrics": {
-    "duty": 0.313125,
-    "dx": -0.012054977,
-    "energy": 80.267170193,
+    "duty": 0.16375,
+    "dx": -0.01000029,
+    "energy": 106.291134838,
     "fell": 0.0,
-    "height": 0.155760205,
-    "progress": -0.025353952
+    "height": 0.144816691,
+    "progress": -0.020901212
    },
-   "type": "4servos-low-trot",
+   "type": "4servos-low-belly",
    "xml": "4f105df2df0088454d46aeb69b1dea683fd50ac9762e42e2ea039295c4ee55fe"
   }
  }

@@ -119,29 +119,43 @@ def _psum(a, n):
 
 
 @njit(cache=True)
-def _advance(theta, omega, sigma, force, dt, torque):
+def _advance(theta, omega, sigma, force, dt, torque, couple_k, couple_lag,
+             partner):
     # advance_phases of controller.py, repeated here so the cached loop does
-    # not depend on another module's compiled function
-    for i in range(theta.shape[0]):
-        n = force[i] / torque
-        if n > 1.0:
-            n = 1.0
-        elif n < -1.0:
-            n = -1.0
-        theta[i] += dt * (omega - sigma[i] * n * math.cos(theta[i]))
+    # not depend on another module's compiled function. Every term reads the
+    # phases from the start of the step; with every k = 0 it is the old update.
+    n = theta.shape[0]
+    rate = np.empty(n)
+    for i in range(n):
+        load = force[i] / torque
+        if load > 1.0:
+            load = 1.0
+        elif load < -1.0:
+            load = -1.0
+        rate[i] = omega - sigma[i] * load * math.cos(theta[i])
+    for j in range(n):
+        k = couple_k[j]
+        p = partner[j]
+        if k != 0.0 and p >= 0:
+            rate[j] += k * math.sin(theta[p] - theta[j] - couple_lag[j])
+            rate[p] += k * math.sin(theta[j] - theta[p] + couple_lag[j])
+    for i in range(n):
+        theta[i] += dt * rate[i]
 
 
 @njit(cache=True)
 def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
              ramp_time, upright_min,
-             theta, omega, sigma, offset, amp1, ph1, amp2, ph2,
+             theta, omega, sigma, couple_k, couple_lag, partner,
+             offset, amp1, ph1, amp2, ph2,
              force, velocity, ctrl, qacc, qvel, xmat, xpos, geom_xpos,
              time_v, ncon_v, warn_v, widx, cptr_v, stride, goff,
-             robot, tgeoms, sgeoms, feet, lat_buf, mid,
+             robot, tgeoms, sgeoms, bgeoms, feet, lat_buf, mid,
              hit, touch, prev_pos, prev_touch, scratch, out):
     """Steps the episode. `out` receives the scalars:
     0 energy, 1 yaw, 2 fell, 3 unstable, 4 x_mid (nan if none), 5 zsum,
-    6 upsum, 7 ticks, 8 tiltsum, 9 slipsum, 10 sgsum, 11 steps taken."""
+    6 upsum, 7 ticks, 8 tiltsum, 9 slipsum, 10 sgsum, 11 steps taken,
+    12 bgsum."""
     nu = theta.shape[0]
     nt = tgeoms.shape[0]
     L = lat_buf.shape[0]
@@ -159,6 +173,7 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
     tiltsum = 0.0
     slipsum = 0.0
     sgsum = 0.0
+    bgsum = 0.0
     ticks = 0
     done = 0
     for n in range(1, n_steps + 1):
@@ -177,7 +192,8 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
                 head = (head + 1) % L
         _mj_step(step_fn, model_addr, data_addr)
         done = n
-        _advance(theta, omega, sigma, force, dt, torque)
+        _advance(theta, omega, sigma, force, dt, torque,
+                 couple_k, couple_lag, partner)
         for i in range(nu):
             scratch[i] = abs(force[i] * velocity[i])
         energy += _psum(scratch, nu) * dt
@@ -189,9 +205,6 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
             unstable = True
             break
         t_prev = time_v[0]
-        if xmat[8] < upright_min:
-            fell = True
-            break
         if n == mid:
             x_mid = xpos[0]
         if n % hold == 0:
@@ -228,10 +241,18 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
                 if hit[sgeoms[j]]:
                     sgsum += 1.0
                     break
+            for j in range(bgeoms.shape[0]):
+                if hit[bgeoms[j]]:
+                    bgsum += 1.0
+                    break
             zsum += xpos[2]
             upsum += xmat[8]
             tiltsum += math.acos(min(1.0, max(-1.0, xmat[8])))
             ticks += 1
+        if xmat[8] < upright_min:
+            # The tick a fall is seen on still counts in the behaviour sample.
+            fell = True
+            break
     out[0] = energy
     out[1] = yaw
     out[2] = 1.0 if fell else 0.0
@@ -244,6 +265,7 @@ def run_loop(step_fn, model_addr, data_addr, n_steps, hold, dt, torque,
     out[9] = slipsum
     out[10] = sgsum
     out[11] = done
+    out[12] = bgsum
 
 
 # ---- set-up -------------------------------------------------------------
@@ -389,6 +411,7 @@ class Prepared:
         self.robot = ep._robot.copy()
         self.tgeoms = np.asarray(ep._tgeoms, dtype=np.int64)
         self.sgeoms = np.asarray(ep._sgeoms, dtype=np.int64)
+        self.bgeoms = np.asarray(ep._bgeoms, dtype=np.int64)
         self.feet = ~np.asarray(ep._twheel, dtype=bool)
         nt = len(self.tgeoms)
         self.hit = np.zeros(ep.model.ngeom, dtype=np.bool_)
@@ -396,7 +419,7 @@ class Prepared:
         self.prev_pos = np.zeros((nt, 2))
         self.prev_touch = np.zeros(nt, dtype=np.bool_)
         self.scratch = np.zeros(max(ep.model.nu, nt, 1))
-        self.out = np.zeros(12)
+        self.out = np.zeros(13)
         self.xmat = d.xmat[ep.torso]
         self.xpos = d.xpos[ep.torso]
 
@@ -430,7 +453,7 @@ def prepare(ep):
 
 
 def run(ep, prep, controller, sim_model, variant_latency, torque, ramp_time, upright_min):
-    """Run the loop on an episode just reset. Returns the 12 scalars of
+    """Run the loop on an episode just reset. Returns the 13 scalars of
     `run_loop`'s `out` plus the touch counts."""
     d = ep.data
     p = controller.params
@@ -441,13 +464,15 @@ def run(ep, prep, controller, sim_model, variant_latency, torque, ramp_time, upr
     lat = np.zeros((variant_latency, d.ctrl.shape[0]))
     run_loop(prep.info["fn"], sim_model._address, d._address, ep.n_steps, ep.hold,
              ep.model.opt.timestep, torque, ramp_time, upright_min,
-             controller.theta, controller.omega, p.sigma, p.offset, p.amp1,
+             controller.theta, controller.omega, p.sigma,
+             p.couple_k, p.couple_lag, p.partner,
+             p.offset, p.amp1,
              p.phase1, p.amp2, p.phase2,
              d.actuator_force, d.actuator_velocity, d.ctrl, d.qacc, d.qvel,
              prep.xmat, prep.xpos, d.geom_xpos,
              prep.time, prep.ncon, prep.warn, prep.widx, prep.cptr,
              prep.info["stride"], prep.info["goff"],
-             prep.robot, prep.tgeoms, prep.sgeoms, prep.feet, lat, mid,
+             prep.robot, prep.tgeoms, prep.sgeoms, prep.bgeoms, prep.feet, lat, mid,
              prep.hit, prep.touch, prep.prev_pos, prep.prev_touch,
              prep.scratch, prep.out)
     return prep.out, prep.touch

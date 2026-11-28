@@ -37,8 +37,9 @@ from darwinbot import ablate, hardware
 from darwinbot.controller import SERVO_SPEED, SERVO_TORQUE
 from darwinbot.morphology import (AXIS_LOCAL, CASTER_FORK_SIZE, CASTER_WHEEL_T,
                                   CLAW_LENGTH, CLAW_RADIUS, CLAW_SPREAD,
-                                  ELECTRONICS_BOX, ELBOW_BOSS_R, SEGMENT_HEIGHT,
-                                  SERVO_BOX, STRUT_HALF_W, TAB_SIZE, TONGUE_HALF_H,
+                                  ELECTRONICS_BOX, ELBOW_BOSS_R, FIN_HALF_W,
+                                  SEGMENT_HEIGHT, SERVO_BOX, STRUT_HALF_W,
+                                  TAB_SIZE, TONGUE_HALF_H, TONGUE_HALF_W,
                                   TONGUE_T, PLATE_THICK, cradle_box, fork_boxes,
                                   servo_box,
                                   SKID_SIZE, SPIKE_LENGTH, SPIKE_RADIUS,
@@ -310,13 +311,46 @@ def _strut_height(morph: Morphology, child) -> float:
     return max(0.001, min(-(mid - ext), mid + ext) - 0.0005)
 
 
+def _servo_face(morph: Morphology, child) -> float:
+    """How far out across the link plane the body of the servo on the link tip
+    reaches: the fin of a side elbow is printed against its cradle there, when
+    the link plate stops behind it."""
+    axis = "yaw" if child.kind == "wheel" else child.axis
+    half, centre = servo_box(axis)
+    off, rot = morph.rel_frame(child)
+    return float(off[1] + rot[1] @ centre) + float(np.abs(rot[1]) @ half)
+
+
+def _fin_geom(morph: Morphology, parent, child, tip, rot: np.ndarray,
+              side: float, at: float, tip_child: int, plastic: str) -> str:
+    """The fin a side servo's elbow tongue is bolted to: from the link plate,
+    or from the side of the cradle of the module on the tip when the plate
+    stops behind it, out to `at`. It is printed as part of the link
+    (parts.link draws the same plate, with the two M3 holes)."""
+    start = max(0.0, parent.width / 2 - 0.001)
+    if tip_child is not None and morph.nodes[tip_child].kind in (
+            "joint", "segment", "wheel"):
+        start = max(start, _servo_face(morph, morph.nodes[tip_child]) + 0.0005)
+    if at - start <= 0.0005:
+        return ""
+    mass = (_plate_density("elbow", child.id) * 2 * FIN_HALF_W
+            * max(0.0, at - max(start, parent.width / 2)) * plate_thick(parent))
+    fin = _box_geom(f"fin{child.id}",
+                    tip + rot @ np.array([0.0, side * (start + at) / 2, 0.0]),
+                    (FIN_HALF_W, (at - start) / 2, plate_thick(parent) / 2),
+                    plastic, rot=rot)
+    return fin.replace(PART_ONLY, f'mass="{max(1e-6, mass):.6f}"') + "\n        "
+
+
 def _elbow_geom(morph: Morphology, parent, child, slot: int,
-                friction: float = 1.0) -> str:
+                friction: float = 1.0, tip_child: int = None) -> str:
     """Printed elbow from the link tip to the side slot `slot` (1 left, 2
     right), where the child module is mounted. It follows the tip rotation of
     a bent link. A servo child hangs on a strut with a tongue bolted to the fin
     of the link tip, as parts.elbow_plate draws it (its cradle is the child's
-    own geom); anything else on a bar with round bosses."""
+    own geom); anything else on a bar with round bosses. `tip_child` is the
+    module on slot 0, whose cradle the fin is printed against when the link
+    plate stops behind it."""
     side = 1.0 if slot == 1 else -1.0
     d = elbow_distance(child)
     tip, rot = link_tip(parent)
@@ -335,10 +369,14 @@ def _elbow_geom(morph: Morphology, parent, child, slot: int,
         strut = _box_geom(f"strut{child.id}", centre,
                           (STRUT_HALF_W, max(1e-4, (end - at) / 2), hz), plastic, rot=rot)
         strut = strut.replace(PART_ONLY, f'mass="{mass:.6f}"')
+        # the fin the tongue is bolted to: from the link plate, or from the
+        # side of the tip mount's cradle when the plate stops behind it, out to
+        # `at` (parts.link prints the same plate)
+        fin = _fin_geom(morph, parent, child, tip, rot, side, at, tip_child, plastic)
         tongue_c = tip + rot @ np.array([0.0, side * (at - TONGUE_T / 2), 0.0])
         tongue = _box_geom(f"tongue{child.id}", tongue_c,
-                           (0.0153, TONGUE_T / 2, TONGUE_HALF_H), plastic, rot=rot)
-        return f"{strut}\n        {tongue}"
+                           (TONGUE_HALF_W, TONGUE_T / 2, TONGUE_HALF_H), plastic, rot=rot)
+        return f"{fin}{strut}\n        {tongue}"
     # the printed plate starts with a round boss around the link tip
     pos = tip + rot @ np.array([0.0, side * (near + d) / 2, 0.0])
     return (f'<geom name="elbow{child.id}" type="box" '
@@ -502,7 +540,7 @@ def _node_xml(morph: Morphology, node, frames, children, actuators: list,
                  f'size="{SPIKE_RADIUS:.4f}" density="{LINK_DENSITY}" '
                  f'rgba="{SPRING_RGBA}" {_special_geom(SPIKE_FACTOR, friction)}/>')
     if node.kind in ("joint", "link", "spring"):
-        inner += "".join(f"\n{_elbow_geom(morph, node, morph.nodes[c], slot, friction)}"
+        inner += "".join(f"\n{_elbow_geom(morph, node, morph.nodes[c], slot, friction, tip_child)}"
                          for slot, c in sorted(children.get(i, {}).items()) if slot)
     if node.kind in ("joint", "link") and i not in children:
         inner += f"\n{_cap_geoms(node)}"
@@ -596,7 +634,7 @@ def build_mjcf(morph: Morphology, terrain_assets: str = "",
 HUB_RADIUS = 0.026          # m: a link overlaps the plate it is bolted to near its end
 CLASH_DEPTH = 2e-4          # m: shared depth that counts as a clash
 _MOUNT_ROLES = ("servo", "cradle", "strut", "tongue", "elbow")
-_NAMED = re.compile(r"^(servo|cradle|strut|tongue|elbow|tab|tip|segment)(\d+)$")
+_NAMED = re.compile(r"^(servo|cradle|strut|tongue|fin|elbow|tab|tip|segment)(\d+)$")
 _NAMED_K = re.compile(r"^(lk|boss|fork)(\d+)_(\d+)$")
 
 
@@ -622,6 +660,7 @@ class AssemblyRules:
                 if name[0] == "n":
                     self.body_of[int(name[1:])] = b
         self.body_of[0] = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso")
+        self.parent = {i: n.parent for i, n in morph.nodes.items()}
         for g in range(ng):
             if not self.robot[g]:
                 continue
@@ -630,6 +669,10 @@ class AssemblyRules:
             if m and m.group(1) in _MOUNT_ROLES:
                 role, node = m.group(1), int(m.group(2))
                 part = ("mount", node)
+            elif m and m.group(1) == "fin":
+                # the fin under an elbow tongue is printed with its link
+                node = self.parent[int(m.group(2))]
+                role, part = "link", ("link", node)
             elif m and m.group(1) in ("tip", "segment"):
                 role, node, part = "link", int(m.group(2)), ("link", int(m.group(2)))
             elif m:                                        # tab
@@ -648,7 +691,6 @@ class AssemblyRules:
                 if morph.nodes[node].kind in ("caster", "tail", "skid", "spike"):
                     role = "free"       # no printed part is drawn for these yet
             self.role[g], self.node[g], self.part[g] = role, node, part
-        self.parent = {i: n.parent for i, n in morph.nodes.items()}
         for g in range(ng):                # a passive bar is printed with the link it hangs on
             if self.role[g] == "elbow":
                 self.part[g] = ("link", self.parent[self.node[g]])
@@ -727,6 +769,27 @@ class AssemblyRules:
                         out.append((a, b, float(-d)))
                         if first:
                             return out
+        return out
+
+    def floating(self, model, data, gap: float = 0.0005) -> list:
+        """[(geom, distance)] of the elbow struts and tongues that do not reach
+        the link they are bolted to in the pose of `data`: the fin under the
+        tongue is what spans that gap, so a part without one floats."""
+        import mujoco
+        links = {}
+        for g in range(model.ngeom):
+            if self.robot[g] and self.role[g] == "link":
+                links.setdefault(self.part[g], []).append(g)
+        fromto = np.zeros(6)
+        out = []
+        for g in range(model.ngeom):
+            if not self.robot[g] or self.role[g] not in ("strut", "tongue"):
+                continue
+            near = links.get(("link", self.parent[self.node[g]]), [])
+            d = min((mujoco.mj_geomDistance(model, data, g, h, 10 * gap, fromto)
+                     for h in near), default=0.0)
+            if d > gap:
+                out.append((g, float(d)))
         return out
 
     def _xpos(self, data) -> dict:

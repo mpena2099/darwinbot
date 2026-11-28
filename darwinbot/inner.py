@@ -28,9 +28,9 @@ import numpy as np
 
 from darwinbot import randomize
 
-from darwinbot.controller import CTRL_LENGTH, active_genes, random_controller
+from darwinbot.controller import CTRL_LENGTH, CTRL_PER_NODE, active_genes, random_controller
 from darwinbot.fitness import UNSTABLE_SCORE, aggregate, commands, score, task_score
-from darwinbot.morphology import Morphology
+from darwinbot.morphology import BLOCK_GENES, MAX_NODES, Morphology, decode, encode
 from darwinbot.sim import (COT_MAX, EPISODE_SECONDS, Behaviour, Episode, Metrics,
                            cost_of_transport)
 from darwinbot.terrain import Terrain, flat
@@ -47,21 +47,28 @@ class ControllerResult:
 
 
 def evaluate(episodes: Sequence[Episode], ctrl: np.ndarray, variants=None,
-             task: str = "forward"):
+             task: str = "forward", collect: Optional[list] = None):
     """
     variants: None, or one list of randomize.Variant per episode. The terrain
     score is then the mean over its variants (metrics keep the first one).
+    collect (tracing only): a list that gets one entry per call, the Metrics of
+    every episode as [terrain][variant][command].
     """
     cmds = commands(task)
     if not variants:
         runs = [[ep.run(ctrl, None, *c) for c in cmds] for ep in episodes]
         scores = [task_score(ms, task) for ms in runs]
+        if collect is not None:
+            collect.append([[ms] for ms in runs])
         return aggregate(scores), scores, [ms[0] for ms in runs]
-    metrics, scores = [], []
+    metrics, scores, every = [], [], []
     for ep, vs in zip(episodes, variants):
         runs = [[ep.run(ctrl, v, *c) for c in cmds] for v in vs]
+        every.append(runs)
         metrics.append(runs[0][0])
         scores.append(float(np.mean([task_score(ms, task) for ms in runs])))
+    if collect is not None:
+        collect.append(every)
     return aggregate(scores), scores, metrics
 
 
@@ -75,7 +82,8 @@ def behaviour_vector(morph: Morphology, m: Optional[Metrics],
     if m is None or m.unstable:
         return fallback
     vec = Behaviour(m.duty, m.height, float(morph.n_servos), m.wheel_share,
-                    cost_of_transport(m, task), float(morph.n_legs))
+                    cost_of_transport(m, task), float(morph.n_legs),
+                    m.body_ground)
     return vec if np.isfinite(vec).all() else fallback
 
 
@@ -88,17 +96,51 @@ def _unbuildable(morph, ctrl, terrains, mass) -> ControllerResult:
 
 
 def cpu_evaluator(morph: Morphology, terrains: Sequence[Terrain], seconds: float,
-                  payload: float, variants: int, seed: int, task: str):
+                  payload: float, variants: int, seed: int, task: str,
+                  collect: Optional[list] = None, first_only: bool = False,
+                  episodes: Optional[list] = None):
     """Episodes of a body and the function that scores one full controller on
     them; the physics variants come from the seed alone, so every process that
-    builds this with the same arguments scores a controller the same way."""
-    episodes = [Episode(morph, t, seconds, payload) for t in terrains]
+    builds this with the same arguments scores a controller the same way.
+    first_only keeps the first drawn variant of each terrain (variant_mode
+    "first"); it is the same draw, only the others are dropped. episodes: the
+    Episodes already built for these terrains (prune reuses them), or None."""
+    if episodes is None:
+        episodes = [Episode(morph, t, seconds, payload) for t in terrains]
     var_sets = None
     if variants > 0 and episodes[0].buildable:
         vrng = np.random.default_rng([seed, 1])
         var_sets = [[randomize.perturb(ep.model, vrng) for _ in range(variants)]
                     for ep in episodes]
-    return episodes, lambda c: evaluate(episodes, c, var_sets, task)
+    if var_sets is not None and first_only:
+        var_sets = [[vs[0]] for vs in var_sets]
+    return episodes, lambda c: evaluate(episodes, c, var_sets, task, collect)
+
+
+def _focused_stds(morph: Morphology, parent_genes: np.ndarray,
+                  active: np.ndarray) -> np.ndarray:
+    """Initial CMA-ES step per active gene: 1.0 for the controller genes of the
+    node slots whose genome block differs from the parent (or that are new) and
+    of their descendants, 0.3 for the rest, so the search moves where the body
+    changed and leaves the inherited gait alone."""
+    parent = decode(parent_genes)
+    before = np.asarray(parent_genes, dtype=float).reshape(MAX_NODES, BLOCK_GENES)
+    now = encode(morph).reshape(MAX_NODES, BLOCK_GENES)
+    moved = {i for i in morph.nodes
+             if i not in parent.nodes or not np.array_equal(now[i], before[i])}
+    kids: dict = {}
+    for i, n in morph.nodes.items():
+        kids.setdefault(n.parent, []).append(i)
+
+    def mark(i):
+        for j in kids.get(i, []):
+            if j not in moved:
+                moved.add(j)
+                mark(j)
+    for i in list(moved):
+        mark(i)
+    return np.array([1.0 if g > 0 and (g - 1) // CTRL_PER_NODE in moved else 0.3
+                     for g in active])
 
 
 def optimise_controller(
@@ -115,17 +157,58 @@ def optimise_controller(
     task: str = "forward",
     payload: float = 0.0,
     map_many: Optional[Callable] = None,
+    recorder=None,
+    strategy: Optional[str] = None,
+    parent_genes: Optional[np.ndarray] = None,
+    on_eval: Optional[Callable[[float], None]] = None,
+    variant_mode: str = "all",
+    episodes: Optional[list] = None,
 ) -> ControllerResult:
     """
     variants > 0: every candidate is scored on that many randomised models per
-    terrain (domain randomisation, CPU only). They are drawn once per body from
-    its seed, so all candidates face the same ones (common random numbers).
+    terrain (domain randomisation; not on device "gpu"). They are drawn once
+    per body from its seed, so all candidates face the same ones (common
+    random numbers).
     task picks the score (fitness.TASKS); payload is extra torso mass in kg.
     The behaviour descriptor is the same for every task.
+
+    device "warp" searches the controllers with MuJoCo Warp, one batch per
+    terrain for the whole generation, and re-scores the winner on the CPU: the
+    GPU only searches, what enters the archive is CPU-scored.
+
     map_many (CPU only): scores a list of full controllers, for example on a
     process pool whose workers built the same cpu_evaluator; the result does
     not change, only the wall time.
+    recorder (trace.Recorder, CPU without map_many): records every evaluation
+    for offline analysis; the result does not change.
+    strategy: None (today's CMA-ES), "diagonal" (diagonal covariance),
+    "focused" (per-gene initial steps from parent_genes) or
+    "diagonal+focused". "focused" without parent_genes is the same as None.
+    parent_genes: the parent's body genome; the slots whose block differs from
+    this body, and their descendants, get the wider initial step.
+    on_eval: called with every evaluation's fitness, in order (benchmarks);
+    it changes no result.
+    variant_mode: "all" (default) scores every candidate on the whole variant
+    set. "first" uses only the first variant of each terrain while the loop
+    runs, then re-scores the best controller (and only it) on the whole set and
+    returns that score, so the archive never sees the cheap one. The variants
+    are drawn once per body, so the first of each set is the same either way.
+    Ignored with map_many, whose workers always score the whole set.
+    episodes: the body's Episodes for these terrains, when the caller has built
+    them already (CPU only); the result does not change.
+    On device "warp" the search always runs every variant, so variant_mode
+    "first" is refused there; the final re-score is the CPU one, and episodes
+    is ignored.
     """
+    if variant_mode not in ("all", "first"):
+        raise ValueError(f"unknown variant mode {variant_mode!r}: use all or first")
+    if variant_mode == "first" and device == "warp":
+        raise ValueError("--variant-mode first is CPU only; use all with --device warp")
+    if strategy not in (None, "diagonal", "focused", "diagonal+focused"):
+        raise ValueError(f"unknown strategy {strategy!r}: use diagonal, focused, "
+                         "diagonal+focused or None")
+    if device in ("gpu", "warp") or map_many:
+        recorder = None
     if variants > 0 and device == "gpu":
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
     rng = np.random.default_rng(seed)
@@ -138,6 +221,7 @@ def optimise_controller(
         c[active] = z
         return c
 
+    finish = lambda res: res    # "first" mode overrides it with one full re-score
     if device == "gpu":
         from darwinbot.sim_gpu import BatchEpisode
         batches = [BatchEpisode(morph, t, seconds, payload) for t in terrains]
@@ -166,21 +250,97 @@ def optimise_controller(
         # The starting point counts: an inherited controller that already works
         # must not be lost just because CMA-ES never resamples it exactly.
         fit, scores, metrics = run_one(base, popsize or 1)
-    else:
-        episodes, run_cpu = cpu_evaluator(morph, terrains, seconds, payload,
-                                          variants, seed, task)
-        if not episodes[0].buildable:
-            return _unbuildable(morph, base, terrains, episodes[0].mass)
+    elif device == "warp":
+        from darwinbot.sim_warp import WarpBatchEpisode
+        batches = [WarpBatchEpisode(morph, t, seconds, payload) for t in terrains]
+        if not batches[0].buildable:
+            return _unbuildable(morph, base, terrains, batches[0].mass)
+
+        # The same variants as the CPU branch, drawn from the same generator:
+        # both devices then face the same randomised models.
+        var_sets = None
+        if variants > 0:
+            vrng = np.random.default_rng([seed, 1])    # leaves rng untouched
+            var_sets = [[randomize.perturb(b.episode.model, vrng)
+                         for _ in range(variants)] for b in batches]
+
+        def evaluate_batch(ctrls):
+            """One world per (controller, variant, command) and one run_batch per
+            terrain, so a whole generation is len(terrains) launches."""
+            cmds = commands(task)
+            nv, ncmd = max(variants, 1), len(cmds)
+            per_terrain = []
+            for i, b in enumerate(batches):
+                vs = var_sets[i] if var_sets else [None]
+                worlds = [(c, v, cmd) for c in ctrls for v in vs
+                          for cmd in cmds]
+                per_terrain.append(b.start(      # the terrains run concurrently
+                    np.stack([w[0] for w in worlds]),
+                    np.array([w[2] for w in worlds], dtype=float),
+                    None if var_sets is None else [w[1] for w in worlds]))
+            per_terrain = [b.finish(t) for b, t in zip(batches, per_terrain)]
+            out = []
+            for i in range(len(ctrls)):
+                scores, metrics = [], []
+                for p in per_terrain:          # rebuild what evaluate() returns
+                    start = i * nv * ncmd
+                    runs = [p[start + j * ncmd:start + (j + 1) * ncmd]
+                            for j in range(nv)]
+                    scores.append(float(np.mean([task_score(ms, task)
+                                                 for ms in runs])))
+                    metrics.append(runs[0][0])        # variant 0, first command
+                out.append((aggregate(scores), scores, metrics))
+            return out
 
         def run_one(c, n: int = 1):
-            return run_cpu(c)
+            return evaluate_batch(np.repeat(c[None], n, axis=0))[0]
+
+        def run_many(cs):
+            return evaluate_batch(np.stack(cs))
+
+        def finish(res):
+            # The GPU only searched; the archive entry is scored on the CPU.
+            f, sc, m = evaluate([b.episode for b in batches], res.ctrl, var_sets, task)
+            if on_eval is not None:
+                on_eval(float(f))
+            return ControllerResult(res.ctrl, f, sc, m, res.evals)
+
+        fit, scores, metrics = run_one(base, popsize or 1)
+    else:
+        first = variant_mode == "first" and variants > 0
+        episodes, run_cpu = cpu_evaluator(morph, terrains, seconds, payload,
+                                          variants, seed, task,
+                                          recorder.runs if recorder else None,
+                                          first, episodes)
+        if not episodes[0].buildable:
+            return _unbuildable(morph, base, terrains, episodes[0].mass)
+        if first:
+            # one full evaluator for the single re-score at the end; same seed,
+            # so it draws the same variants the "all" mode would use.
+            _, run_full = cpu_evaluator(morph, terrains, seconds, payload,
+                                        variants, seed, task, episodes=episodes)
+
+            def finish(res):
+                f, s, m = run_full(res.ctrl)
+                if on_eval is not None:
+                    on_eval(float(f))
+                return ControllerResult(res.ctrl, f, s, m, res.evals)
+
+        def run_one(c, n: int = 1):
+            out = run_cpu(c)
+            if recorder is not None:
+                recorder.record(c[active], out[0], out[1])
+            return out
 
         def run_many(cs):
             return map_many(cs) if map_many else [run_one(c) for c in cs]
 
         fit, scores, metrics = run_one(base)
+    if on_eval is not None:
+        on_eval(float(fit))
     best = ControllerResult(base.copy(), fit, scores, metrics, evals=1)
     if len(active) < 2:       # no actuator: only the frequency gene, nothing CMA-ES can search
+        best = finish(best)
         best.behaviour = behaviour_vector(morph, _nominal_flat(
             morph, terrains, best, variants, seconds, device, payload), task)
         return best
@@ -189,21 +349,30 @@ def optimise_controller(
             "maxfevals": max(budget - 1, 1), "verbose": -9}
     if popsize is not None:
         opts["popsize"] = popsize
+    if strategy in ("diagonal", "diagonal+focused"):
+        opts["CMA_diagonal"] = True
+    if strategy in ("focused", "diagonal+focused") and parent_genes is not None:
+        opts["CMA_stds"] = _focused_stds(morph, parent_genes, active)
     es = cma.CMAEvolutionStrategy(base[active], sigma0, opts)
 
     evals = 1
     while not es.stop():
+        if recorder is not None:
+            recorder.gen += 1
         candidates = es.ask()
         losses = []
         cs = [full(np.asarray(z)) for z in candidates]
         for c, (fit, scores, metrics) in zip(cs, run_many(cs)):
             evals += 1
+            if on_eval is not None:
+                on_eval(float(fit))
             losses.append(-fit)
             if fit > best.fitness:
                 best = ControllerResult(c, fit, scores, metrics, evals)
         es.tell(candidates, losses)
 
     best.evals = evals
+    best = finish(best)
     best.behaviour = behaviour_vector(morph, _nominal_flat(
         morph, terrains, best, variants, seconds, device, payload), task)
     return best
@@ -219,4 +388,5 @@ def _nominal_flat(morph, terrains, best, variants, seconds, device,
     if device == "gpu":
         from darwinbot.sim_gpu import BatchEpisode
         return BatchEpisode(morph, flat(), seconds, payload).run_batch(best.ctrl[None])[0]
+    # cpu and warp: the same CPU episode the archive is scored on.
     return Episode(morph, flat(), seconds, payload).run(best.ctrl)

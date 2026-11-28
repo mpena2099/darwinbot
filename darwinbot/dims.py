@@ -51,8 +51,12 @@ BRIDGE_X = 0.024            # where the U link crosses the servo front
 BRIDGE_T = 0.003
 STRUT_HALF_W = 0.004        # elbow strut half width along the link
 TONGUE_HALF_H = 0.0045      # elbow tongue half height
+TONGUE_HALF_W = metres(hardware.SERVO.width / 2 + hardware.SERVO.clearance
+                       + mm(CRADLE_T))          # elbow tongue half width along the link
 TONGUE_T = 0.00045          # elbow tongue lapped on a link tip (the simulation
                             # collides a thicker one: morphology.TONGUE_T)
+FIN_HALF_W = TONGUE_HALF_W  # fin of a link tip under an elbow tongue: as wide as
+                            # the tongue it carries the M3 bolts of
 MOUNT_DROP = 0.022          # joint axis to the torso plate face
 MOUNT_FOOT_T = 0.003        # cradle foot thickness
 WEDGE_T = 0.002             # thinnest edge of a rolled-mount wedge
@@ -83,6 +87,7 @@ ARM_HALF_W_MM = mm(ARM_HALF_W)
 BRIDGE_X_MM, BRIDGE_T_MM = mm(BRIDGE_X), mm(BRIDGE_T)
 STRUT_HALF_W_MM, TONGUE_HALF_H_MM = mm(STRUT_HALF_W), mm(TONGUE_HALF_H)
 TONGUE_T_MM = mm(TONGUE_T)
+TONGUE_HALF_W_MM, FIN_HALF_W_MM = mm(TONGUE_HALF_W), mm(FIN_HALF_W)
 CRADLE_T_MM, CRADLE_GAP_MM = mm(CRADLE_T), mm(CRADLE_GAP)
 MOUNT_DROP_MM, MOUNT_FOOT_T_MM = mm(MOUNT_DROP), mm(MOUNT_FOOT_T)
 WEDGE_T_MM, WEDGE_W_MM, BACK_FOOT_X_MM = mm(WEDGE_T), mm(WEDGE_W), mm(BACK_FOOT_X)

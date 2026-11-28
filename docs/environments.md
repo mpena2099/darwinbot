@@ -32,6 +32,7 @@ staircase); more make a generalist. The choice is saved in the archive, so
 | `downhill` | spawn on a plateau, then a 10 degree slope down to the floor |
 | `slippery` | floor with friction 0.2, like ice |
 | `soft` | yielding floor like sand: feet sink 1 to 2 cm and wheels feel rolling drag |
+| `strip` | flat floor with one friction 0.2 strip, 0.3 m long, from x = 0.5 m (`at`, `length`, `mu`); for `strip_test.py` only, in no preset and not an unseen ground of `validate.py` |
 
 **How hard `steps` is.** It is not a house staircase: each step is 3 cm high
 (a house step is 17 to 18 cm, taller than most of these robots) and 50 cm deep.

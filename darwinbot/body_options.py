@@ -12,7 +12,9 @@ a limit, so it is never simulated.
   no-wheels         no wheel modules
   no-passive        no spring, tail, skid, spike or caster
   no-segments       no spine segments
-  max-servos=N      at most N servos (joints, wheels and segments)
+  live-servos       every servo joint keeps at least 8 degrees of usable range
+                    (both directions summed), or the body is not buildable
+  max-servos=N     at most N servos (joints, wheels and segments)
   legs=A..B         between A and B legs (legs=N means exactly N)
   max-size=MM       largest bounding-box side of the body at spawn, in mm
   bed=MM            print bed side used by the printability checks, in mm
@@ -37,6 +39,7 @@ class BodyOptions:
     max_legs: Optional[int] = None
     max_size_mm: Optional[float] = None
     bed_mm: float = BED_MM
+    live_servos: bool = False
 
     def __post_init__(self):
         if self.max_servos < 1:
@@ -74,6 +77,8 @@ class BodyOptions:
             out.append("no-passive")
         if not self.allow_segments:
             out.append("no-segments")
+        if self.live_servos:
+            out.append("live-servos")
         if self.max_servos != morpho.MAX_SERVOS:
             out.append(f"max-servos={self.max_servos}")
         if self.max_legs is not None:
@@ -123,6 +128,9 @@ def parse(text: str) -> BodyOptions:
         if token in FLAGS:
             opts = replace(opts, **{FLAGS[token]: False})
             continue
+        if token == "live-servos":
+            opts = replace(opts, live_servos=True)
+            continue
         if "=" not in token:
             raise ValueError(_unknown(token))
         name, value = (part.strip() for part in token.split("=", 1))
@@ -147,7 +155,8 @@ def parse(text: str) -> BodyOptions:
 
 def _unknown(token: str) -> str:
     return (f"unknown body option '{token}', expected some of no-wheels, "
-            "no-passive, no-segments, max-servos=N, legs=A..B, max-size=MM, bed=MM")
+            "no-passive, no-segments, live-servos, max-servos=N, legs=A..B, "
+            "max-size=MM, bed=MM")
 
 
 _active = BodyOptions()

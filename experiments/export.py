@@ -36,7 +36,8 @@ def main():
     a = p.parse_args()
 
     archive, elite = load(a.archive, a.cell, a.plugin)
-    name = archive.names()[cell_of(elite.behaviour)]
+    name = archive.names()[cell_of(elite.behaviour, archive.n_descriptors,
+                                   archive.n_cells)]
     out = a.out or os.path.join("exports", name)
     info = export_robot(elite, out, name, payload=archive.payload,
                         organic=a.organic, seconds=archive.seconds)

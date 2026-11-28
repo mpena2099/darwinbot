@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>DarwinBot</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: #12141a; color: #e6e8ee;
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; gap: 16px; padding: 16px;
+    touch-action: none; user-select: none;
+  }
+  header { display: flex; justify-content: space-between; align-items: baseline; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: .04em; }
+  #link { font-size: 13px; color: #8a92a6; }
+  #link.on { color: #5cd08a; }
+  main { display: flex; gap: 16px; align-items: stretch; }
+  #pad {
+    position: relative; flex: 1 1 auto; aspect-ratio: 1; max-height: 46vh;
+    background: radial-gradient(circle at 50% 50%, #1c2030, #151822 70%);
+    border: 1px solid #2a3044; border-radius: 50%;
+    touch-action: none; overflow: hidden;
+  }
+  #pad::before, #pad::after {
+    content: ""; position: absolute; background: #2a3044;
+  }
+  #pad::before { left: 50%; top: 12%; bottom: 12%; width: 1px; }
+  #pad::after { top: 50%; left: 12%; right: 12%; height: 1px; }
+  #stick {
+    position: absolute; left: 50%; top: 50%; width: 26%; aspect-ratio: 1;
+    margin: -13% 0 0 -13%; border-radius: 50%;
+    background: #3d7bfd; box-shadow: 0 0 24px #3d7bfd66;
+    transition: transform .06s linear;
+  }
+  .side { flex: 0 0 132px; display: flex; flex-direction: column; gap: 12px; }
+  .speed label { font-size: 13px; color: #8a92a6; display: flex; justify-content: space-between; }
+  input[type=range] { width: 100%; accent-color: #3d7bfd; }
+  button {
+    font: inherit; font-weight: 600; padding: 14px; border-radius: 12px;
+    border: 1px solid #ff5d5d55; background: #37151a; color: #ff8080;
+    letter-spacing: .06em; touch-action: manipulation;
+  }
+  button:active { background: #ff5d5d; color: #12141a; }
+  #telemetry { font-size: 13px; }
+  #battery { display: flex; justify-content: space-between; color: #8a92a6; margin-bottom: 8px; }
+  #battery b { color: #e6e8ee; font-weight: 600; }
+  #servos { display: flex; flex-direction: column; gap: 3px; }
+  .servo { display: grid; grid-template-columns: 64px 1fr 46px; gap: 8px; align-items: center; }
+  .servo span:first-child { color: #8a92a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { position: relative; height: 8px; background: #1c2030; border-radius: 4px; overflow: hidden; }
+  .bar i { position: absolute; top: 0; bottom: 0; left: 50%; background: #5cd08a; border-radius: 4px; }
+  .bar i.neg { background: #ff9f43; }
+  .servo span:last-child { text-align: right; color: #8a92a6; font-variant-numeric: tabular-nums; }
+  p.hint { color: #8a92a6; font-size: 12px; margin: 0; }
+</style>
+</head>
+<body>
+<header><h1>DarwinBot</h1><span id="link">offline</span></header>
+<main>
+  <div id="pad"><div id="stick"></div></div>
+  <div class="side">
+    <div class="speed">
+      <label for="speed">Speed <output id="speedout">0 %</output></label>
+      <input id="speed" type="range" min="0" max="100" value="0">
+    </div>
+    <button id="stop">STOP</button>
+    <p class="hint">Drag left to turn left.</p>
+  </div>
+</main>
+<section id="telemetry">
+  <div id="battery"><span>Battery</span><b id="volts">--</b></div>
+  <div id="servos"></div>
+</section>
+<script>
+(function () {
+  const link = document.getElementById('link');
+  const pad = document.getElementById('pad');
+  const stick = document.getElementById('stick');
+  const speed = document.getElementById('speed');
+  const speedout = document.getElementById('speedout');
+  const volts = document.getElementById('volts');
+  const servos = document.getElementById('servos');
+
+  let ws = null;
+  let rows = [];
+
+  function send(text) {
+    if (ws && ws.readyState === 1) ws.send(text);
+  }
+
+  function connect() {
+    ws = new WebSocket('ws://' + location.hostname + ':81/');
+    ws.onopen = () => { link.textContent = 'ready'; link.className = 'on'; };
+    ws.onclose = () => { link.textContent = 'offline'; link.className = ''; setTimeout(connect, 1000); };
+    ws.onerror = () => ws.close();
+    ws.onmessage = show;
+  }
+
+  function build(n) {
+    servos.textContent = '';
+    rows = [];
+    for (let i = 0; i < n; i++) {
+      const row = document.createElement('div');
+      row.className = 'servo';
+      const name = document.createElement('span');
+      name.textContent = 's' + (i + 1);
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      const fill = document.createElement('i');
+      bar.appendChild(fill);
+      const phase = document.createElement('span');
+      row.append(name, bar, phase);
+      servos.appendChild(row);
+      rows.push({ name, fill, phase });
+    }
+  }
+
+  function show(event) {
+    const data = JSON.parse(event.data);
+    if (rows.length !== data.load.length) build(data.load.length);
+    volts.textContent = data.v.toFixed(1) + ' V';
+    data.load.forEach((v, i) => {
+      const width = Math.min(50, Math.abs(v) * 50);
+      rows[i].fill.className = v < 0 ? 'neg' : '';
+      rows[i].fill.style.width = width + '%';
+      rows[i].fill.style.left = v < 0 ? (50 - width) + '%' : '50%';
+      rows[i].phase.textContent = data.phase[i].toFixed(1);
+    });
+  }
+
+  let command = 0;
+  function steer(clientX) {
+    const rect = pad.getBoundingClientRect();
+    const half = rect.width / 2;
+    let x = (clientX - (rect.left + half)) / half;
+    x = Math.max(-1, Math.min(1, x));
+    command = x;
+    stick.style.transform = 'translate(' + (x * 46) + '%, 0)';
+    send('cmd ' + x.toFixed(2));
+  }
+
+  pad.addEventListener('pointerdown', (e) => { pad.setPointerCapture(e.pointerId); steer(e.clientX); });
+  pad.addEventListener('pointermove', (e) => { if (e.buttons) steer(e.clientX); });
+  pad.addEventListener('pointerup', () => {
+    command = 0;
+    stick.style.transform = '';
+    send('cmd 0');
+  });
+  pad.addEventListener('pointercancel', () => { command = 0; stick.style.transform = ''; send('cmd 0'); });
+
+  speed.addEventListener('input', () => {
+    speedout.textContent = speed.value + ' %';
+    send('speed ' + (speed.value / 100).toFixed(2));
+  });
+
+  document.getElementById('stop').addEventListener('click', () => {
+    speed.value = 0;
+    speedout.textContent = '0 %';
+    command = 0;
+    stick.style.transform = '';
+    send('stop');
+  });
+
+  // The robot stops by itself when it hears nothing for 1 s, so the page
+  // repeats its current command while the link is open.
+  setInterval(() => {
+    send('cmd ' + command.toFixed(2));
+    send('speed ' + (speed.value / 100).toFixed(2));
+  }, 200);
+
+  connect();
+})();
+</script>
+</body>
+</html>

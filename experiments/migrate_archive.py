@@ -124,7 +124,7 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60, seconds: float
             dropped += 1
             continue
         old_id = elite_id(e.morph, e.ctrl)
-        new = Elite(genes, res.ctrl, res.fitness, res.scores, e.born, res.behaviour)
+        new = Elite(genes, res.ctrl, res.fitness, res.scores, e.born, res.behaviour, e.uid)
         if not out.insert(new, old_id):        # a better elite holds the cell
             merged += 1
         else:
@@ -132,7 +132,8 @@ def migrate(archive: Archive, workers: int = 1, budget: int = 60, seconds: float
             if uid == old_id and old_id in archive.lineage:
                 out.lineage[uid] = (archive.lineage[old_id][0],) + out.lineage[uid][1:]
         if same_grid:
-            changed += evolve.cell_of(res.behaviour) != cell
+            changed += evolve.cell_of(res.behaviour, out.n_descriptors,
+                                      out.n_cells) != cell
     if not out.cells:
         raise ValueError("no elite survived the migration")
     after = [e.fitness for e in out.cells.values()]

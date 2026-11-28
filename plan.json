@@ -1,52 +1,82 @@
 {
- "name": "cand-tipcap-terrain",
+ "name": "r5-search-fixes-flat",
  "train_limit": 28000,
  "summary": false,
  "commits": {
-  "tt": "81ef58385e924deda0329c08bf628ef811252767"
+  "r5": "5bda90c2a6faa2c727b646689366155b645e94ce"
  },
  "islands": {
-  "cand2-t-383": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360",
+  "c-f-391": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --seed 391",
    false,
-   "tt"
+   "r5"
   ],
-  "cand2-t-384": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360",
+  "c-f-392": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --seed 392",
    false,
-   "tt"
+   "r5"
   ],
-  "cand2-t-385": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 385 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360",
+  "nr-f-391": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --parent-selection novelty-rank --seed 391",
    false,
-   "tt"
+   "r5"
   ],
-  "cand2tt-t-383": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 383 --body no-segments --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --turn-tight 1.0",
+  "nr-f-392": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --parent-selection novelty-rank --seed 392",
    false,
-   "tt"
+   "r5"
   ],
-  "none-t-385": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 385",
+  "c300-f-391": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --axes c300 --seed 391",
    false,
-   "tt"
+   "r5"
   ],
-  "bg-t-384": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 384 --rules body_ground",
+  "c300-f-392": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --axes c300 --seed 392",
    false,
-   "tt"
+   "r5"
   ],
-  "rb-t-385": [
-   16,
-   "--terrains terrain --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --seed 385 --rules basal --basal-mode relative",
+  "hr-f-391": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --clip-mode headroom --seed 391",
    false,
-   "tt"
+   "r5"
+  ],
+  "hr-f-392": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --clip-mode headroom --seed 392",
+   false,
+   "r5"
+  ],
+  "dns-f-391": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --dns 300 --reeval 5 --seed 391",
+   false,
+   "r5"
+  ],
+  "dns-f-392": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments --dns 300 --reeval 5 --seed 392",
+   false,
+   "r5"
+  ],
+  "all-f-391": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments,live-servos --parent-selection novelty-rank --dns 300 --reeval 5 --clip-mode headroom --mirror-ctrl --face-fix --protect-new 2 --seed 391",
+   false,
+   "r5"
+  ],
+  "all-f-392": [
+   9,
+   "--terrains flat --task steer --inner-strategy diagonal+focused --variant-mode first --deterministic --rules basal --basal-mode relative --turn-scale 0.5 --turn-in-place --turn-cap-deg 360 --body no-segments,live-servos --parent-selection novelty-rank --dns 300 --reeval 5 --clip-mode headroom --mirror-ctrl --face-fix --protect-new 2 --seed 392",
+   false,
+   "r5"
   ]
  }
 }

@@ -1483,6 +1483,12 @@ def mirror_slot(kind: str, slot: int) -> int:
     return {1: 2, 2: 1}.get(slot, slot)
 
 
+# (source id, new id, mirrored) of every node copy_subtree made since the last
+# mutate() began, in order. evolve reads it right after a mutation to carry the
+# controller genes of a copied limb to its twin (--mirror-ctrl).
+copy_log: list = []
+
+
 def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
                  mirror: bool = False,
                  source: Optional[Morphology] = None) -> Optional[int]:
@@ -1536,6 +1542,8 @@ def copy_subtree(morph: Morphology, root: int, parent: int, slot: int,
                     and node.axis != "yaw":
                 new.flip = not node.flip
         morph.nodes[i] = new
+        if source is morph:
+            copy_log.append((src, i, bool(mirror)))
         new_root = i if new_root is None else new_root
         for s, c in sorted(cm.get(src, {}).items()):
             queue.append((c, i, mirror_slot(node.kind, s) if mirror else s))
@@ -2014,6 +2022,7 @@ def mutate(genes: np.ndarray, rng: np.random.Generator,
     mirror slot afterwards, so a symmetric body can stay symmetric (and a
     mutation can build one); no extra random number is drawn at 0."""
     morph = decode(genes)
+    copy_log.clear()
     before = morph.copy() if mirror_p > 0 else None
     probs = mutation_weights(mutation_bias)
     for _ in range(n_ops or int(rng.integers(1, 4))):

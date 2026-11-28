@@ -117,6 +117,28 @@ def node_base(slot: int) -> int:
     return 1 + slot * CTRL_PER_NODE
 
 
+def copy_node_genes(ctrl: np.ndarray, copies) -> np.ndarray:
+    """Controller of a child whose body copied limbs: for every (source slot,
+    new slot, mirrored) of `copies`, in order, the new slot's gene block becomes
+    the source's, so the twin starts with the gait of the limb it copies instead
+    of unrelated genes. The twin walks in antiphase: PHASE1 moves half a cycle
+    (the oscillator runs half a period later). PHASE2 is left alone, because
+    half a period of the fundamental is a whole one of the second harmonic. A
+    mirrored copy also swaps the steering sign, so the twin on the other side
+    turns the other way: STEER_GAIN_RANGE and STEER_SHIFT_RANGE are symmetric
+    about 0, so a gene g and 1 - g are opposite values. Returns a new vector."""
+    out = np.array(ctrl, dtype=float)
+    for src, new, mirrored in copies:
+        a, b = node_base(src), node_base(new)
+        block = out[a:a + CTRL_PER_NODE].copy()
+        block[PHASE1] = (block[PHASE1] + 0.5) % 1.0
+        if mirrored:
+            block[STEER_GAIN] = 1.0 - block[STEER_GAIN]
+            block[STEER_SHIFT] = 1.0 - block[STEER_SHIFT]
+        out[b:b + CTRL_PER_NODE] = block
+    return out
+
+
 def couple_partners(morph: Morphology) -> np.ndarray:
     """Partner of every actuator in layout order (-1 for none): a joint's
     nearest joint ancestor, or for a limb root (no joint ancestor) the previous

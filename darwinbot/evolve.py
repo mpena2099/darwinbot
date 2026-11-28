@@ -54,10 +54,10 @@ from ribs.archives import CVTArchive
 
 from darwinbot import ablate, body_options, fastloop, fitness, hardware, plugins, rules, trace
 from darwinbot import controller as ctrl
-from darwinbot.controller import CLIP_MODES, set_clip_mode
+from darwinbot.controller import CLIP_MODES, copy_node_genes, set_clip_mode
 from darwinbot import morphology as morpho
 from darwinbot.fitness import commands, task_names, task_score
-from darwinbot.inner import evaluate, optimise_controller
+from darwinbot.inner import cpu_evaluator, evaluate, optimise_controller
 from darwinbot.sim import (COT_MAX, COT_MIN, EPISODE_SECONDS, HEIGHT_MAX, Behaviour,
                            Episode)
 from darwinbot.terrain import flat, get_terrains
@@ -368,6 +368,10 @@ class Archive:
     plugin:   dict = field(default_factory=dict)   # name and sha256 of the --plugin file
     # search options of the run that wrote it (not the score): SEARCH_FLAGS keys
     search:   dict = field(default_factory=dict)
+    # --reeval: elite id -> [first stored objective, [re-scores so far]]
+    reeval:   Dict[str, list] = field(default_factory=dict)
+    # --dns: the population parents are drawn from (dns_member dicts)
+    population: list = field(default_factory=list)
     body_model: int = BODY_MODEL
     uids:     Dict[Cell, int] = field(default_factory=dict)   # cell -> uid of its elite
     next_uid: int = 0          # the next uid to hand out; never reused
@@ -430,6 +434,19 @@ class Archive:
         body_options.set_active(self.body)
         apply_score(self.score)
         set_clip_mode(self.search.get("clip_mode", "command"))
+        morpho.set_face_fix(self.search.get("face_fix", False))
+
+    def set_objective(self, cell: Cell, value: float) -> None:
+        """Replace the stored objective of a filled cell (--reeval). ribs has no
+        call for it, so the store's arrays are written the way tie_parts does:
+        the threshold follows the objective (learning rate 1, no minimum), which
+        keeps the next insert comparing against the new value."""
+        fields = self._grid._store._fields
+        old = float(fields["objective"][cell])
+        fields["objective"][cell] = value
+        fields["threshold"][cell] = value
+        if hasattr(self._grid, "_objective_sum"):
+            self._grid._objective_sum += value - old
 
     def assign_uids(self) -> None:
         """Number the cells that have no uid (archives saved before uids), in
@@ -580,6 +597,8 @@ class Archive:
         self.__dict__.setdefault("locked", ())        # nor locked parts
         self.__dict__.setdefault("plugin", {})        # nor plugins
         self.__dict__.setdefault("search", {})        # nor search options
+        self.__dict__.setdefault("reeval", {})        # nor re-scores
+        self.__dict__.setdefault("population", [])    # nor a DNS population
         if "profile" not in state:                    # nor hardware profiles
             self.__dict__["profile"] = hardware.default_profile()
 
@@ -680,7 +699,7 @@ def code_version() -> str:
 
 
 def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=(), score=None,
-                 clip_mode="command"):
+                 clip_mode="command", face_fix=False):
     """Pool workers leave Ctrl+C to the main process, which stops them, and
     carry the run's ablations, optional score rules, body options, clip mode and
     plugins. A score dict is applied when given; callers with no archive keep
@@ -690,6 +709,7 @@ def _init_worker(ablations=(), score_rules=(), body="", plugin_paths=(), score=N
     rules.set_active(score_rules)
     body_options.set_active(body)
     set_clip_mode(clip_mode)
+    morpho.set_face_fix(face_fix)
     if score is not None:
         apply_score(score)
     plugins.load_all(plugin_paths)
@@ -701,9 +721,9 @@ def _cuda_devices() -> int:
 
 
 def _warp_worker(counter, n_gpus: int, ablations=(), score_rules=(), body="",
-                 plugin_paths=(), score=None, clip_mode="command"):
+                 plugin_paths=(), score=None, clip_mode="command", face_fix=False):
     """Pool initializer for --device warp: bind this worker to the next GPU."""
-    _init_worker(ablations, score_rules, body, plugin_paths, score, clip_mode)
+    _init_worker(ablations, score_rules, body, plugin_paths, score, clip_mode, face_fix)
     with counter.get_lock():
         i = counter.value
         counter.value += 1
@@ -747,7 +767,9 @@ SEARCH_FLAGS = {"parent_selection": "--parent-selection", "inner_strategy": "--i
                 "tie_parts": "--tie-parts", "batch_size": "--batch-size",
                 "budget_init": "--budget-init", "budget_child": "--budget-child",
                 "deterministic": "--deterministic", "clip_mode": "--clip-mode",
-                "screen": "--screen"}           # Archive.search keys and their train.py flags
+                "screen": "--screen", "face_fix": "--face-fix",
+                "mirror_ctrl": "--mirror-ctrl", "reeval": "--reeval",
+                "dns": "--dns"}           # Archive.search keys and their train.py flags
 
 
 def _shown(value):
@@ -829,10 +851,14 @@ def _work(job):
         body = hashlib.sha1(np.asarray(morph_genes, float).tobytes()).hexdigest()[:8]
         print(f"body {body} failed:\n{traceback.format_exc()}", flush=True)
         out = (morph_genes, x0, -np.inf, [], 0, None, parent, True)
-        return out + (None,) if tdir else out
+        out = out + (None,) if tdir else out
+        return out + (None,) if opts.get("progress") else out
     out = (morph_genes, res.ctrl, res.fitness, res.scores, res.evals,
            res.behaviour, parent, False)
-    return out + (extra,) if tdir else out
+    out = out + (extra,) if tdir else out
+    if opts.get("progress"):        # --dns: the straight progress, for the quality floor
+        out += (float(res.metrics[0].progress) if res.metrics else None,)
+    return out
 
 
 def _screen_work(job):
@@ -858,6 +884,175 @@ def screen_keep(origins: list, scores: dict, keep: float) -> set:
     screened = [i for i, o in enumerate(origins) if o in SCREENED_ORIGINS]
     best = sorted(screened, key=lambda i: (-scores[i], i))[:math.ceil(keep * len(screened))]
     return (set(range(len(origins))) - set(screened)) | set(best)
+
+
+# ---- --reeval: scores of the best elites on fresh terrain seeds ----
+
+REEVAL_TOP = 20         # elites re-scored each time, by objective
+
+
+def reeval_mean(first: float, rescores) -> float:
+    """Objective of a re-scored elite: the mean of its first stored value and
+    every re-score so far."""
+    return float((first + sum(rescores)) / (1 + len(rescores)))
+
+
+def _reeval_work(job):
+    """Pool worker: score a stored controller again on fresh terrains and
+    physics variants (the same evaluation path as the inner loop, one
+    controller, no search). (fitness, straight progress) or None."""
+    genes, ctrl_, terrains, seed, seconds, variants, task, payload = job
+    try:
+        morph = morpho.decode(genes)
+        episodes, run_cpu = cpu_evaluator(morph, get_terrains(terrains, seed=seed),
+                                          seconds, payload, variants, seed, task)
+        if not episodes[0].buildable:
+            return None
+        fit, _, metrics = run_cpu(np.asarray(ctrl_, float))
+        return float(fit), float(metrics[0].progress)
+    except Exception:
+        print(f"re-score failed:\n{traceback.format_exc()}", flush=True)
+        return None
+
+
+def apply_reeval(archive: "Archive", results: dict) -> Tuple[float, float]:
+    """Fold re-scores into the archive. `results` maps elite_id to (fitness,
+    progress). Each elite's objective becomes the mean of its first stored value
+    and all its re-scores (kept in archive.reeval); a DNS population member of
+    the same robot gets the same objective. Returns (mean drop of the stored
+    objective, mean drop of the re-scores against it), both over the elites."""
+    drops, gaps = [], []
+    for cell, e in archive.cells.items():
+        eid = elite_id(e.morph, e.ctrl)
+        res = results.get(eid)
+        if res is None or not np.isfinite(res[0]):
+            continue
+        rec = archive.reeval.setdefault(eid, [float(e.fitness), []])
+        rec[1].append(float(res[0]))
+        new = reeval_mean(rec[0], rec[1])
+        drops.append(float(e.fitness) - new)
+        gaps.append(float(e.fitness) - float(res[0]))
+        archive.set_objective(cell, new)
+        for m in archive.population:
+            if m["id"] == eid:
+                m["objective"] = new
+                if res[1] is not None:
+                    m["progress"] = res[1] if m["progress"] is None else \
+                        0.5 * (m["progress"] + res[1])
+    if not drops:
+        return 0.0, 0.0
+    return float(np.mean(drops)), float(np.mean(gaps))
+
+
+# ---- --dns: hybrid Dominated Novelty Search (arXiv 2502.00593) ----
+
+DNS_K = 3                   # fitter neighbours a member's dominated novelty averages
+DNS_MIN_PROGRESS = 0.05     # quality floor: straight progress in metres ...
+                            # ... and an objective above 0
+DNS_RESEED_EVERY = 10       # batches between looks at which grid elites lost cover
+DNS_RESEED_N = 5            # grid elites added at most each time
+DNS_NEAR = 0.25             # normalised-descriptor distance that counts as nearby
+
+
+def dns_member(genes, ctrl_, objective, behaviour, born, progress,
+               n_descriptors: int = N_DESCRIPTORS) -> dict:
+    """One member of the DNS population. progress is None when unknown (a
+    member seeded from the grid), and the floor then uses the objective alone."""
+    return {"genes": np.array(genes), "ctrl": np.array(ctrl_),
+            "objective": float(objective), "behaviour": np.array(behaviour, float),
+            "measures": normalise(behaviour, n_descriptors), "born": int(born),
+            "progress": None if progress is None else float(progress),
+            "id": elite_id(genes, ctrl_)}
+
+
+def passes_floor(member: dict) -> bool:
+    p = member["progress"]
+    return member["objective"] > 0.0 and (p is None or p > DNS_MIN_PROGRESS)
+
+
+def dns_scores(objective, measures, floor, k: int = DNS_K) -> np.ndarray:
+    """Dominated novelty of every member: the mean distance (normalised
+    descriptors) to its k nearest members with a strictly higher objective. A
+    member with none higher gets +inf, and a member below the quality floor
+    gets 0 whatever its neighbours."""
+    objective = np.asarray(objective, float)
+    pts = np.asarray(measures, float)
+    n = len(objective)
+    out = np.zeros(n)
+    if n == 0:
+        return out
+    dist = np.linalg.norm(pts[:, None] - pts[None], axis=-1)
+    for i in range(n):
+        if not floor[i]:
+            continue
+        fitter = objective > objective[i]
+        out[i] = (np.sort(dist[i][fitter])[:k].mean() if fitter.any() else np.inf)
+    return out
+
+
+def dns_trim(population: list, size: int) -> list:
+    """The population cut to `size` members: the lowest dominated novelty goes
+    first, a lower objective first among equals. One scoring pass removes all
+    the excess, instead of one member at a time."""
+    n = len(population)
+    if n <= size:
+        return population
+    obj = np.array([m["objective"] for m in population])
+    scores = dns_scores(obj, [m["measures"] for m in population],
+                        [passes_floor(m) for m in population])
+    order = np.lexsort((np.arange(n), obj, scores))     # scores first, then objective
+    keep = sorted(order[n - size:])
+    return [population[i] for i in keep]
+
+
+def sample_population(population: list, n: int, rng: np.random.Generator,
+                      selection: str = "novelty") -> dict:
+    """Parents from the DNS population, with the same selection rules and the
+    keys of Archive.sample_elites that the batch uses (solution and ctrl)."""
+    size = len(population)
+    if selection == "uniform":
+        weights = np.zeros(size)
+    else:
+        pts = np.array([m["measures"] for m in population])
+        if size < 2:
+            nov = np.zeros(size)
+        else:
+            dist = np.linalg.norm(pts[:, None] - pts[None], axis=-1)
+            np.fill_diagonal(dist, np.inf)
+            nov = np.sort(dist, axis=1)[:, :min(K_NOVELTY, size - 1)].mean(axis=1)
+        weights = nov
+        if selection == "novelty-rank":
+            objective = np.array([m["objective"] for m in population])
+            rank = np.empty(size, dtype=float)
+            rank[np.argsort(objective, kind="stable")] = np.arange(1, size + 1)
+            weights = nov * rank / max(size, 1)
+    p = weights / weights.sum() if weights.sum() > 0 else None
+    idx = rng.choice(size, size=n, p=p)
+    return {"solution": np.array([population[i]["genes"] for i in idx]),
+            "ctrl": np.array([population[i]["ctrl"] for i in idx])}
+
+
+def dns_reseed(archive: "Archive", rng: np.random.Generator) -> int:
+    """Add up to DNS_RESEED_N random grid elites that have no population member
+    within DNS_NEAR (normalised descriptors), so the museum keeps feeding the
+    search. Returns how many were added."""
+    have = {m["id"] for m in archive.population}
+    pts = [m["measures"] for m in archive.population]
+    lost = []
+    for e in archive.cells.values():
+        if elite_id(e.morph, e.ctrl) in have:
+            continue
+        x = normalise(e.behaviour, archive.n_descriptors)
+        if not pts or min(float(np.linalg.norm(x - q)) for q in pts) > DNS_NEAR:
+            lost.append(e)
+    if not lost:
+        return 0
+    pick = rng.choice(len(lost), size=min(DNS_RESEED_N, len(lost)), replace=False)
+    for i in pick:
+        e = lost[int(i)]
+        archive.population.append(dns_member(
+            e.morph, e.ctrl, e.fitness, e.behaviour, e.born, None, archive.n_descriptors))
+    return len(pick)
 
 
 def _trace_body(tdir, archive, batch_meta, res, cell, before, accepted):
@@ -912,6 +1107,10 @@ def run(
     deterministic: bool = False,
     screen: float = 1.0,
     clip_mode: str = "command",
+    face_fix: bool = False,
+    mirror_ctrl: bool = False,
+    reeval: int = 0,
+    dns: int = 0,
 ) -> Archive:
     if parent_selection not in PARENT_SELECTIONS:
         raise ValueError(f"parent_selection must be one of {PARENT_SELECTIONS}")
@@ -940,6 +1139,10 @@ def run(
         raise ValueError(f"axes must be one of {AXES}")
     if clip_mode not in CLIP_MODES:
         raise ValueError(f"clip_mode must be one of {CLIP_MODES}")
+    if reeval < 0:
+        raise ValueError("reeval must be >= 0 (0 turns it off)")
+    if dns < 0:
+        raise ValueError("dns must be >= 0 (0 turns it off)")
     if task not in task_names():
         raise ValueError(f"task must be one of {task_names()}")
     if device == "gpu" and variants > 0 and not resume:
@@ -981,7 +1184,8 @@ def run(
               "tie_parts": tie_parts, "batch_size": batch_size,
               "budget_init": budget_init, "budget_child": budget_child,
               "deterministic": deterministic, "clip_mode": clip_mode,
-              "screen": screen}
+              "screen": screen, "face_fix": face_fix, "mirror_ctrl": mirror_ctrl,
+              "reeval": reeval, "dns": dns}
     if resume:                                  # the new values win, and are stored
         for key, value in search.items():
             old = archive.search.get(key, value)
@@ -994,6 +1198,7 @@ def run(
     body_options.set_active(archive.body)       # and its body limits
     apply_score(archive.score)                  # and its score settings
     set_clip_mode(archive.search.get("clip_mode", "command"))
+    morpho.set_face_fix(archive.search.get("face_fix", False))   # mutations run here
     if device == "gpu" and archive.variants > 0:
         raise ValueError("randomisation is CPU only; use --variants 0 with --device gpu")
 
@@ -1016,7 +1221,7 @@ def run(
     def inner_opts(parent_genes=None) -> dict:
         """Inner-loop options of one job; focused needs the parent's body genes."""
         return {"strategy": inner_strategy, "variant_mode": variant_mode,
-                "mutation_bias": mutation_bias,
+                "mutation_bias": mutation_bias, "progress": bool(dns),
                 "parent_genes": None if parent_genes is None else np.array(parent_genes)}
 
     def make_batch() -> list:
@@ -1035,7 +1240,11 @@ def run(
                      for _ in range(n_init)]
             batch_meta.extend(meta(t[0]) for t in tasks)
             return tasks
-        parents = archive.sample_elites(batch_size, rng, parent_selection)
+        if dns and archive.population:
+            parents = sample_population(archive.population, batch_size, rng,
+                                        parent_selection)
+        else:
+            parents = archive.sample_elites(batch_size, rng, parent_selection)
         tasks = []
         for i in range(batch_size):
             # A random body would not carry the locked parts.
@@ -1056,7 +1265,11 @@ def run(
                 else:                    # same body, its controller searched again
                     child, origin = np.array(parent), "same"
                 batch_meta.append(meta(child, parent, origin))
-                tasks.append((child, parents["ctrl"][i], terrains,
+                child_ctrl = parents["ctrl"][i]
+                if mirror_ctrl and origin == "mutate" and morpho.copy_log:
+                    # the limbs the mutation copied start with their source's gait
+                    child_ctrl = copy_node_genes(child_ctrl, morpho.copy_log)
+                tasks.append((child, child_ctrl, terrains,
                               child_budget(batch_meta[-1], budget_child, protect_new),
                               0.12, new_seed(), archive.seconds,
                               device, popsize, archive.variants,
@@ -1080,6 +1293,10 @@ def run(
           + (f" tie_parts={tie_parts}" if tie_parts else "")
           + (f" clip_mode={clip_mode}" if clip_mode != "command" else "")
           + (f" screen={screen}" if screen != 1.0 else "")
+          + (" face_fix" if face_fix else "")
+          + (" mirror_ctrl" if mirror_ctrl else "")
+          + (f" reeval={reeval}" if reeval else "")
+          + (f" dns={dns}" if dns else "")
           + (" deterministic" if deterministic else ""))
     if device == "gpu" or (device == "warp" and workers == 1):
         pool = None
@@ -1089,13 +1306,15 @@ def run(
         pool = ctx.Pool(workers, _warp_worker,
                         (ctx.Value("i", 0), _cuda_devices(), archive.ablate, archive.rules,
                          archive.body, plugins.loaded(), archive.score,
-                         archive.search.get("clip_mode", "command")))
+                         archive.search.get("clip_mode", "command"),
+                         archive.search.get("face_fix", False)))
     else:
         fastloop.warmup()        # compiled before the fork, so workers inherit it
         pool = multiprocessing.Pool(workers, _init_worker,
                                     (archive.ablate, archive.rules, archive.body,
                                      plugins.loaded(), archive.score,
-                                     archive.search.get("clip_mode", "command")))
+                                     archive.search.get("clip_mode", "command"),
+                                     archive.search.get("face_fix", False)))
     if tdir:
         os.makedirs(tdir, exist_ok=True)
     path = os.path.join(out_dir, "archive.pkl")
@@ -1114,6 +1333,11 @@ def run(
                 seeding_tries += 1
             t0 = time.time()
             added = failed = 0
+            if dns and not archive.population and archive.cells:
+                # first DNS batch on a resumed or older archive: start from the grid
+                archive.population = dns_trim([dns_member(
+                    e.morph, e.ctrl, e.fitness, e.behaviour, e.born, None,
+                    archive.n_descriptors) for e in archive.cells.values()], dns)
             tasks = make_batch()
             n_screened = 0
             if screen < 1.0 and any(m["origin"] in SCREENED_ORIGINS for m in batch_meta):
@@ -1149,9 +1373,30 @@ def run(
                     before = None if inc is None else float(inc.fitness)
                 ok = archive.insert(Elite(genes, ctrl, fit, scores,
                                           archive.batch, behaviour), parent)
+                if dns and np.isfinite(fit):
+                    archive.population.append(dns_member(
+                        genes, ctrl, fit, behaviour, archive.batch, res[-1],
+                        archive.n_descriptors))
                 added += ok
                 if tdir:
                     _trace_body(tdir, archive, batch_meta, res, cell, before, bool(ok))
+            if dns:
+                archive.population = dns_trim(archive.population, dns)
+                if archive.cells and (archive.batch + 1) % DNS_RESEED_EVERY == 0:
+                    dns_reseed(archive, rng)
+                    archive.population = dns_trim(archive.population, dns)
+            if reeval and archive.cells and (archive.batch + 1) % reeval == 0:
+                top = sorted(archive.cells.values(), key=lambda e: -e.fitness)[:REEVAL_TOP]
+                jobs = [(e.morph, e.ctrl, terrains, new_seed(), archive.seconds,
+                         archive.variants, archive.task, archive.payload) for e in top]
+                # ordered results (imap), so each score pairs with its elite
+                scored = (list(map(_reeval_work, jobs)) if pool is None
+                          else list(pool.imap(_reeval_work, jobs)))
+                results = {elite_id(e.morph, e.ctrl): r
+                           for e, r in zip(top, scored) if r is not None}
+                drop, gap = apply_reeval(archive, results)
+                print(f"reeval: {len(results)} elites re-scored, mean objective drop "
+                      f"{drop:.3f} (mean stored minus re-score {gap:.3f})", flush=True)
             if tasks and failed == len(tasks):     # a systematic bug, not one odd body
                 raise RuntimeError(f"all {failed} bodies of the batch failed")
             if not archive.cells:
@@ -1165,6 +1410,7 @@ def run(
                   f"best {s['best']:6.2f}  mean {s['mean']:6.2f}  "
                   f"nov {s['novelty']:.3f}  evals {s['evals']}  {s['seconds']}s"
                   + (f"  screened={n_screened}" if screen < 1.0 else "")
+                  + (f"  pop {len(archive.population)}" if dns else "")
                   + (f"  failed {failed}" if failed else ""), flush=True)
             archive.batch += 1
             with open(path + ".tmp", "wb") as f:

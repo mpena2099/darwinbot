@@ -157,6 +157,27 @@ def main():
                         "and speed commands; headroom scales the base amplitudes first "
                         "so the stronger steering side keeps its proportion; stored in "
                         "the archive and written to the control file")
+    p.add_argument("--face-fix", action="store_true",
+                   help="mutations never leave a joint or a wheel on a core face slot "
+                        "(top and bottom, front and back), where the repair would turn "
+                        "it into a link or a foot; off by default; stored in the archive")
+    p.add_argument("--mirror-ctrl", action="store_true",
+                   help="when a mutation copies or mirrors a limb, its new slots start "
+                        "with the controller genes of the limb they copy, half a cycle "
+                        "later (antiphase) and with the steering sign swapped for a "
+                        "mirror; off by default; stored in the archive")
+    p.add_argument("--reeval", type=int, default=0, metavar="N",
+                   help="every N batches, score the best 20 elites again on fresh "
+                        "terrain seeds and keep as objective the mean of the stored "
+                        "value and all re-scores, so a lucky draw does not hold a cell; "
+                        "0 (default) turns it off; stored in the archive")
+    p.add_argument("--dns", type=int, default=0, metavar="K",
+                   help="hybrid Dominated Novelty Search: parents come from a separate "
+                        "population of at most K robots, kept by dominated novelty (distance "
+                        "to the nearest fitter robots) above a quality floor (objective > 0 "
+                        "and straight progress > 0.05 m); the normal archive still takes "
+                        "every robot and stays the saved museum; 0 (default) turns it off; "
+                        "stored in the archive")
     p.add_argument("--task", choices=task_names(), default="steer",
                    help="what the score rewards: walking straight and turning "
                         "when told (steer, default), walking forward only, or "
@@ -233,6 +254,8 @@ def main():
         raise SystemExit("--tie-parts must be >= 0 (0 turns it off)")
     if not 0.0 < a.screen <= 1.0:
         raise SystemExit("--screen must be in (0, 1] (1.0 turns it off)")
+    if a.reeval < 0 or a.dns < 0:
+        raise SystemExit("--reeval and --dns must be >= 0 (0 turns them off)")
 
     a.device, a.workers = resolve_device(a.device, a.workers)
     wanted = None
@@ -288,7 +311,9 @@ def main():
                   variant_mode=a.variant_mode, protect_new=a.protect_new,
                   mirror_p=a.mirror_p, mutation_bias=a.mutation_bias,
                   tie_parts=a.tie_parts, deterministic=a.deterministic,
-                  screen=a.screen, clip_mode=a.clip_mode)
+                  screen=a.screen, clip_mode=a.clip_mode,
+                  face_fix=a.face_fix, mirror_ctrl=a.mirror_ctrl, reeval=a.reeval,
+                  dns=a.dns)
     forward = "forward" in a.ablate     # the forward task replaces steer
 
     if not a.preset:
